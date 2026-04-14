@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Streamlit secrets (API 키 포함 — 절대 커밋 금지)
+.streamlit/secrets.toml
+
+# 관심종목 데이터 (개인 데이터)
+watchlist.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
