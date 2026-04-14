@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
+import ta as ta_lib
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -78,35 +78,43 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     volume = data["Volume"]
 
     # 이동평균선
-    data["SMA_5"]  = ta.sma(close, length=5)
-    data["SMA_20"] = ta.sma(close, length=20)
-    data["SMA_60"] = ta.sma(close, length=60)
+    data["SMA_5"]  = ta_lib.trend.SMAIndicator(close, window=5).sma_indicator()
+    data["SMA_20"] = ta_lib.trend.SMAIndicator(close, window=20).sma_indicator()
+    data["SMA_60"] = ta_lib.trend.SMAIndicator(close, window=60).sma_indicator()
 
     # RSI
-    data["RSI"] = ta.rsi(close, length=14)
+    data["RSI"] = ta_lib.momentum.RSIIndicator(close, window=14).rsi()
 
     # MACD
-    macd = ta.macd(close)
-    if macd is not None and not macd.empty:
-        data["MACD"]        = macd.iloc[:, 0]   # MACD_12_26_9
-        data["MACD_Signal"] = macd.iloc[:, 2]   # MACDs_12_26_9
-        data["MACD_Hist"]   = macd.iloc[:, 1]   # MACDh_12_26_9
+    try:
+        macd_ind = ta_lib.trend.MACD(close, window_fast=12, window_slow=26, window_sign=9)
+        data["MACD"]        = macd_ind.macd()
+        data["MACD_Signal"] = macd_ind.macd_signal()
+        data["MACD_Hist"]   = macd_ind.macd_diff()
+    except Exception:
+        pass
 
     # 볼린저밴드
-    bb = ta.bbands(close, length=20)
-    if bb is not None and not bb.empty:
-        data["BB_Upper"]  = bb.iloc[:, 2]  # BBU
-        data["BB_Middle"] = bb.iloc[:, 1]  # BBM
-        data["BB_Lower"]  = bb.iloc[:, 0]  # BBL
+    try:
+        bb_ind = ta_lib.volatility.BollingerBands(close, window=20, window_dev=2)
+        data["BB_Upper"]  = bb_ind.bollinger_hband()
+        data["BB_Middle"] = bb_ind.bollinger_mavg()
+        data["BB_Lower"]  = bb_ind.bollinger_lband()
+    except Exception:
+        pass
 
     # 스토캐스틱
-    stoch = ta.stoch(high, low, close)
-    if stoch is not None and not stoch.empty:
-        data["STOCH_K"] = stoch.iloc[:, 0]
-        data["STOCH_D"] = stoch.iloc[:, 1]
+    try:
+        stoch_ind = ta_lib.momentum.StochasticOscillator(
+            high, low, close, window=14, smooth_window=3
+        )
+        data["STOCH_K"] = stoch_ind.stoch()
+        data["STOCH_D"] = stoch_ind.stoch_signal()
+    except Exception:
+        pass
 
     # 거래량 이평
-    data["Volume_MA20"] = ta.sma(volume, length=20)
+    data["Volume_MA20"] = volume.rolling(window=20).mean()
 
     return data
 
