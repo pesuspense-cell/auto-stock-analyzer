@@ -4,10 +4,9 @@ streamlit-autorefresh>=1.0.0
 
 # ── Data & Finance ────────────────────────────────────────────────────────────
 yfinance>=0.2.40
-pandas>=2.0.0
+pandas>=2.0.0,<2.2.0
 numpy>=1.26.0
-# pandas-ta PyPI 버전(0.3.14b0)은 pandas 2.x 비호환 → GitHub dev 브랜치 사용
-pandas-ta @ git+https://github.com/twopirllc/pandas-ta.git@development
+pandas-ta==0.3.14b0
 plotly>=5.18.0
 finance-datareader>=0.9.0
 
