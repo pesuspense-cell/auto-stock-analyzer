@@ -854,9 +854,24 @@ def get_fundamental_data(ticker: str) -> dict:
 
     try:
         info = yf.Ticker(ticker).info
+
+        price     = info.get("currentPrice") or info.get("regularMarketPrice")
+        eps_ttm   = info.get("trailingEps")
+        book_val  = info.get("bookValue")
+
+        # PER: yfinance가 None이면 price / trailingEps 로 직접 계산
+        per = info.get("trailingPE")
+        if per is None and price and eps_ttm and eps_ttm > 0:
+            per = round(price / eps_ttm, 2)
+
+        # PBR: yfinance가 None이면 price / bookValue 로 직접 계산
+        pbr = info.get("priceToBook")
+        if pbr is None and price and book_val and book_val > 0:
+            pbr = round(price / book_val, 2)
+
         return {
-            "per":              info.get("trailingPE"),
-            "pbr":              info.get("priceToBook"),
+            "per":              per,
+            "pbr":              pbr,
             "roe":              info.get("returnOnEquity"),
             "debt_equity":      info.get("debtToEquity"),
             "revenue_growth":   info.get("revenueGrowth"),
@@ -866,7 +881,7 @@ def get_fundamental_data(ticker: str) -> dict:
             "w52_low":          info.get("fiftyTwoWeekLow"),
             "market_cap":       info.get("marketCap"),
             "free_cashflow":    info.get("freeCashflow"),
-            "eps_ttm":          info.get("trailingEps"),
+            "eps_ttm":          eps_ttm,
             "forward_pe":       info.get("forwardPE"),
             "sector":           info.get("sector", "N/A"),
             "industry":         info.get("industry", "N/A"),
