@@ -257,30 +257,46 @@ def get_dart_financials(ticker: str, dart_api_key: str) -> dict:
     code = ticker.split(".")[0]
     dart = OpenDartReader.OpenDartReader(dart_api_key)
 
-    # 최근 2개년 시도
-    for year in [datetime.now().year - 1, datetime.now().year - 2]:
+    def _parse_amount(val) -> Optional[float]:
+        """DART 금액 문자열 → float (억원). △ 음수 처리 포함."""
+        if val is None:
+            return None
+        s = str(val).strip().replace(",", "").replace(" ", "")
+        if not s or s == "-":
+            return None
+        negative = s.startswith("△") or s.startswith("-")
+        s = s.lstrip("△").lstrip("-")
+        try:
+            v = float(s) / 1e8
+            return -v if negative else v
+        except ValueError:
+            return None
+
+    def _extract(fs_is, keywords: list) -> Optional[float]:
+        """IS(손익계산서) 행에서 키워드 포함 계정 찾아 당기 금액 반환."""
+        for kw in keywords:
+            rows = fs_is[fs_is["account_nm"].str.contains(kw, na=False)]
+            if not rows.empty:
+                val = _parse_amount(rows.iloc[0]["thstrm_amount"])
+                if val is not None:
+                    return val
+        return None
+
+    # 최근 3개년 시도 (사업보고서 기준)
+    for year in [datetime.now().year - 1, datetime.now().year - 2, datetime.now().year - 3]:
         try:
             fs = dart.finstate(code, year)
             if fs is None or fs.empty:
                 continue
 
-            def _extract(keywords: list) -> Optional[float]:
-                for kw in keywords:
-                    rows = fs[fs["account_nm"].str.contains(kw, na=False)]
-                    if not rows.empty:
-                        val = rows.iloc[0].get("thstrm_amount", "")
-                        if val:
-                            try:
-                                return float(str(val).replace(",", "")) / 1e8  # 억원 환산
-                            except ValueError:
-                                pass
-                return None
+            # 손익계산서 행만 필터
+            fs_is = fs[fs["sj_div"] == "IS"] if "sj_div" in fs.columns else fs
 
-            rev  = _extract(["매출액", "수익(매출액)", "영업수익"])
-            oinc = _extract(["영업이익"])
-            ninc = _extract(["당기순이익", "분기순이익"])
+            rev  = _extract(fs_is, ["매출액", "수익(매출액)", "영업수익", "매출"])
+            oinc = _extract(fs_is, ["영업이익"])
+            ninc = _extract(fs_is, ["당기순이익", "분기순이익", "순이익"])
 
-            if rev is not None:
+            if rev is not None or oinc is not None:
                 return {"revenue": rev, "operating_income": oinc,
                         "net_income": ninc, "year": year}
         except Exception:
