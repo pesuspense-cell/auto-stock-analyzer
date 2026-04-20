@@ -299,7 +299,10 @@ with st.sidebar:
     st.markdown("### 🤖 AI 뉴스 분석 (Gemini)")
 
     # Streamlit Cloud secrets → 세션 → 직접 입력 순서로 우선순위 적용
-    _secret_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
+    try:
+        _secret_key = st.secrets.get("GEMINI_API_KEY", "")
+    except Exception:
+        _secret_key = ""
     _default_key = _secret_key or st.session_state.get("gemini_api_key", "")
 
     if _secret_key:
