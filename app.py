@@ -46,7 +46,7 @@ st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
     div[data-testid="metric-container"] { background:#1e2130; border-radius:8px; padding:8px 12px; }
-    .signal-box { padding:18px; border-radius:12px; text-align:center; margin-bottom:12px; }
+    .signal-box { padding:12px 8px; border-radius:12px; text-align:center; margin-bottom:12px; word-break:keep-all; }
     .wl-item { background:#1e2130; border-radius:8px; padding:8px 12px; margin:4px 0;
                display:flex; justify-content:space-between; align-items:center; }
 </style>
@@ -1233,10 +1233,9 @@ with tab_fund:
 
         st.markdown(f"""
         <div class="signal-box" style="background:{fbg};">
-            <div style="font-size:1.6rem; font-weight:bold; color:{ffc};">🏛️ {flbl}</div>
-            <div style="font-size:1rem; color:#aaa; margin-top:4px;">
-                장투 점수: <b style="color:{ffc};">{fs:+.1f}</b>
-            </div>
+            <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">🏛️ 장투 신호</div>
+            <div style="font-size:1.25rem;font-weight:bold;color:{ffc};">🏛️ {flbl}</div>
+            <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">장투 점수: <b style="color:{ffc};">{fs:+.1f}</b></div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1738,17 +1737,17 @@ with tab_chart:
         with sig_col1:
             st.markdown(f"""
             <div class="signal-box" style="background:{st_bg};">
-                <div style="font-size:0.75rem;color:#888;margin-bottom:4px;letter-spacing:1px;">⚡ 단타 신호</div>
-                <div style="font-size:1.7rem;font-weight:bold;color:{st_fc};">{h_badge} {h_label}</div>
-                <div style="font-size:0.9rem;color:#aaa;margin-top:4px;">점수: <b style="color:{st_fc};">{h_score:+.1f}</b></div>
+                <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">⚡ 단타 신호</div>
+                <div style="font-size:1.25rem;font-weight:bold;color:{st_fc};">{h_badge} {h_label}</div>
+                <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">점수: <b style="color:{st_fc};">{h_score:+.1f}</b></div>
             </div>
             """, unsafe_allow_html=True)
         with sig_col2:
             st.markdown(f"""
             <div class="signal-box" style="background:{lt_bg};">
-                <div style="font-size:0.75rem;color:#888;margin-bottom:4px;letter-spacing:1px;">🏛️ 장투 신호</div>
-                <div style="font-size:1.7rem;font-weight:bold;color:{lt_fc};">{f_badge} {f_label}</div>
-                <div style="font-size:0.9rem;color:#aaa;margin-top:4px;">점수: <b style="color:{lt_fc};">{fs:+.1f}</b></div>
+                <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">🏛️ 장투 신호</div>
+                <div style="font-size:1.25rem;font-weight:bold;color:{lt_fc};">{f_badge} {f_label}</div>
+                <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">점수: <b style="color:{lt_fc};">{fs:+.1f}</b></div>
             </div>
             """, unsafe_allow_html=True)
 
