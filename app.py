@@ -572,7 +572,7 @@ with tab_market:
 
     with col_left:
         mover_n = st.select_slider(
-            "분석 종목 수 (시가총액 상위)", [20, 50, 100], value=50,
+            "분석 종목 수 (시가총액 상위)", list(range(10, 110, 10)), value=50,
             help="KOSPI 시가총액 상위 N개 종목의 등락률을 분석합니다. 많을수록 로딩이 느려집니다."
         )
         with st.spinner(f"KOSPI 상위 {mover_n}개 종목 로딩 중..."):
@@ -679,7 +679,7 @@ with tab_rec:
     with col_b:
         rec_n = st.select_slider(
             "분석 종목 수",
-            options=[20, 50, 100, 200, 500],
+            options=list(range(10, 510, 10)),
             value=50,
             help=(
                 "시가총액 상위 N개 종목을 분석합니다.\n\n"
