@@ -63,7 +63,15 @@ INDICES = {
 # ─── 데이터 로드 및 지표 계산 ─────────────────────────────────────────────────
 
 def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
-    """주식 데이터 로드 및 기술적 지표 계산"""
+    """
+    주식 데이터 로드 및 기술적 지표 계산.
+    지표 목록:
+      이동평균 : SMA 5/20/60, EMA 20/50/200
+      모멘텀   : RSI(14), 스토캐스틱(14,3), CCI(20), Williams %R(14), ROC(12)
+      추세     : MACD(12/26/9), ADX±DI(14)
+      변동성   : 볼린저밴드(20,2), ATR(14)
+      거래량   : Volume MA20, OBV, OBV MA20, MFI(14)
+    """
     data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
     if data.empty or len(data) < 20:
         return data
@@ -77,15 +85,20 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     low    = data["Low"]
     volume = data["Volume"]
 
-    # 이동평균선
-    data["SMA_5"]  = ta_lib.trend.SMAIndicator(close, window=5).sma_indicator()
-    data["SMA_20"] = ta_lib.trend.SMAIndicator(close, window=20).sma_indicator()
-    data["SMA_60"] = ta_lib.trend.SMAIndicator(close, window=60).sma_indicator()
+    # ── 이동평균선 (SMA / EMA) ────────────────────────────────────────────────
+    data["SMA_5"]   = ta_lib.trend.SMAIndicator(close, window=5).sma_indicator()
+    data["SMA_20"]  = ta_lib.trend.SMAIndicator(close, window=20).sma_indicator()
+    data["SMA_60"]  = ta_lib.trend.SMAIndicator(close, window=60).sma_indicator()
+    data["EMA_20"]  = ta_lib.trend.EMAIndicator(close, window=20).ema_indicator()
+    data["EMA_50"]  = ta_lib.trend.EMAIndicator(close, window=50).ema_indicator()
+    # EMA 200은 데이터가 충분할 때만 (1y/2y 조회 시 활성화)
+    if len(data) >= 200:
+        data["EMA_200"] = ta_lib.trend.EMAIndicator(close, window=200).ema_indicator()
 
-    # RSI
+    # ── RSI (14) ──────────────────────────────────────────────────────────────
     data["RSI"] = ta_lib.momentum.RSIIndicator(close, window=14).rsi()
 
-    # MACD
+    # ── MACD (12/26/9) ────────────────────────────────────────────────────────
     try:
         macd_ind = ta_lib.trend.MACD(close, window_fast=12, window_slow=26, window_sign=9)
         data["MACD"]        = macd_ind.macd()
@@ -94,16 +107,18 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     except Exception:
         pass
 
-    # 볼린저밴드
+    # ── 볼린저밴드 (20, 2σ) ───────────────────────────────────────────────────
     try:
         bb_ind = ta_lib.volatility.BollingerBands(close, window=20, window_dev=2)
         data["BB_Upper"]  = bb_ind.bollinger_hband()
         data["BB_Middle"] = bb_ind.bollinger_mavg()
         data["BB_Lower"]  = bb_ind.bollinger_lband()
+        data["BB_PCT"]    = bb_ind.bollinger_pband()   # %B: 0~1 (밴드 내 위치)
+        data["BB_Width"]  = bb_ind.bollinger_wband()   # 밴드 폭 (변동성 squeeze 감지)
     except Exception:
         pass
 
-    # 스토캐스틱
+    # ── 스토캐스틱 (14, 3) ────────────────────────────────────────────────────
     try:
         stoch_ind = ta_lib.momentum.StochasticOscillator(
             high, low, close, window=14, smooth_window=3
@@ -113,7 +128,59 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     except Exception:
         pass
 
-    # 거래량 이평
+    # ── ADX + 방향성 지수 (14) ────────────────────────────────────────────────
+    try:
+        adx_ind = ta_lib.trend.ADXIndicator(high, low, close, window=14)
+        data["ADX"]     = adx_ind.adx()
+        data["ADX_POS"] = adx_ind.adx_pos()   # +DI (상승 추세력)
+        data["ADX_NEG"] = adx_ind.adx_neg()   # -DI (하락 추세력)
+    except Exception:
+        pass
+
+    # ── CCI (Commodity Channel Index, 20) ────────────────────────────────────
+    try:
+        data["CCI"] = ta_lib.trend.CCIIndicator(high, low, close, window=20).cci()
+    except Exception:
+        pass
+
+    # ── Williams %R (14) ──────────────────────────────────────────────────────
+    try:
+        data["WILLIAMS_R"] = ta_lib.momentum.WilliamsRIndicator(
+            high, low, close, lbp=14
+        ).williams_r()
+    except Exception:
+        pass
+
+    # ── ATR (Average True Range, 14) ──────────────────────────────────────────
+    try:
+        data["ATR"] = ta_lib.volatility.AverageTrueRange(
+            high, low, close, window=14
+        ).average_true_range()
+    except Exception:
+        pass
+
+    # ── ROC (Rate of Change, 12) ──────────────────────────────────────────────
+    try:
+        data["ROC"] = ta_lib.momentum.ROCIndicator(close, window=12).roc()
+    except Exception:
+        pass
+
+    # ── OBV (On-Balance Volume) + 추세선 ─────────────────────────────────────
+    try:
+        data["OBV"]      = ta_lib.volume.OnBalanceVolumeIndicator(close, volume).on_balance_volume()
+        data["OBV_MA20"] = data["OBV"].rolling(window=20).mean()
+    except Exception:
+        pass
+
+    # ── MFI (Money Flow Index, 14) ────────────────────────────────────────────
+    try:
+        data["MFI"] = ta_lib.volume.MFIIndicator(
+            high, low, close, volume, window=14
+        ).money_flow_index()
+    except Exception:
+        pass
+
+    # ── 거래량 이평 ───────────────────────────────────────────────────────────
     data["Volume_MA20"] = volume.rolling(window=20).mean()
 
     return data
@@ -123,8 +190,20 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
 
 def generate_signals(data: pd.DataFrame) -> dict:
     """
-    5가지 기술 지표를 복합 채점하여 매매 신호 생성
+    8개 모듈 복합 채점으로 매매 신호 생성.
     점수 범위: -10 ~ +10  (양수=매수, 음수=매도)
+
+    모듈별 최대 기여도:
+      1. 장기 추세 필터 (EMA 200)        ±1.5  — 시장 국면 판단
+      2. MACD 모멘텀                     ±2.5  — 추세 전환 감지
+      3. RSI 과매수/과매도               ±2.0  — 단기 모멘텀
+      4. 오실레이터 컨센서스             ±2.0  — 스토캐스틱·CCI·Williams%R 합의
+         (스토캐스틱 ±0.8 / CCI ±0.6 / Williams%R ±0.6)
+      5. 거래량 지표 (OBV + MFI)         ±1.5  — 수급·자금 흐름
+      6. ADX 필터 적용 EMA 크로스        ±2.0  — 추세 방향 (신뢰도 보정)
+      7. 볼린저밴드 + Squeeze            ±1.0  — 변동성 위치
+      8. ROC 모멘텀 확인                 ±0.5  — 가격 변화율 필터
+    이론적 최대: ±13 → cap ±10
     """
     if data.empty or len(data) < 21:
         return {}
@@ -134,96 +213,268 @@ def generate_signals(data: pd.DataFrame) -> dict:
     last    = data.iloc[-1]
     prev    = data.iloc[-2]
     close   = data["Close"]
+    price   = float(close.iloc[-1])
+    p_chg   = (price - float(close.iloc[-2])) / float(close.iloc[-2])  # 당일 등락률
 
-    # ── 1. RSI ─────────────────────────────────────────────────────────────
-    rsi = _f(last, "RSI")
-    if rsi is not None:
-        if rsi < 25:
-            score += 2.5; reasons.append(f"RSI 극과매도 ({rsi:.1f}) → 강한 반등 기대")
-        elif rsi < 35:
-            score += 1.5; reasons.append(f"RSI 과매도 ({rsi:.1f}) → 매수 고려")
-        elif rsi < 45:
-            score += 0.5; reasons.append(f"RSI 매수권 진입 ({rsi:.1f})")
-        elif rsi > 75:
-            score -= 2.5; reasons.append(f"RSI 극과매수 ({rsi:.1f}) → 강한 매도 신호")
-        elif rsi > 65:
-            score -= 1.5; reasons.append(f"RSI 과매수 ({rsi:.1f}) → 매도 고려")
-        elif rsi > 55:
-            score -= 0.5; reasons.append(f"RSI 매도권 진입 ({rsi:.1f})")
+    # ══ 1. 장기 추세 필터 (EMA 200) — ±1.5 ═══════════════════════════════════
+    ema200 = _f(last, "EMA_200")
+    if ema200:
+        if price > ema200 * 1.02:        # 명확히 상단
+            score += 1.5
+            reasons.append(f"EMA200 상단 +2% ({price:,.0f} vs {ema200:,.0f}) → 장기 강세장")
+        elif price > ema200:
+            score += 0.8
+            reasons.append(f"EMA200 상단 ({price:,.0f} > {ema200:,.0f}) → 장기 상승 추세")
+        elif price < ema200 * 0.98:      # 명확히 하단
+            score -= 1.5
+            reasons.append(f"EMA200 하단 -2% ({price:,.0f} vs {ema200:,.0f}) → 장기 약세장")
+        else:
+            score -= 0.8
+            reasons.append(f"EMA200 하단 ({price:,.0f} < {ema200:,.0f}) → 장기 하락 추세")
 
-    # ── 2. MACD ────────────────────────────────────────────────────────────
-    macd, sig  = _f(last, "MACD"),        _f(last, "MACD_Signal")
-    pmacd, psg = _f(prev, "MACD"),        _f(prev, "MACD_Signal")
-    if all(v is not None for v in [macd, sig, pmacd, psg]):
-        cross_up   = pmacd < psg and macd > sig
-        cross_down = pmacd > psg and macd < sig
+    # ══ 2. MACD 모멘텀 — ±2.5 ════════════════════════════════════════════════
+    macd,  sig  = _f(last, "MACD"),  _f(last, "MACD_Signal")
+    pmacd, psig = _f(prev, "MACD"),  _f(prev, "MACD_Signal")
+    if all(v is not None for v in [macd, sig, pmacd, psig]):
+        cross_up   = pmacd < psig and macd > sig
+        cross_down = pmacd > psig and macd < sig
         if cross_up:
             score += 2.0; reasons.append("MACD 골든크로스 → 강한 매수 신호")
         elif cross_down:
             score -= 2.0; reasons.append("MACD 데드크로스 → 강한 매도 신호")
         elif macd > sig:
-            score += 0.5; reasons.append("MACD 매수 우위 유지")
+            score += 0.5; reasons.append(f"MACD 매수 우위 ({macd:.3f} > {sig:.3f})")
         else:
-            score -= 0.5; reasons.append("MACD 매도 우위 유지")
+            score -= 0.5; reasons.append(f"MACD 매도 우위 ({macd:.3f} < {sig:.3f})")
 
-    # ── 3. 볼린저밴드 ──────────────────────────────────────────────────────
-    price  = float(close.iloc[-1])
-    bb_u   = _f(last, "BB_Upper")
-    bb_l   = _f(last, "BB_Lower")
-    bb_m   = _f(last, "BB_Middle")
-    if bb_u and bb_l and bb_m:
-        band_width = (bb_u - bb_l) / bb_m
-        if price < bb_l:
-            score += 1.5; reasons.append(f"볼린저 하단 이탈 ({price:,.0f} < {bb_l:,.0f}) → 반등 기대")
-        elif price > bb_u:
-            score -= 1.5; reasons.append(f"볼린저 상단 돌파 ({price:,.0f} > {bb_u:,.0f}) → 과열 주의")
-        elif price > bb_m:
-            score += 0.3; reasons.append("볼린저 중간선 위 → 상승 추세")
+        # 히스토그램 기울기 (최근 3봉 추세)
+        if "MACD_Hist" in data.columns and len(data) >= 4:
+            hist3 = data["MACD_Hist"].iloc[-3:].dropna()
+            if len(hist3) == 3:
+                if float(hist3.iloc[0]) < float(hist3.iloc[1]) < float(hist3.iloc[2]):
+                    score += 0.5; reasons.append("MACD 히스토그램 연속 상승 → 모멘텀 강화")
+                elif float(hist3.iloc[0]) > float(hist3.iloc[1]) > float(hist3.iloc[2]):
+                    score -= 0.5; reasons.append("MACD 히스토그램 연속 하락 → 모멘텀 약화")
+
+    # ══ 3. RSI (14) — ±2.0 ═══════════════════════════════════════════════════
+    rsi = _f(last, "RSI")
+    if rsi is not None:
+        if rsi < 20:
+            score += 2.0; reasons.append(f"RSI 극과매도 ({rsi:.1f}) → 강반등 기대")
+        elif rsi < 30:
+            score += 1.5; reasons.append(f"RSI 과매도 ({rsi:.1f}) → 매수 고려")
+        elif rsi < 40:
+            score += 0.7; reasons.append(f"RSI 매수권 ({rsi:.1f})")
+        elif rsi < 50:
+            score += 0.2
+        elif rsi > 80:
+            score -= 2.0; reasons.append(f"RSI 극과매수 ({rsi:.1f}) → 강한 매도 신호")
+        elif rsi > 70:
+            score -= 1.5; reasons.append(f"RSI 과매수 ({rsi:.1f}) → 매도 고려")
+        elif rsi > 60:
+            score -= 0.7; reasons.append(f"RSI 과열 진입 ({rsi:.1f})")
+        elif rsi > 50:
+            score -= 0.2
+
+    # ══ 4. 오실레이터 컨센서스 — ±2.0 ═══════════════════════════════════════
+    osc_parts: list[float] = []
+
+    # 스토캐스틱 (±0.8)
+    sk, sd = _f(last, "STOCH_K"), _f(last, "STOCH_D")
+    psk    = _f(prev, "STOCH_K")
+    if sk is not None and sd is not None:
+        if sk < 20 and sd < 20:
+            osc_parts.append(0.8)
+            reasons.append(f"스토캐스틱 과매도 (K:{sk:.1f} D:{sd:.1f})")
+        elif sk > 80 and sd > 80:
+            osc_parts.append(-0.8)
+            reasons.append(f"스토캐스틱 과매수 (K:{sk:.1f} D:{sd:.1f})")
+        elif sk > sd and (psk is None or psk <= sd):
+            osc_parts.append(0.4)         # K선이 D선 상향 돌파
+        elif sk < sd and (psk is None or psk >= sd):
+            osc_parts.append(-0.4)
+        elif sk > sd:
+            osc_parts.append(0.2)
         else:
-            score -= 0.3
+            osc_parts.append(-0.2)
 
-    # ── 4. 이동평균선 크로스 ───────────────────────────────────────────────
-    sma5, sma20    = _f(last, "SMA_5"), _f(last, "SMA_20")
-    psma5, psma20  = _f(prev, "SMA_5"), _f(prev, "SMA_20")
-    if all(v is not None for v in [sma5, sma20, psma5, psma20]):
-        if psma5 < psma20 and sma5 > sma20:
-            score += 2.0; reasons.append("5일선 골든크로스 → 단기 매수 신호")
-        elif psma5 > psma20 and sma5 < sma20:
-            score -= 2.0; reasons.append("5일선 데드크로스 → 단기 매도 신호")
-        elif sma5 > sma20:
-            score += 0.5; reasons.append("단기선 > 중기선 (상승 배열)")
+    # CCI (±0.6)
+    cci = _f(last, "CCI")
+    if cci is not None:
+        if cci < -200:
+            osc_parts.append(0.6); reasons.append(f"CCI 극과매도 ({cci:.0f})")
+        elif cci < -100:
+            osc_parts.append(0.4); reasons.append(f"CCI 과매도 ({cci:.0f})")
+        elif cci > 200:
+            osc_parts.append(-0.6); reasons.append(f"CCI 극과매수 ({cci:.0f})")
+        elif cci > 100:
+            osc_parts.append(-0.4); reasons.append(f"CCI 과매수 ({cci:.0f})")
+        elif 0 < cci < 100:
+            osc_parts.append(0.1)         # 중립 상승권
         else:
-            score -= 0.5; reasons.append("단기선 < 중기선 (하락 배열)")
+            osc_parts.append(-0.1)
 
-    # ── 5. 거래량 ──────────────────────────────────────────────────────────
+    # Williams %R (±0.6)
+    wr = _f(last, "WILLIAMS_R")
+    if wr is not None:
+        if wr < -90:
+            osc_parts.append(0.6); reasons.append(f"Williams %R 극과매도 ({wr:.1f})")
+        elif wr < -80:
+            osc_parts.append(0.4); reasons.append(f"Williams %R 과매도 ({wr:.1f})")
+        elif wr > -10:
+            osc_parts.append(-0.6); reasons.append(f"Williams %R 극과매수 ({wr:.1f})")
+        elif wr > -20:
+            osc_parts.append(-0.4); reasons.append(f"Williams %R 과매수 ({wr:.1f})")
+        elif wr > -50:
+            osc_parts.append(-0.1)
+        else:
+            osc_parts.append(0.1)
+
+    if osc_parts:
+        osc_sum = sum(osc_parts)
+        # 세 오실레이터가 방향 일치 시 보너스 (컨센서스 프리미엄)
+        if len(osc_parts) == 3:
+            if all(v > 0 for v in osc_parts):
+                osc_sum += 0.4; reasons.append("오실레이터 3종 매수 합의 → 신뢰도 상승")
+            elif all(v < 0 for v in osc_parts):
+                osc_sum -= 0.4; reasons.append("오실레이터 3종 매도 합의 → 신뢰도 상승")
+        score += max(-2.0, min(2.0, osc_sum))
+
+    # ══ 5. 거래량 지표 (OBV + MFI + 원시 거래량) — ±1.5 ════════════════════
     vol    = float(data["Volume"].iloc[-1])
     vol_ma = _f(last, "Volume_MA20")
-    if vol_ma and vol_ma > 0:
-        p_chg = (price - float(close.iloc[-2])) / float(close.iloc[-2])
-        ratio = vol / vol_ma
-        if ratio > 2.0:
-            if p_chg > 0:
-                score += 1.0; reasons.append(f"거래량 폭증 (+{ratio:.1f}x) + 상승 → 강한 매수세")
-            else:
-                score -= 1.0; reasons.append(f"거래량 폭증 (+{ratio:.1f}x) + 하락 → 강한 매도세")
-        elif ratio > 1.5:
-            if p_chg > 0:
-                score += 0.5; reasons.append(f"거래량 증가 ({ratio:.1f}x) + 상승")
-            else:
-                score -= 0.5
 
-    # ── 최종 판정 ──────────────────────────────────────────────────────────
+    # OBV 추세 (±0.5)
+    obv     = _f(last, "OBV")
+    obv_ma  = _f(last, "OBV_MA20")
+    if obv is not None and obv_ma is not None:
+        if obv > obv_ma:
+            score += 0.5; reasons.append("OBV > MA20 → 매집 추세 (수급 긍정)")
+        else:
+            score -= 0.5; reasons.append("OBV < MA20 → 분산 추세 (수급 부정)")
+
+    # MFI (±0.7)
+    mfi = _f(last, "MFI")
+    if mfi is not None:
+        if mfi < 20:
+            score += 0.7; reasons.append(f"MFI 과매도 ({mfi:.1f}) → 자금 유입 기대")
+        elif mfi < 30:
+            score += 0.4
+        elif mfi > 80:
+            score -= 0.7; reasons.append(f"MFI 과매수 ({mfi:.1f}) → 자금 이탈 주의")
+        elif mfi > 70:
+            score -= 0.4
+
+    # 원시 거래량 급증 (±0.3 — 보조 역할)
+    if vol_ma and vol_ma > 0:
+        ratio = vol / vol_ma
+        if ratio > 2.5:
+            if p_chg > 0:
+                score += 0.3; reasons.append(f"거래량 폭증 ({ratio:.1f}x) + 상승 → 강한 매수세")
+            else:
+                score -= 0.3; reasons.append(f"거래량 폭증 ({ratio:.1f}x) + 하락 → 강한 매도세")
+        elif ratio > 1.5:
+            score += 0.2 if p_chg > 0 else -0.2
+
+    # ══ 6. ADX 필터 적용 EMA 크로스 — ±2.0 ══════════════════════════════════
+    adx     = _f(last, "ADX")
+    adx_pos = _f(last, "ADX_POS")
+    adx_neg = _f(last, "ADX_NEG")
+    ema20   = _f(last, "EMA_20")
+    ema50   = _f(last, "EMA_50")
+    pema20  = _f(prev, "EMA_20")
+    pema50  = _f(prev, "EMA_50")
+
+    # ADX 강도에 따른 신호 신뢰도 가중치
+    if adx is not None:
+        if adx > 35:    adx_w = 1.0    # 강한 추세 — 이동평균 신호 신뢰
+        elif adx > 25:  adx_w = 0.8
+        elif adx > 20:  adx_w = 0.6
+        elif adx > 15:  adx_w = 0.4
+        else:           adx_w = 0.2    # 횡보장 — 이동평균 신호 약화
+    else:
+        adx_w = 0.5
+
+    if all(v is not None for v in [ema20, ema50, pema20, pema50]):
+        cross_up = pema20 < pema50 and ema20 >= ema50
+        cross_dn = pema20 > pema50 and ema20 <= ema50
+        adx_label = f"ADX:{adx:.0f}" if adx else ""
+        if cross_up:
+            contrib = round(2.0 * adx_w, 2)
+            score += contrib
+            reasons.append(f"EMA20 골든크로스 ({adx_label}) → 상승 전환")
+        elif cross_dn:
+            contrib = round(2.0 * adx_w, 2)
+            score -= contrib
+            reasons.append(f"EMA20 데드크로스 ({adx_label}) → 하락 전환")
+        elif ema20 > ema50:
+            contrib = round(0.8 * adx_w, 2)
+            score += contrib
+            if adx and adx > 20:
+                reasons.append(f"EMA 상승 배열 ({adx_label} 추세 {'강' if adx > 30 else '보통'})")
+        else:
+            contrib = round(0.8 * adx_w, 2)
+            score -= contrib
+            if adx and adx > 20:
+                reasons.append(f"EMA 하락 배열 ({adx_label})")
+
+    # +DI / -DI 방향성 추가 확인
+    if adx_pos is not None and adx_neg is not None and adx is not None and adx > 20:
+        if adx_pos > adx_neg:
+            score += 0.3; reasons.append(f"+DI({adx_pos:.1f}) > -DI({adx_neg:.1f}) → 상승 우세")
+        else:
+            score -= 0.3; reasons.append(f"-DI({adx_neg:.1f}) > +DI({adx_pos:.1f}) → 하락 우세")
+
+    # ══ 7. 볼린저밴드 + Squeeze — ±1.0 ══════════════════════════════════════
+    bb_u  = _f(last, "BB_Upper")
+    bb_l  = _f(last, "BB_Lower")
+    bb_m  = _f(last, "BB_Middle")
+    bb_w  = _f(last, "BB_Width")    # 밴드 폭 (좁을수록 Squeeze)
+    if bb_u and bb_l and bb_m:
+        if price < bb_l:
+            score += 1.0; reasons.append(f"볼린저 하단 이탈 ({price:,.0f} < {bb_l:,.0f}) → 반등 기대")
+        elif price > bb_u:
+            score -= 1.0; reasons.append(f"볼린저 상단 돌파 ({price:,.0f} > {bb_u:,.0f}) → 과열 주의")
+        else:
+            # %B 위치 (0.5 기준 상하)
+            bb_pct = (price - bb_l) / (bb_u - bb_l) if (bb_u - bb_l) > 0 else 0.5
+            if bb_pct > 0.7:
+                score -= 0.3; reasons.append(f"볼린저 상단 70% 이상 위치 (%B:{bb_pct:.2f})")
+            elif bb_pct < 0.3:
+                score += 0.3; reasons.append(f"볼린저 하단 30% 이하 위치 (%B:{bb_pct:.2f})")
+
+        # Squeeze 감지 (밴드 폭 역대 최소 20% 구간 → 폭발 가능성)
+        if bb_w is not None and len(data) >= 20:
+            recent_bw = data["BB_Width"].dropna().tail(20)
+            if len(recent_bw) >= 5 and bb_w <= float(recent_bw.quantile(0.2)):
+                reasons.append("볼린저 밴드 Squeeze (폭발적 변동성 임박)")
+
+    # ══ 8. ROC 모멘텀 확인 — ±0.5 ════════════════════════════════════════════
+    roc = _f(last, "ROC")
+    if roc is not None:
+        if roc > 15:
+            score += 0.5; reasons.append(f"ROC 강한 상승 모멘텀 ({roc:.1f}%)")
+        elif roc > 5:
+            score += 0.2
+        elif roc < -15:
+            score -= 0.5; reasons.append(f"ROC 강한 하락 모멘텀 ({roc:.1f}%)")
+        elif roc < -5:
+            score -= 0.2
+
+    # ══ 최종 판정 ════════════════════════════════════════════════════════════
+    score = max(-10.0, min(10.0, score))  # cap ±10
     s = int(round(score))
-    if   s >= 5: label, badge = "강력 매수", "🟢🟢"
-    elif s >= 3: label, badge = "매수",      "🟢"
-    elif s >= 1: label, badge = "약한 매수", "🔵"
-    elif s == 0: label, badge = "중립/관망", "⚪"
-    elif s >= -2: label, badge = "약한 매도", "🟡"
-    elif s >= -4: label, badge = "매도",      "🔴"
+    if   s >= 6:  label, badge = "강력 매수", "🟢🟢"
+    elif s >= 4:  label, badge = "매수",      "🟢"
+    elif s >= 2:  label, badge = "약한 매수", "🔵"
+    elif s >= -1: label, badge = "중립/관망", "⚪"
+    elif s >= -3: label, badge = "약한 매도", "🟡"
+    elif s >= -5: label, badge = "매도",      "🔴"
     else:         label, badge = "강력 매도", "🔴🔴"
 
     return {
-        "score":   s,
+        "score":   round(score, 1),
+        "score_int": s,
         "label":   label,
         "badge":   badge,
         "reasons": reasons,
@@ -318,37 +569,84 @@ def get_exchange_rates() -> dict:
 
 # ─── 추천 종목 종합 분석 ──────────────────────────────────────────────────────
 
+def _composite_score(tech: float, ret_pct: float, sharpe: float) -> float:
+    """
+    기술·수익률·샤프 종합 점수 계산 (범위 약 ±7).
+
+    가중치:
+      기술점수   50 %  — generate_signals 결과 (-10 ~ +10)
+      수익률점수 30 %  — 예상수익률(%)을 ±5 스케일로 변환
+                         +10% → +5 / -10% → -5 (clamp)
+      샤프점수   20 %  — 샤프지수를 ±3 스케일로 변환
+                         sharpe 2.0 → +3 / sharpe -2.0 → -3 (clamp)
+
+    수익률이 마이너스면 기술 점수가 아무리 높아도 종합 점수는 반드시 하락.
+    """
+    ret_score    = max(-5.0, min(5.0,  ret_pct / 2.0))
+    sharpe_score = max(-3.0, min(3.0,  sharpe  * 1.5))
+    composite    = tech * 0.50 + ret_score * 0.30 + sharpe_score * 0.20
+    return round(composite, 2)
+
+
+def _composite_label(score: float) -> tuple[str, str]:
+    """종합점수 → (레이블, 배지)"""
+    s = score
+    if   s >= 4.5: return "강력 추천", "🟢🟢"
+    elif s >= 3.0: return "추천",     "🟢"
+    elif s >= 1.5: return "관심",     "🔵"
+    elif s >= 0.0: return "중립",     "⚪"
+    elif s >= -2.0: return "주의",    "🟡"
+    elif s >= -4.0: return "비추천",  "🔴"
+    else:           return "강력비추", "🔴🔴"
+
+
 def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
-    """여러 종목을 분석하여 점수 순으로 추천 목록 생성"""
+    """
+    여러 종목을 분석하여 종합 점수 순으로 추천 목록 생성.
+    종합점수 = 기술점수(50%) + 수익률점수(30%) + 샤프점수(20%)
+    """
     rows = []
     for name, ticker in tickers_dict.items():
         try:
             data = get_stock_data(ticker, "3mo")
             if data.empty:
                 continue
-            sig = generate_signals(data)
-            exp = calculate_expected_return(data, sig)
+            sig  = generate_signals(data)
+            exp  = calculate_expected_return(data, sig)
             close = data["Close"]
-            price  = float(close.iloc[-1])
-            chg_1d = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) >= 2 else 0
+
+            price   = float(close.iloc[-1])
+            chg_1d  = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) >= 2 else 0.0
+            tech    = float(sig.get("score", 0))
+            ret_pct = float(exp.get("expected_return_pct", 0))
+            sharpe  = float(exp.get("sharpe", 0))
+
+            comp       = _composite_score(tech, ret_pct, sharpe)
+            comp_label, comp_badge = _composite_label(comp)
+
             rows.append({
                 "종목명":         name,
                 "티커":           ticker,
                 "현재가":         price,
                 "등락률(1일)%":   round(chg_1d, 2),
-                "신호":           sig.get("label", "N/A"),
-                "신호점수":       sig.get("score", 0),
-                "예상수익률(%)":  exp.get("expected_return_pct", 0),
-                "변동성(%)":      exp.get("hist_volatility", 0),
-                "모멘텀(20일)%":  exp.get("momentum_20d", 0),
-                "샤프지수":       exp.get("sharpe", 0),
+                "종합추천":       f"{comp_badge} {comp_label}",
+                "종합점수":       comp,
+                "기술점수":       tech,
+                "예상수익률(%)":  ret_pct,
+                "변동성(%)":      round(float(exp.get("hist_volatility", 0)), 1),
+                "모멘텀(20일)%":  round(float(exp.get("momentum_20d", 0)), 2),
+                "샤프지수":       round(sharpe, 2),
             })
         except Exception:
             continue
 
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame(rows).sort_values("신호점수", ascending=False).reset_index(drop=True)
+    return (
+        pd.DataFrame(rows)
+        .sort_values("종합점수", ascending=False)
+        .reset_index(drop=True)
+    )
 
 
 # ─── 유틸 ─────────────────────────────────────────────────────────────────────
@@ -507,17 +805,62 @@ def get_krx_stock_list() -> dict:
 
 # ─── 펀더멘털 데이터 ──────────────────────────────────────────────────────────
 
+def _is_krx_ticker(ticker: str) -> bool:
+    return ticker.endswith(".KS") or ticker.endswith(".KQ")
+
+
+def _krx_fundamental_to_dict(row: dict, ticker: str) -> dict:
+    """fundamental_db row → get_fundamental_data 반환 형식으로 변환"""
+    return {
+        "per":               row.get("per"),
+        "pbr":               row.get("pbr"),
+        "roe":               None,
+        "debt_equity":       None,
+        "revenue_growth":    None,
+        "earnings_growth":   None,
+        "operating_margins": None,
+        "w52_high":          None,
+        "w52_low":           None,
+        "market_cap":        row.get("market_cap"),
+        "free_cashflow":     None,
+        "eps_ttm":           row.get("eps"),
+        "forward_pe":        None,
+        "div":               row.get("div"),
+        "bps":               row.get("bps"),
+        "dps":               row.get("dps"),
+        "sector":            "N/A",
+        "industry":          "N/A",
+        "short_name":        row.get("name", ticker),
+        "last_updated":      row.get("last_updated"),
+        "source":            "pykrx",
+    }
+
+
 def get_fundamental_data(ticker: str) -> dict:
-    """yfinance에서 펀더멘털 지표 조회"""
+    """
+    KRX 종목(.KS/.KQ): SQLite 캐시 우선 조회 → 없으면 pykrx로 단일 fetch 후 저장
+    해외 종목: yfinance 직접 조회
+    """
+    if _is_krx_ticker(ticker):
+        try:
+            from fundamental_db import get_ticker_fundamental, fetch_and_cache_single
+            row = get_ticker_fundamental(ticker)
+            if row is None:
+                row = fetch_and_cache_single(ticker)
+            if row:
+                return _krx_fundamental_to_dict(row, ticker)
+        except Exception:
+            pass
+
     try:
         info = yf.Ticker(ticker).info
         return {
             "per":              info.get("trailingPE"),
             "pbr":              info.get("priceToBook"),
-            "roe":              info.get("returnOnEquity"),       # decimal (0.15 = 15%)
-            "debt_equity":      info.get("debtToEquity"),         # % (50 = 50%)
-            "revenue_growth":   info.get("revenueGrowth"),        # decimal
-            "earnings_growth":  info.get("earningsGrowth"),       # decimal
+            "roe":              info.get("returnOnEquity"),
+            "debt_equity":      info.get("debtToEquity"),
+            "revenue_growth":   info.get("revenueGrowth"),
+            "earnings_growth":  info.get("earningsGrowth"),
             "operating_margins":info.get("operatingMargins"),
             "w52_high":         info.get("fiftyTwoWeekHigh"),
             "w52_low":          info.get("fiftyTwoWeekLow"),
@@ -528,6 +871,7 @@ def get_fundamental_data(ticker: str) -> dict:
             "sector":           info.get("sector", "N/A"),
             "industry":         info.get("industry", "N/A"),
             "short_name":       info.get("shortName", ticker),
+            "source":           "yfinance",
         }
     except Exception:
         return {}
@@ -646,12 +990,15 @@ def get_stop_loss_targets(data: pd.DataFrame, entry_price: float = None) -> dict
     current = float(close.iloc[-1])
     entry   = entry_price or current
 
-    # ATR (Average True Range, 14일)
-    high      = data["High"]
-    low       = data["Low"]
-    prev_c    = close.shift(1)
-    tr        = pd.concat([high - low, (high - prev_c).abs(), (low - prev_c).abs()], axis=1).max(axis=1)
-    atr_val   = float(tr.rolling(14).mean().iloc[-1])
+    # ATR — get_stock_data에서 미리 계산된 값 우선, 없으면 직접 계산
+    if "ATR" in data.columns and pd.notna(data["ATR"].iloc[-1]):
+        atr_val = float(data["ATR"].iloc[-1])
+    else:
+        high   = data["High"]
+        low    = data["Low"]
+        prev_c = close.shift(1)
+        tr     = pd.concat([high - low, (high - prev_c).abs(), (low - prev_c).abs()], axis=1).max(axis=1)
+        atr_val = float(tr.rolling(14).mean().iloc[-1])
 
     # 손절선
     stop_8pct = round(entry * 0.92, 2)                              # 오닐 8% 손절
@@ -948,6 +1295,127 @@ def analyze_news_sentiment_llm(
         result = analyze_news_sentiment_keywords(news_items)
         result["summary"] = "(AI 분석 실패 — 키워드 분석으로 대체)"
         return result
+
+
+def fetch_article_content(url: str) -> str:
+    """
+    기사 URL에서 본문 텍스트 스크래핑 (최대 2000자).
+    네이버 뉴스 / 일반 HTML 페이지 지원.
+    """
+    if not HAS_BS4 or not url or url == "#":
+        return ""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "ko-KR,ko;q=0.9",
+        "Referer": "https://finance.naver.com/",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = resp.apparent_encoding or "utf-8"
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # 네이버 뉴스 본문 선택자 우선 시도
+        for sel in [
+            "#dic_area", "#newsct_article", "#articeBody",
+            ".article-body", ".news_end", "article",
+        ]:
+            el = soup.select_one(sel)
+            if el:
+                return el.get_text(separator="\n", strip=True)[:2000]
+
+        # 폴백: 모든 <p> 태그 합산
+        paras = [p.get_text(strip=True) for p in soup.find_all("p") if p.get_text(strip=True)]
+        return "\n".join(paras[:30])[:2000]
+    except Exception:
+        return ""
+
+
+def summarize_article_llm(
+    title: str,
+    link: str,
+    ticker: str,
+    api_key: str,
+) -> dict:
+    """
+    단일 기사를 Gemini AI로 요약.
+    반환: {
+        "summary": str,          # 핵심 내용 3~5문장
+        "sentiment": str,        # 긍정/중립/부정
+        "score": float,          # -1.0 ~ 1.0
+        "key_points": list[str], # 핵심 포인트
+        "investment_implication": str,  # 투자 시사점
+        "used_content": bool,    # 본문 스크래핑 성공 여부
+    }
+    """
+    if not api_key:
+        return {
+            "summary": "AI 요약을 사용하려면 Gemini API 키를 입력하세요.",
+            "sentiment": "N/A", "score": 0.0,
+            "key_points": [], "investment_implication": "",
+            "used_content": False,
+        }
+
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.messages import HumanMessage
+
+        # 기사 본문 스크래핑 시도
+        body = fetch_article_content(link)
+        used_content = bool(body)
+
+        if used_content:
+            article_text = f"기사 제목: {title}\n\n기사 본문:\n{body}"
+        else:
+            article_text = f"기사 제목: {title}\n\n(본문 스크래핑 불가 — 제목만으로 분석합니다)"
+
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",
+            google_api_key=api_key,
+            temperature=0.1,
+        )
+
+        prompt = f"""다음 뉴스 기사를 분석해 주세요. 분석 대상 종목: {ticker}
+
+{article_text}
+
+아래 JSON 형식으로만 답하세요 (설명 없이 JSON만):
+{{
+  "summary": "<기사 핵심 내용 3~5문장 요약>",
+  "sentiment": "<긍정/중립/부정 중 하나>",
+  "score": <-1.0 ~ 1.0 사이 소수 감성 점수>,
+  "key_points": ["<핵심 포인트 1>", "<핵심 포인트 2>", "<핵심 포인트 3>"],
+  "investment_implication": "<투자자 관점 시사점 1~2문장>"
+}}"""
+
+        response = llm.invoke([HumanMessage(content=prompt)])
+        raw = response.content.strip()
+
+        import json as _json, re as _re
+        match = _re.search(r'\{[\s\S]*\}', raw)
+        if not match:
+            raise ValueError("JSON not found in response")
+        parsed = _json.loads(match.group())
+
+        return {
+            "summary":                parsed.get("summary", "요약 없음"),
+            "sentiment":              parsed.get("sentiment", "중립"),
+            "score":                  float(parsed.get("score", 0.0)),
+            "key_points":             parsed.get("key_points", []),
+            "investment_implication": parsed.get("investment_implication", ""),
+            "used_content":           used_content,
+        }
+
+    except Exception as exc:
+        return {
+            "summary": f"AI 요약 실패: {str(exc)[:120]}",
+            "sentiment": "N/A", "score": 0.0,
+            "key_points": [], "investment_implication": "",
+            "used_content": False,
+        }
 
 
 def get_hybrid_signal(technical_score: float, news_score: float) -> dict:
