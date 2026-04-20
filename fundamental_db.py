@@ -7,6 +7,7 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta
 from contextlib import contextmanager
+from typing import Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "fundamentals.db")
 QUARTER_DAYS = 90  # 분기 업데이트 주기
@@ -62,7 +63,7 @@ def needs_update(market: str) -> bool:
     return (datetime.now() - last).days >= QUARTER_DAYS
 
 
-def get_last_update(market: str) -> str | None:
+def get_last_update(market: str) -> Optional[str]:
     """마지막 전체 업데이트 날짜 문자열 반환"""
     with _get_conn() as conn:
         row = conn.execute(
@@ -151,7 +152,7 @@ def _safe(row, col):
 
 # ── 단일 종목 조회 ─────────────────────────────────────────────────────────────
 
-def get_ticker_fundamental(ticker: str) -> dict | None:
+def get_ticker_fundamental(ticker: str) -> Optional[dict]:
     """
     DB에서 ticker 펀더멘털 조회.
     ticker 형식: '005930.KS' 또는 '005930.KQ'
@@ -166,7 +167,7 @@ def get_ticker_fundamental(ticker: str) -> dict | None:
     return dict(row)
 
 
-def fetch_and_cache_single(ticker: str) -> dict | None:
+def fetch_and_cache_single(ticker: str) -> Optional[dict]:
     """
     DB에 없는 종목을 pykrx로 단일 조회해 저장.
     ticker: '005930.KS' 형식
@@ -263,7 +264,7 @@ def get_dart_financials(ticker: str, dart_api_key: str) -> dict:
             if fs is None or fs.empty:
                 continue
 
-            def _extract(keywords: list[str]) -> float | None:
+            def _extract(keywords: list) -> Optional[float]:
                 for kw in keywords:
                     rows = fs[fs["account_nm"].str.contains(kw, na=False)]
                     if not rows.empty:
@@ -310,7 +311,7 @@ def get_trading_trend(ticker: str) -> dict:
             # 순매수 컬럼 추출
             net = df["순매수"] if "순매수" in df.columns else df.iloc[:, 2]
 
-            def _val(label: str) -> float | None:
+            def _val(label: str) -> Optional[float]:
                 if label in net.index:
                     return round(float(net[label]) / 1e8, 1)
                 return None
