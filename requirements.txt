@@ -10,6 +10,7 @@ ta>=0.11.0
 plotly>=5.18.0
 finance-datareader>=0.9.0
 pykrx>=1.0.0
+OpenDartReader>=0.8.0
 
 # ── Web Scraping ─────────────────────────────────────────────────────────────
 requests>=2.28.0

@@ -853,25 +853,50 @@ def get_fundamental_data(ticker: str) -> dict:
             pass
 
     try:
-        info = yf.Ticker(ticker).info
-
+        t         = yf.Ticker(ticker)
+        info      = t.info
         price     = info.get("currentPrice") or info.get("regularMarketPrice")
         eps_ttm   = info.get("trailingEps")
         book_val  = info.get("bookValue")
+        market_cap= info.get("marketCap")
+        total_rev = info.get("totalRevenue")
 
-        # PER: yfinance가 None이면 price / trailingEps 로 직접 계산
+        # PER fallback: price / trailingEps
         per = info.get("trailingPE")
         if per is None and price and eps_ttm and eps_ttm > 0:
             per = round(price / eps_ttm, 2)
 
-        # PBR: yfinance가 None이면 price / bookValue 로 직접 계산
+        # PBR fallback: price / bookValue
         pbr = info.get("priceToBook")
         if pbr is None and price and book_val and book_val > 0:
             pbr = round(price / book_val, 2)
 
+        # PSR: marketCap / totalRevenue
+        psr = None
+        if market_cap and total_rev and total_rev > 0:
+            psr = round(market_cap / total_rev, 2)
+
+        # 영업이익·순이익: financials DataFrame에서 추출
+        operating_income = None
+        net_income       = None
+        try:
+            fin = t.financials
+            if fin is not None and not fin.empty:
+                for label in ["Operating Income", "EBIT"]:
+                    if label in fin.index:
+                        operating_income = float(fin.loc[label].iloc[0])
+                        break
+                for label in ["Net Income", "Net Income Common Stockholders"]:
+                    if label in fin.index:
+                        net_income = float(fin.loc[label].iloc[0])
+                        break
+        except Exception:
+            pass
+
         return {
             "per":              per,
             "pbr":              pbr,
+            "psr":              psr,
             "roe":              info.get("returnOnEquity"),
             "debt_equity":      info.get("debtToEquity"),
             "revenue_growth":   info.get("revenueGrowth"),
@@ -879,7 +904,10 @@ def get_fundamental_data(ticker: str) -> dict:
             "operating_margins":info.get("operatingMargins"),
             "w52_high":         info.get("fiftyTwoWeekHigh"),
             "w52_low":          info.get("fiftyTwoWeekLow"),
-            "market_cap":       info.get("marketCap"),
+            "market_cap":       market_cap,
+            "total_revenue":    total_rev,
+            "operating_income": operating_income,
+            "net_income":       net_income,
             "free_cashflow":    info.get("freeCashflow"),
             "eps_ttm":          eps_ttm,
             "forward_pe":       info.get("forwardPE"),

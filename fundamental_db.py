@@ -236,3 +236,93 @@ def get_all_fundamentals(market: str = None) -> pd.DataFrame:
         else:
             df = pd.read_sql("SELECT * FROM fundamentals", conn)
     return df
+
+
+# ── DART 재무제표 ──────────────────────────────────────────────────────────────
+
+def get_dart_financials(ticker: str, dart_api_key: str) -> dict:
+    """
+    DART OpenAPI로 최근 연간 재무제표 조회.
+    반환: {revenue, operating_income, net_income, year} (단위: 억원)
+    ticker: '005930.KS' 형식
+    """
+    if not dart_api_key:
+        return {}
+    try:
+        import OpenDartReader
+    except ImportError:
+        return {}
+
+    code = ticker.split(".")[0]
+    dart = OpenDartReader.OpenDartReader(dart_api_key)
+
+    # 최근 2개년 시도
+    for year in [datetime.now().year - 1, datetime.now().year - 2]:
+        try:
+            fs = dart.finstate(code, year)
+            if fs is None or fs.empty:
+                continue
+
+            def _extract(keywords: list[str]) -> float | None:
+                for kw in keywords:
+                    rows = fs[fs["account_nm"].str.contains(kw, na=False)]
+                    if not rows.empty:
+                        val = rows.iloc[0].get("thstrm_amount", "")
+                        if val:
+                            try:
+                                return float(str(val).replace(",", "")) / 1e8  # 억원 환산
+                            except ValueError:
+                                pass
+                return None
+
+            rev  = _extract(["매출액", "수익(매출액)", "영업수익"])
+            oinc = _extract(["영업이익"])
+            ninc = _extract(["당기순이익", "분기순이익"])
+
+            if rev is not None:
+                return {"revenue": rev, "operating_income": oinc,
+                        "net_income": ninc, "year": year}
+        except Exception:
+            continue
+    return {}
+
+
+# ── pykrx 투자자별 매매 동향 ──────────────────────────────────────────────────
+
+def get_trading_trend(ticker: str) -> dict:
+    """
+    pykrx로 최근 영업일 투자자별 순매수 금액 조회.
+    반환: {date, 개인, 외국인, 기관합계, 금융투자, 연기금}  (단위: 억원)
+    """
+    try:
+        from pykrx import stock as pkrx
+    except ImportError:
+        return {}
+
+    code = ticker.split(".")[0]
+    # 최근 5영업일 중 데이터 있는 날 사용
+    for days_ago in range(1, 8):
+        date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y%m%d")
+        try:
+            df = pkrx.get_market_trading_value_by_investor(date, date, code)
+            if df is None or df.empty:
+                continue
+            # 순매수 컬럼 추출
+            net = df["순매수"] if "순매수" in df.columns else df.iloc[:, 2]
+
+            def _val(label: str) -> float | None:
+                if label in net.index:
+                    return round(float(net[label]) / 1e8, 1)
+                return None
+
+            return {
+                "date":   date,
+                "개인":   _val("개인"),
+                "외국인": _val("외국인"),
+                "기관합계": _val("기관합계"),
+                "금융투자": _val("금융투자"),
+                "연기금":  _val("연기금등") or _val("연기금"),
+            }
+        except Exception:
+            continue
+    return {}

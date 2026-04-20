@@ -329,6 +329,28 @@ with st.sidebar:
 
     use_llm = bool(gemini_api_key)
 
+    # ── DART API 키 ────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 📑 DART 재무정보 (선택)")
+    try:
+        _dart_secret = st.secrets.get("DART_API_KEY", "")
+    except Exception:
+        _dart_secret = ""
+    if _dart_secret:
+        dart_api_key = _dart_secret
+        st.caption("🟢 DART 연동 활성 (secrets 자동 적용)")
+    else:
+        dart_api_key = st.text_input(
+            "DART API Key",
+            value=st.session_state.get("dart_api_key", ""),
+            type="password",
+            placeholder="발급키 입력...",
+            help="opendart.fss.or.kr 에서 무료 발급. 입력 시 매출액·영업이익·순이익 등 KRX 재무제표 조회.",
+        )
+        if dart_api_key:
+            st.session_state["dart_api_key"] = dart_api_key
+        st.caption("🟢 DART 활성" if dart_api_key else "⚪ DART 미연동 (yfinance 데이터 사용)")
+
     # ── 자동 새로고침 ──────────────────────────────────────────────────────
     st.divider()
     st.markdown("### 🔄 실시간 새로고침")
@@ -1232,7 +1254,7 @@ with tab_fund:
 
     # ── 펀더멘털 지표 테이블 ──────────────────────────────────────────────────
     with col_f2:
-        st.markdown("### 📈 주요 펀더멘털 지표")
+        st.markdown("### 📈 시장 가치 지표")
 
         def _fund_row(label, key, fmt_fn, law_ref=""):
             val = fund_info.get(key)
@@ -1243,40 +1265,93 @@ with tab_fund:
                     pass
             return {"지표": label, "값": "N/A", "참고 법칙": law_ref}
 
-        fund_rows = [
-            _fund_row("PER (주가수익비율)", "per",
-                      lambda v: f"{v:.2f}x", "그레이엄: PBR×PER < 22.5"),
-            _fund_row("PBR (주가순자산비율)", "pbr",
-                      lambda v: f"{v:.2f}x", "그레이엄: PBR < 1.0 선호"),
-            _fund_row("ROE (자기자본수익률)", "roe",
-                      lambda v: f"{v*100:.1f}%", "버핏: 15% 이상 지속"),
-            _fund_row("부채비율", "debt_equity",
-                      lambda v: f"{v:.0f}%", "버핏: 50% 이하 선호"),
-            _fund_row("매출 성장률 (YoY)", "revenue_growth",
-                      lambda v: f"{v*100:+.1f}%", "린치: 20% 이상 → 텐배거"),
-            _fund_row("순이익 성장률 (YoY)", "earnings_growth",
-                      lambda v: f"{v*100:+.1f}%", "CANSLIM: 25% 이상"),
-            _fund_row("영업이익률", "operating_margins",
-                      lambda v: f"{v*100:.1f}%", "린치: 지속 상승 추세"),
-            _fund_row("Forward PER", "forward_pe",
-                      lambda v: f"{v:.2f}x", "성장 기대치 반영"),
-            _fund_row("EPS (TTM)", "eps_ttm",
-                      lambda v: f"{v:,.2f}", ""),
-            _fund_row("섹터", "sector", str, ""),
-        ]
+        def _fmt_money(v):
+            if abs(v) >= 1e12: return f"{v/1e12:.2f}조"
+            if abs(v) >= 1e8:  return f"{v/1e8:.0f}억"
+            return f"{v:,.0f}"
 
-        # FCF Yield 별도 계산
-        fcf = fund_info.get("free_cashflow")
         mc  = fund_info.get("market_cap")
-        if fcf and mc and mc > 0:
-            fund_rows.insert(4, {"지표": "FCF Yield", "값": f"{fcf/mc*100:.1f}%", "참고 법칙": "버핏: 5% 이상"})
+        fcf = fund_info.get("free_cashflow")
 
-        df_fund = pd.DataFrame(fund_rows)
-        st.dataframe(df_fund, use_container_width=True, hide_index=True)
+        mkt_rows = [
+            _fund_row("시가총액",           "market_cap",   _fmt_money, ""),
+            _fund_row("PER (주가수익비율)", "per",          lambda v: f"{v:.2f}x", "그레이엄: PBR×PER < 22.5"),
+            _fund_row("PBR (주가순자산비율)","pbr",         lambda v: f"{v:.2f}x", "그레이엄: PBR < 1.0 선호"),
+            _fund_row("PSR (주가매출비율)", "psr",          lambda v: f"{v:.2f}x", "1.0 이하 저평가 기준"),
+            _fund_row("Forward PER",        "forward_pe",   lambda v: f"{v:.2f}x", "성장 기대치 반영"),
+            _fund_row("EPS (TTM)",          "eps_ttm",      lambda v: f"{v:,.2f}", ""),
+            _fund_row("ROE (자기자본수익률)","roe",         lambda v: f"{v*100:.1f}%", "버핏: 15% 이상"),
+            _fund_row("영업이익률",         "operating_margins", lambda v: f"{v*100:.1f}%", ""),
+            _fund_row("부채비율",           "debt_equity",  lambda v: f"{v:.0f}%", "버핏: 50% 이하"),
+            _fund_row("매출 성장률 (YoY)",  "revenue_growth",  lambda v: f"{v*100:+.1f}%", "린치: 20%+"),
+            _fund_row("순이익 성장률 (YoY)","earnings_growth", lambda v: f"{v*100:+.1f}%", "CANSLIM: 25%+"),
+        ]
+        if fcf and mc and mc > 0:
+            mkt_rows.insert(4, {"지표": "FCF Yield", "값": f"{fcf/mc*100:.1f}%", "참고 법칙": "버핏: 5% 이상"})
+
+        st.dataframe(pd.DataFrame(mkt_rows), use_container_width=True, hide_index=True)
+
+        # ── 재무제표 (DART 우선 → yfinance fallback) ──────────────────────
+        st.markdown("### 💰 재무 핵심 지표")
+
+        _is_krx_f = ticker.endswith(".KS") or ticker.endswith(".KQ")
+        dart_fin  = {}
+        if _is_krx_f and dart_api_key:
+            with st.spinner("DART 재무제표 조회 중..."):
+                try:
+                    from fundamental_db import get_dart_financials
+                    dart_fin = get_dart_financials(ticker, dart_api_key)
+                except Exception:
+                    pass
+
+        def _fin_val(dart_key, yf_key, unit_label="억원"):
+            # DART 우선
+            if dart_fin.get(dart_key) is not None:
+                v = dart_fin[dart_key]
+                return f"{v:,.0f} {unit_label}"
+            # yfinance fallback
+            v = fund_info.get(yf_key)
+            if v is not None and pd.notna(v):
+                return _fmt_money(v)
+            return "N/A"
+
+        fin_src = f"DART {dart_fin.get('year','')}" if dart_fin else "yfinance"
+        fin_rows = [
+            {"지표": "매출액",    "값": _fin_val("revenue",          "total_revenue")},
+            {"지표": "영업이익",  "값": _fin_val("operating_income",  "operating_income")},
+            {"지표": "당기순이익","값": _fin_val("net_income",        "net_income")},
+            {"지표": "잉여현금흐름(FCF)", "값": _fmt_money(fcf) if fcf else "N/A"},
+        ]
+        st.dataframe(pd.DataFrame(fin_rows), use_container_width=True, hide_index=True)
 
         _src = fund_info.get("source", "yfinance")
-        _upd_label = fund_info.get("last_updated", "")[:10] if fund_info.get("last_updated") else "-"
-        st.caption(f"데이터 출처: **{_src}** | 갱신: {_upd_label}")
+        st.caption(f"시장 지표: **{_src}** | 재무 지표: **{fin_src}**")
+
+    # ── 전날 매매 동향 (pykrx) ────────────────────────────────────────────────
+    if _is_krx_f:
+        st.markdown("---")
+        st.markdown("### 📊 전날 투자자별 매매 동향")
+        with st.spinner("매매 동향 조회 중..."):
+            try:
+                from fundamental_db import get_trading_trend
+                trend = get_trading_trend(ticker)
+            except Exception:
+                trend = {}
+
+        if trend:
+            t_date = trend.get("date", "")
+            st.caption(f"기준일: {t_date[:4]}-{t_date[4:6]}-{t_date[6:]} (단위: 억원)")
+            t_cols = st.columns(5)
+            _labels = ["개인", "외국인", "기관합계", "금융투자", "연기금"]
+            for col, lbl in zip(t_cols, _labels):
+                val = trend.get(lbl)
+                if val is not None:
+                    color = "normal" if val == 0 else ("inverse" if val > 0 else "normal")
+                    col.metric(lbl, f"{val:+,.1f}억", delta_color="normal" if val >= 0 else "inverse")
+                else:
+                    col.metric(lbl, "N/A")
+        else:
+            st.info("매매 동향 데이터를 불러올 수 없습니다. (pykrx 미설치 또는 데이터 없음)")
 
     # ── 손절·익절 상세 ────────────────────────────────────────────────────────
     st.markdown("---")
