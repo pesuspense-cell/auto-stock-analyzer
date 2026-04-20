@@ -1037,8 +1037,9 @@ with tab_news:
         # 섹터 동조화
         with st.spinner("섹터 동조화 분석 중..."):
             sec = _sector_perf(ticker)
-        sector_avg  = sec.get("avg_chg", 0.0)
-        stock_diff  = daily_chg - sector_avg
+        sector_avg = sec.get("avg_chg", 0.0)
+        _daily_chg = (float(close.iloc[-1]) - float(close.iloc[-2])) / float(close.iloc[-2]) * 100 if len(close) >= 2 else 0.0
+        stock_diff = _daily_chg - sector_avg
 
         # ── 3개 메트릭 ────────────────────────────────────────────────────────
         c1, c2, c3 = st.columns(3)
