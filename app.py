@@ -54,6 +54,23 @@ st.markdown("""
 
 # ─── 관심종목 관리 ────────────────────────────────────────────────────────────
 WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), "watchlist.json")
+SETTINGS_FILE  = os.path.join(os.path.dirname(__file__), "settings.json")
+
+def load_settings() -> dict:
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def save_settings(data: dict) -> None:
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 def load_watchlist() -> list:
     try:
@@ -73,6 +90,10 @@ def save_watchlist(wl: list) -> None:
 
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist()
+
+_saved_settings = load_settings()
+if "dart_api_key" not in st.session_state:
+    st.session_state["dart_api_key"] = _saved_settings.get("dart_api_key", "")
 
 # ─── 캐시 래퍼 ───────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
@@ -347,8 +368,9 @@ with st.sidebar:
             placeholder="발급키 입력...",
             help="opendart.fss.or.kr 에서 무료 발급. 입력 시 매출액·영업이익·순이익 등 KRX 재무제표 조회.",
         )
-        if dart_api_key:
+        if dart_api_key and dart_api_key != _saved_settings.get("dart_api_key", ""):
             st.session_state["dart_api_key"] = dart_api_key
+            save_settings({**_saved_settings, "dart_api_key": dart_api_key})
         st.caption("🟢 DART 활성" if dart_api_key else "⚪ DART 미연동 (yfinance 데이터 사용)")
 
     # ── 자동 새로고침 ──────────────────────────────────────────────────────
