@@ -290,9 +290,29 @@ def _get_wl_alerts() -> list:
     return alerts
 
 # ─── 사이드바 ─────────────────────────────────────────────────────────────────
+
+def _clear_analysis():
+    """종목 선택이 바뀌면 기존 분석 결과를 초기화해 자동 재분석을 막는다."""
+    st.session_state.pop("analyzed_ticker", None)
+    st.session_state.pop("analyzed_sname", None)
+    st.session_state.pop("analyzed_period", None)
+
+def _trigger_analysis_from_input():
+    """직접 입력 text_input에서 Enter 시 분석을 즉시 시작한다."""
+    val = st.session_state.get("_direct_ticker_input", "").strip()
+    if val:
+        st.session_state["analyzed_ticker"] = val
+        st.session_state["analyzed_sname"]  = val
+        st.session_state["analyzed_period"] = st.session_state.get("_period_sel", "3mo")
+
 with st.sidebar:
     st.markdown("## ⚙️ 종목 설정")
-    market_sel = st.selectbox("시장", ["국내 주식 (검색)", "미국 주식 (검색)", "직접 입력"])
+    market_sel = st.selectbox(
+        "시장",
+        ["국내 주식 (검색)", "미국 주식 (검색)", "직접 입력"],
+        key="_market_sel",
+        on_change=_clear_analysis,
+    )
 
     if market_sel == "국내 주식 (검색)":
         with st.spinner("종목 목록 로딩 중..."):
@@ -303,13 +323,16 @@ with st.sidebar:
             selected = st.selectbox(
                 "종목 검색 (이름·코드 입력)",
                 options,
+                key="_krx_selected",
+                on_change=_clear_analysis,
                 help="회사 이름이나 종목 코드(6자리)를 입력하면 자동으로 필터링됩니다.",
             )
             ticker = krx[selected]
             sname  = selected.split(" (")[0]
         else:
             st.warning("종목 목록 로드 실패 — 기본 목록 사용")
-            sname  = st.selectbox("종목", list(KOSPI_STOCKS.keys()))
+            sname  = st.selectbox("종목", list(KOSPI_STOCKS.keys()),
+                                  key="_krx_fallback", on_change=_clear_analysis)
             ticker = KOSPI_STOCKS[sname]
 
     elif market_sel == "미국 주식 (검색)":
@@ -321,21 +344,30 @@ with st.sidebar:
             us_selected = st.selectbox(
                 "종목 검색 (이름·티커 입력)",
                 us_options,
+                key="_us_selected",
+                on_change=_clear_analysis,
                 help="S&P500 + 나스닥 전체 종목. 회사명 또는 티커(예: AAPL)를 입력하면 자동 필터링됩니다.",
             )
             ticker = us_list[us_selected]
             sname  = us_selected.split(" (")[0]
         else:
             st.warning("미국 종목 목록 로드 실패 — 기본 목록 사용")
-            sname  = st.selectbox("종목", list(US_STOCKS.keys()))
+            sname  = st.selectbox("종목", list(US_STOCKS.keys()),
+                                  key="_us_fallback", on_change=_clear_analysis)
             ticker = US_STOCKS[sname]
 
     else:
-        ticker = st.text_input("티커 직접 입력", value="005930.KS",
-                               help="예) 005930.KS (KOSPI), 247540.KQ (KOSDAQ), AAPL (미국)")
+        ticker = st.text_input(
+            "티커 직접 입력",
+            value=st.session_state.get("_direct_ticker_input", "005930.KS"),
+            key="_direct_ticker_input",
+            on_change=_trigger_analysis_from_input,
+            help="예) 005930.KS (KOSPI), 247540.KQ (KOSDAQ), AAPL (미국) — 입력 후 Enter 또는 아래 버튼 클릭",
+        )
         sname  = ticker
 
-    period = st.selectbox("분석 기간", ["1mo", "3mo", "6mo", "1y", "2y"], index=1)
+    period = st.selectbox("분석 기간", ["1mo", "3mo", "6mo", "1y", "2y"],
+                          index=1, key="_period_sel")
 
     # ── 분석 시작 버튼 ─────────────────────────────────────────────────────
     st.divider()
@@ -496,39 +528,61 @@ with st.sidebar:
 # ─── 헤더 ────────────────────────────────────────────────────────────────────
 st.markdown("# 📈 AI 주식 분석 대시보드")
 
-# ─── 데이터 로드 (분석 시작 버튼 클릭 후에만 실행) ────────────────────────────
+# ─── 탭 레이아웃 (데이터 로딩 전 정의 — 탭 내 로딩 상태 표시용) ─────────────────
+tab_market, tab_chart, tab_rec, tab_news, tab_fund = st.tabs([
+    "🌐 시장 현황",
+    "📊 차트 분析",
+    "⭐ 추천 종목",
+    "📰 뉴스 & 관련 종목",
+    "🏛️ 펀더멘털 & 기관",
+])
+
+# ─── 데이터 로드 (분析 시작 버튼 클릭 후에만 실행) ────────────────────────────
 _aticker = st.session_state.get("analyzed_ticker")
 _asname  = st.session_state.get("analyzed_sname", "")
 _aperiod = st.session_state.get("analyzed_period", period)
 _data_ready = bool(_aticker)
 
 if _data_ready:
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
+    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분析 종목: **{_asname}** (`{_aticker}`)")
 
-    with st.spinner(f"{_aticker} 데이터 분석 중..."):
-        data = _stock_data(_aticker, _aperiod)
+    # ── 차트 탭: st.status로 실시간 로딩 표시 ────────────────────────────────
+    with tab_chart:
+        with st.status("📊 AI가 차트를 분析중입니다...", expanded=True) as _chart_status:
+            _cp = st.progress(0, "주가 데이터 로딩 중...")
+            data = _stock_data(_aticker, _aperiod)
+            if data.empty:
+                _chart_status.update(label="❌ 데이터 없음", state="error")
+                st.session_state.pop("analyzed_ticker", None)
+                st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
+                st.stop()
+            _cp.progress(50, "🔍 매매 신호 분析 중...")
+            signals  = generate_signals(data)
+            _cp.progress(75, "📐 수익률 계산 중...")
+            expected = calculate_expected_return(data, signals)
+            close    = data["Close"]
+            _cp.progress(100, "✅ 완료!")
+            _chart_status.update(label="✅ 차트 분析 완료", state="complete", expanded=False)
 
-    if data.empty:
-        st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
-        st.session_state.pop("analyzed_ticker", None)
-        st.stop()
+    # ── 펀더멘털 탭: st.status로 실시간 로딩 표시 ────────────────────────────
+    with tab_fund:
+        with st.status("🏛️ AI가 펀더멘털을 분析중입니다...", expanded=True) as _fund_status:
+            _fp = st.progress(0, "펀더멘털 데이터 로딩 중...")
+            fund_info = _fundamental(_aticker)
+            _fp.progress(85, "📊 점수 계산 중...")
+            fund_score_data = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
+            _fp.progress(100, "✅ 완료!")
+            _fund_status.update(label="✅ 펀더멘털 분析 완료", state="complete", expanded=False)
 
-    signals  = generate_signals(data)
-    expected = calculate_expected_return(data, signals)
-    close    = data["Close"]
-
-    with st.spinner("펀더멘털 데이터 로딩 중..."):
-        fund_info       = _fundamental(_aticker)
-        fund_score_data = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
 else:
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분석을 시작하세요.")
+    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분析를 시작하세요.")
     # 탭 렌더링 시 크래시 방지용 stub 변수
     data            = pd.DataFrame()
     signals         = {"score": 0, "label": "분석 대기", "badge": "—"}
     expected        = None
     close           = pd.Series(dtype=float, name="Close")
     fund_info       = {}
-    fund_score_data = {"fund_score": 0, "fund_label": "분석 대기", "fund_reasons": []}
+    fund_score_data = {"fund_score": 0, "fund_label": "분析 대기", "fund_reasons": []}
 
 # ─── 관심종목 Toast 알림 (우측 하단 팝업) ────────────────────────────────────
 if st.session_state.watchlist:
@@ -628,15 +682,6 @@ def _article_dialog(title: str, link: str, ticker_sym: str, api_key: str) -> Non
     if not result.get("used_content"):
         st.caption("⚠️ 기사 본문 스크래핑 불가 — 제목 기반으로 분석했습니다.")
 
-
-# ─── 탭 레이아웃 ──────────────────────────────────────────────────────────────
-tab_market, tab_chart, tab_rec, tab_news, tab_fund = st.tabs([
-    "🌐 시장 현황",
-    "📊 차트 분석",
-    "⭐ 추천 종목",
-    "📰 뉴스 & 관련 종목",
-    "🏛️ 펀더멘털 & 기관",
-])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1  차트 분석
@@ -1806,6 +1851,27 @@ with tab_chart:
                 <div style="font-size:1.25rem;font-weight:bold;color:{lt_fc};">{f_badge} {f_label}</div>
                 <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">점수: <b style="color:{lt_fc};">{fs:+.1f}</b></div>
             </div>
+            """, unsafe_allow_html=True)
+
+        # ── 단타 신호 전체 단계 안내 ──────────────────────────────────────────
+        with st.expander("⚡ 단타 신호 판정 기준 보기", expanded=False):
+            st.markdown("""
+<div style="font-size:0.82rem;line-height:1.9;">
+
+| 신호 | 점수 범위 | 의미 |
+|------|-----------|------|
+| 🟢🟢 **강력 매수** | +5 이상 | 강한 상승 신호 — 적극 매수 고려 |
+| 🟢 **매수** | +3 ~ +4 | 상승 신호 — 매수 고려 |
+| 🔵 **약한 매수** | +1 ~ +2 | 약한 상승 신호 — 소량 매수 가능 |
+| ⚪ **중립/관망** | 0 | 방향성 불명확 — 관망 권고 |
+| 🟡 **약한 매도** | -1 ~ -2 | 약한 하락 신호 — 비중 축소 고려 |
+| 🔴 **매도** | -3 ~ -4 | 하락 신호 — 매도 고려 |
+| 🔴🔴 **강력 매도** | -5 이하 | 강한 하락 신호 — 적극 매도 고려 |
+
+</div>
+<div style="font-size:0.75rem;color:#888;margin-top:4px;">
+※ 점수 = 기술 분析(70%) × 기술점수 + 뉴스 감성(30%) × 뉴스점수 의 가중 합산
+</div>
             """, unsafe_allow_html=True)
 
         # ── 점수 구성 미니 테이블 ──────────────────────────────────────────────
