@@ -372,9 +372,11 @@ with st.sidebar:
     # ── 분석 시작 버튼 ─────────────────────────────────────────────────────
     st.divider()
     if st.button("🔍 종목 분석 시작", type="primary", use_container_width=True):
-        st.session_state["analyzed_ticker"] = ticker
-        st.session_state["analyzed_sname"]  = sname
-        st.session_state["analyzed_period"] = period
+        st.session_state.pop("analyzed_ticker", None)
+        st.session_state["_pending_ticker"] = ticker
+        st.session_state["_pending_sname"]  = sname
+        st.session_state["_pending_period"] = period
+        st.rerun()
 
     # ── Gemini API 키 ──────────────────────────────────────────────────────
     st.divider()
@@ -531,58 +533,69 @@ st.markdown("# 📈 AI 주식 분석 대시보드")
 # ─── 탭 레이아웃 (데이터 로딩 전 정의 — 탭 내 로딩 상태 표시용) ─────────────────
 tab_market, tab_chart, tab_rec, tab_news, tab_fund = st.tabs([
     "🌐 시장 현황",
-    "📊 차트 분析",
+    "📊 차트 분석",
     "⭐ 추천 종목",
     "📰 뉴스 & 관련 종목",
     "🏛️ 펀더멘털 & 기관",
 ])
 
-# ─── 데이터 로드 (분析 시작 버튼 클릭 후에만 실행) ────────────────────────────
+# ─── 데이터 로드 (분석 시작 버튼 클릭 후에만 실행) ────────────────────────────
 _aticker = st.session_state.get("analyzed_ticker")
 _asname  = st.session_state.get("analyzed_sname", "")
 _aperiod = st.session_state.get("analyzed_period", period)
+_pending = st.session_state.get("_pending_ticker")
 _data_ready = bool(_aticker)
 
-if _data_ready:
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분析 종목: **{_asname}** (`{_aticker}`)")
-
-    # ── 차트 탭: st.status로 실시간 로딩 표시 ────────────────────────────────
+# ── Rerun B: pending 처리 → 로딩 UI 표시 후 analyzed로 전환 ──────────────────
+if _pending and not _aticker:
+    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 중: **{st.session_state.get('_pending_sname', _pending)}** (`{_pending}`)")
     with tab_chart:
-        with st.status("📊 AI가 차트를 분析중입니다...", expanded=True) as _chart_status:
-            _cp = st.progress(0, "주가 데이터 로딩 중...")
-            data = _stock_data(_aticker, _aperiod)
-            if data.empty:
-                _chart_status.update(label="❌ 데이터 없음", state="error")
-                st.session_state.pop("analyzed_ticker", None)
-                st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
-                st.stop()
-            _cp.progress(50, "🔍 매매 신호 분析 중...")
-            signals  = generate_signals(data)
-            _cp.progress(75, "📐 수익률 계산 중...")
-            expected = calculate_expected_return(data, signals)
-            close    = data["Close"]
-            _cp.progress(100, "✅ 완료!")
-            _chart_status.update(label="✅ 차트 분析 완료", state="complete", expanded=False)
-
-    # ── 펀더멘털 탭: st.status로 실시간 로딩 표시 ────────────────────────────
+        st.markdown("### 📊 AI가 차트를 분석하고 있습니다...")
+        st.markdown("잠시만 기다려주세요 🕐")
+        _lp1 = st.progress(0, "주가 데이터 로딩 중...")
+        for _v in [20, 40, 60, 80]:
+            import time as _time; _time.sleep(0.05)
+            _lp1.progress(_v)
     with tab_fund:
-        with st.status("🏛️ AI가 펀더멘털을 분析중입니다...", expanded=True) as _fund_status:
-            _fp = st.progress(0, "펀더멘털 데이터 로딩 중...")
+        st.markdown("### 🏛️ AI가 펛더멘털을 분석하고 있습니다...")
+        st.markdown("잠시만 기다려주세요 🕐")
+        _lp2 = st.progress(0, "펛더멘털 데이터 로딩 중...")
+        for _v in [20, 40, 60, 80]:
+            import time as _time; _time.sleep(0.05)
+            _lp2.progress(_v)
+    # pending → analyzed 로 전환 후 rerun
+    st.session_state["analyzed_ticker"] = st.session_state.pop("_pending_ticker")
+    st.session_state["analyzed_sname"]  = st.session_state.pop("_pending_sname", _pending)
+    st.session_state["analyzed_period"] = st.session_state.pop("_pending_period", period)
+    st.rerun()
+
+if _data_ready:
+    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
+
+    with tab_chart:
+        with st.spinner("📊 차트 데이터 로딩 중..."):
+            data = _stock_data(_aticker, _aperiod)
+        if data.empty:
+            st.session_state.pop("analyzed_ticker", None)
+            st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
+            st.stop()
+        signals  = generate_signals(data)
+        expected = calculate_expected_return(data, signals)
+        close    = data["Close"]
+
+    with tab_fund:
+        with st.spinner("🏛️ 펛더멘털 데이터 로딩 중..."):
             fund_info = _fundamental(_aticker)
-            _fp.progress(85, "📊 점수 계산 중...")
-            fund_score_data = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
-            _fp.progress(100, "✅ 완료!")
-            _fund_status.update(label="✅ 펀더멘털 분析 완료", state="complete", expanded=False)
+        fund_score_data = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
 
 else:
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분析를 시작하세요.")
-    # 탭 렌더링 시 크래시 방지용 stub 변수
+    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분석을 시작하세요.")
     data            = pd.DataFrame()
     signals         = {"score": 0, "label": "분석 대기", "badge": "—"}
     expected        = None
     close           = pd.Series(dtype=float, name="Close")
     fund_info       = {}
-    fund_score_data = {"fund_score": 0, "fund_label": "분析 대기", "fund_reasons": []}
+    fund_score_data = {"fund_score": 0, "fund_label": "분석 대기", "fund_reasons": []}
 
 # ─── 관심종목 Toast 알림 (우측 하단 팝업) ────────────────────────────────────
 if st.session_state.watchlist:
@@ -1291,8 +1304,13 @@ with tab_fund:
     # ── KRX DB 갱신 상태 표시 ─────────────────────────────────────────────────
     _is_krx = ticker.endswith(".KS") or ticker.endswith(".KQ")
     if _is_krx:
+        _fund_db_ok = False
         try:
             from fundamental_db import get_last_update, needs_update, update_market
+            _fund_db_ok = True
+        except ImportError:
+            st.info("pykrx 미설치 — `pip install pykrx` 후 KRX 펀더멘털 DB를 사용할 수 있습니다.")
+        if _fund_db_ok:
             _krx_market = "KOSPI" if ticker.endswith(".KS") else "KOSDAQ"
             _last_upd = get_last_update(_krx_market)
             _needs = needs_update(_krx_market)
@@ -1313,8 +1331,6 @@ with tab_fund:
                         _cnt = update_market(_krx_market)
                     st.success(f"{_cnt}개 종목 업데이트 완료!")
                     st.rerun()
-        except ImportError:
-            st.info("pykrx 미설치 — `pip install pykrx` 후 KRX 펀더멘털 DB를 사용할 수 있습니다.")
 
     # fund_info / fund_score_data 는 상단에서 이미 계산됨
     col_f1, col_f2 = st.columns([1, 1])
@@ -1870,7 +1886,7 @@ with tab_chart:
 
 </div>
 <div style="font-size:0.75rem;color:#888;margin-top:4px;">
-※ 점수 = 기술 분析(70%) × 기술점수 + 뉴스 감성(30%) × 뉴스점수 의 가중 합산
+※ 점수 = 기술 분석(70%) × 기술점수 + 뉴스 감성(30%) × 뉴스점수 의 가중 합산
 </div>
             """, unsafe_allow_html=True)
 
