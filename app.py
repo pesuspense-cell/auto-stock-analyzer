@@ -52,6 +52,29 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ─── 비밀번호 게이트 ──────────────────────────────────────────────────────────
+_APP_PASSWORD = "qnwkehlwk"
+
+if not st.session_state.get("app_authenticated"):
+    st.markdown("<br>" * 4, unsafe_allow_html=True)
+    _, col, _ = st.columns([1.5, 1, 1.5])
+    with col:
+        st.markdown("## 📈 AI 주식 분석 터미널")
+        st.markdown("---")
+        pw_input = st.text_input(
+            "비밀번호",
+            type="password",
+            placeholder="비밀번호를 입력하세요",
+            label_visibility="collapsed",
+        )
+        if st.button("입장하기", use_container_width=True, type="primary"):
+            if pw_input == _APP_PASSWORD:
+                st.session_state["app_authenticated"] = True
+                st.rerun()
+            else:
+                st.error("비밀번호가 틀렸습니다.")
+    st.stop()
+
 # ─── 관심종목 관리 ────────────────────────────────────────────────────────────
 WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), "watchlist.json")
 SETTINGS_FILE  = os.path.join(os.path.dirname(__file__), "settings.json")
@@ -94,6 +117,12 @@ if "watchlist" not in st.session_state:
 _saved_settings = load_settings()
 if "dart_api_key" not in st.session_state:
     st.session_state["dart_api_key"] = _saved_settings.get("dart_api_key", "")
+
+# KRX 로그인 자격증명을 환경변수로 자동 설정 (pykrx 인증용)
+if _saved_settings.get("krx_id") and not os.environ.get("KRX_ID"):
+    os.environ["KRX_ID"] = _saved_settings["krx_id"]
+if _saved_settings.get("krx_pw") and not os.environ.get("KRX_PW"):
+    os.environ["KRX_PW"] = _saved_settings["krx_pw"]
 
 # ─── 캐시 래퍼 ───────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
@@ -368,10 +397,16 @@ with st.sidebar:
             placeholder="발급키 입력...",
             help="opendart.fss.or.kr 에서 무료 발급. 입력 시 매출액·영업이익·순이익 등 KRX 재무제표 조회.",
         )
-        if dart_api_key and dart_api_key != _saved_settings.get("dart_api_key", ""):
+        if dart_api_key and dart_api_key != st.session_state.get("dart_api_key", ""):
             st.session_state["dart_api_key"] = dart_api_key
-            save_settings({**_saved_settings, "dart_api_key": dart_api_key})
+            save_settings({**load_settings(), "dart_api_key": dart_api_key})
         st.caption("🟢 DART 활성" if dart_api_key else "⚪ DART 미연동 (yfinance 데이터 사용)")
+
+    # ── KRX API 키 ─────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 📊 KRX 데이터")
+    _krx_ok = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
+    st.caption("🟢 KRX 자동 로그인 활성" if _krx_ok else "⚪ KRX 인증 미설정")
 
     # ── 자동 새로고침 ──────────────────────────────────────────────────────
     st.divider()

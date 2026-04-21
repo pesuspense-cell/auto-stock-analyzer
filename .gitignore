@@ -13,8 +13,9 @@ env/
 # Streamlit secrets (API 키 포함 — 절대 커밋 금지)
 .streamlit/secrets.toml
 
-# 관심종목 데이터 (개인 데이터)
+# 개인 데이터 및 API 키 (절대 커밋 금지)
 watchlist.json
+settings.json
 
 # IDE
 .vscode/
