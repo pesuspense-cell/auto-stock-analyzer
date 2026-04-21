@@ -31,7 +31,7 @@ from stock_ai import (
     analyze_news_sentiment_llm, summarize_article_llm,
     get_hybrid_signal,
     get_advanced_sentiment, get_related_sector_performance,
-    get_full_market_movers,
+    get_full_market_movers, get_investor_trading_naver,
     KOSPI_STOCKS, US_STOCKS, INDICES,
 )
 
@@ -1352,8 +1352,8 @@ with tab_fund:
         try:
             from fundamental_db import get_last_update, needs_update, update_market
             _fund_db_ok = True
-        except ImportError:
-            st.info("pykrx 미설치 — `pip install pykrx` 후 KRX 펀더멘털 DB를 사용할 수 있습니다.")
+        except Exception:
+            pass
         if _fund_db_ok:
             _krx_market = "KOSPI" if ticker.endswith(".KS") else "KOSDAQ"
             _last_upd = get_last_update(_krx_market)
@@ -1488,31 +1488,44 @@ with tab_fund:
         _src = fund_info.get("source", "yfinance")
         st.caption(f"시장 지표: **{_src}** | 재무 지표: **{fin_src}**")
 
-    # ── 전날 매매 동향 (pykrx) ────────────────────────────────────────────────
+    # ── 전날 매매 동향 (Naver Finance) ───────────────────────────────────────
     if _is_krx_f:
         st.markdown("---")
         st.markdown("### 📊 전날 투자자별 매매 동향")
-        with st.spinner("매매 동향 조회 중..."):
-            try:
-                from fundamental_db import get_trading_trend
-                trend = get_trading_trend(ticker)
-            except Exception:
-                trend = {}
-
-        if trend:
-            t_date = trend.get("date", "")
-            st.caption(f"기준일: {t_date[:4]}-{t_date[4:6]}-{t_date[6:]} (단위: 억원)")
-            t_cols = st.columns(5)
-            _labels = ["개인", "외국인", "기관합계", "금융투자", "연기금"]
-            for col, lbl in zip(t_cols, _labels):
-                val = trend.get(lbl)
+        with st.spinner("투자자 데이터 조회 중..."):
+            _inv_f = get_investor_trading_naver(ticker)
+        if _inv_f:
+            _inv_date_f = _inv_f.get("date", "")
+            if len(_inv_date_f) == 8:
+                _inv_date_f = f"{_inv_date_f[:4]}.{_inv_date_f[4:6]}.{_inv_date_f[6:]}"
+            st.caption(f"기준일: {_inv_date_f}  |  단위: 주(株)  |  출처: Naver Finance")
+            _inv_f_cols = st.columns(3)
+            for col, key, label in zip(
+                _inv_f_cols,
+                ["외국인", "기관합계", "개인"],
+                ["🌐 외국인", "🏦 기관", "👤 개인"],
+            ):
+                val = _inv_f.get(key)
                 if val is not None:
-                    color = "normal" if val == 0 else ("inverse" if val > 0 else "normal")
-                    col.metric(lbl, f"{val:+,.1f}억", delta_color="normal" if val >= 0 else "inverse")
+                    _sign = "+" if val > 0 else ""
+                    _color = "#ef5350" if val > 0 else ("#42a5f5" if val < 0 else "#bdbdbd")
+                    col.markdown(
+                        f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
+                        f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
+                        f'<div style="font-size:1.1rem;font-weight:bold;color:{_color};">{_sign}{val:,}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
                 else:
-                    col.metric(lbl, "N/A")
+                    col.markdown(
+                        f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
+                        f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
+                        f'<div style="font-size:1.1rem;color:#555;">N/A</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
         else:
-            st.info("매매 동향 데이터를 불러올 수 없습니다. (pykrx 미설치 또는 데이터 없음)")
+            st.caption("투자자 매매 동향 데이터를 불러올 수 없습니다.")
 
     # ── 손절·익절 상세 ────────────────────────────────────────────────────────
     st.markdown("---")
@@ -2054,4 +2067,44 @@ with tab_chart:
             st.caption(f"🟡 목표 2R: **{sl['target_2r']:,.2f}**")
             st.caption(f"🟢 목표 3R: **{sl['target_3r']:,.2f}**")
             st.caption(f"📏 ATR({sl['atr_ratio']:.2f}%): {sl['atr']:,.2f}")
+
+    # ── 투자자별 매매 동향 (Naver Finance) ──────────────────────────────────────
+    _is_krx_chart = _aticker and (_aticker.endswith(".KS") or _aticker.endswith(".KQ"))
+    if _data_ready and _is_krx_chart:
+        st.markdown("---")
+        st.markdown("### 👥 전날 투자자별 매매 동향")
+        with st.spinner("투자자 데이터 조회 중..."):
+            _inv = get_investor_trading_naver(_aticker)
+        if _inv:
+            _inv_date = _inv.get("date", "")
+            if len(_inv_date) == 8:
+                _inv_date = f"{_inv_date[:4]}.{_inv_date[4:6]}.{_inv_date[6:]}"
+            st.caption(f"기준일: {_inv_date}  |  단위: 주(株)  |  출처: Naver Finance")
+            _inv_cols = st.columns(3)
+            for col, key, label in zip(
+                _inv_cols,
+                ["외국인", "기관합계", "개인"],
+                ["🌐 외국인", "🏦 기관", "👤 개인"],
+            ):
+                val = _inv.get(key)
+                if val is not None:
+                    _sign = "+" if val > 0 else ""
+                    _color = "#ef5350" if val > 0 else ("#42a5f5" if val < 0 else "#bdbdbd")
+                    col.markdown(
+                        f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
+                        f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
+                        f'<div style="font-size:1.1rem;font-weight:bold;color:{_color};">{_sign}{val:,}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    col.markdown(
+                        f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
+                        f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
+                        f'<div style="font-size:1.1rem;color:#555;">N/A</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+        else:
+            st.caption("투자자 매매 동향 데이터를 불러올 수 없습니다.")
 

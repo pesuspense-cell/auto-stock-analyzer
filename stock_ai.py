@@ -614,6 +614,73 @@ def get_exchange_rates() -> dict:
     return result
 
 
+def get_investor_trading_naver(ticker: str) -> dict:
+    """
+    Naver Finance frgn.naver 페이지에서 최근 영업일 투자자별 매매 동향 조회.
+    (pykrx KRX 로그인 불필요)
+    반환: {date, 외국인, 기관, 개인} — 단위: 주(株)
+    """
+    code = ticker.split(".")[0]
+    if not code.isdigit():
+        return {}
+    if not HAS_BS4:
+        return {}
+
+    import requests
+    from bs4 import BeautifulSoup
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": f"https://finance.naver.com/item/main.naver?code={code}",
+    }
+
+    def _parse_int(text: str):
+        t = text.strip().replace(",", "").replace("+", "").replace("\xa0", "").replace(" ", "")
+        if not t or t in ("-", ""):
+            return None
+        try:
+            return int(t)
+        except ValueError:
+            return None
+
+    # 외국인/기관 순매수 — frgn.naver 테이블
+    # 컬럼: [날짜, 종가, 전일비, 등락률, 거래량, 외국인순매수, 기관순매수, 보유주수, 보유율]
+    frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+    frgn_foreign, frgn_inst = None, None
+    frgn_date = ""
+    try:
+        resp = requests.get(frgn_url, headers=headers, timeout=10)
+        resp.encoding = "euc-kr"
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # type2 테이블이 2개 — 두 번째(데이터 행이 많은) 테이블 사용
+        tables = soup.find_all("table", {"class": "type2"})
+        table = tables[1] if len(tables) >= 2 else (tables[0] if tables else None)
+        if table:
+            for tr in table.find_all("tr"):
+                tds = tr.find_all("td")
+                if len(tds) >= 7:
+                    date_txt = tds[0].text.strip()
+                    if len(date_txt) == 10 and date_txt[4] == ".":
+                        frgn_date    = date_txt.replace(".", "")[:8]
+                        frgn_foreign = _parse_int(tds[5].text)
+                        frgn_inst    = _parse_int(tds[6].text)
+                        break
+    except Exception:
+        pass
+
+    if frgn_foreign is None and frgn_inst is None:
+        return {}
+
+    result = {"date": frgn_date, "외국인": frgn_foreign, "기관합계": frgn_inst}
+    if frgn_foreign is not None and frgn_inst is not None:
+        result["개인"] = -(frgn_foreign + frgn_inst)
+    return result
+
+
 # ─── 추천 종목 종합 분석 ──────────────────────────────────────────────────────
 
 def _composite_score(tech: float, ret_pct: float, sharpe: float) -> float:
