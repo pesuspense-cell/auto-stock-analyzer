@@ -549,6 +549,63 @@ def get_market_movers(tickers_dict: dict) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("등락률(%)", ascending=False).reset_index(drop=True)
 
 
+def get_full_market_movers(top_n: int = 10) -> tuple:
+    """
+    pykrx로 KOSPI+KOSDAQ 전체 종목 등락률을 한 번에 조회.
+    반환: (gainers_df, losers_df) — 각 top_n개, 컬럼: 종목명·티커·현재가·등락률(%)·거래량·시장
+    """
+    try:
+        from pykrx import stock as pkrx
+        import FinanceDataReader as fdr
+    except ImportError:
+        return pd.DataFrame(), pd.DataFrame()
+
+    rows = []
+    for days_ago in range(1, 8):
+        date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y%m%d")
+        for market, suffix in [("KOSPI", "KS"), ("KOSDAQ", "KQ")]:
+            try:
+                ohlcv = pkrx.get_market_ohlcv_by_ticker(date, market=market)
+                if ohlcv is None or ohlcv.empty:
+                    continue
+                listing = fdr.StockListing(market)
+                name_map = {}
+                if listing is not None and not listing.empty:
+                    for _, row in listing.iterrows():
+                        code = str(row.get("Code", "")).strip().zfill(6)
+                        name = str(row.get("Name", "")).strip()
+                        if code and name:
+                            name_map[code] = name
+                for code in ohlcv.index:
+                    try:
+                        chg   = float(ohlcv.loc[code, "등락률"])
+                        price = float(ohlcv.loc[code, "종가"])
+                        vol   = int(ohlcv.loc[code, "거래량"])
+                        name  = name_map.get(str(code).zfill(6), str(code))
+                        rows.append({
+                            "종목명": name,
+                            "티커": f"{str(code).zfill(6)}.{suffix}",
+                            "현재가": price,
+                            "등락률(%)": round(chg, 2),
+                            "거래량": vol,
+                            "시장": market,
+                        })
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        if rows:
+            break
+
+    if not rows:
+        return pd.DataFrame(), pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    gainers = df.nlargest(top_n, "등락률(%)").reset_index(drop=True)
+    losers  = df.nsmallest(top_n, "등락률(%)").reset_index(drop=True)
+    return gainers, losers
+
+
 # ─── 환율 정보 ────────────────────────────────────────────────────────────────
 
 def get_exchange_rates() -> dict:

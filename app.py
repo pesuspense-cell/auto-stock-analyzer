@@ -31,6 +31,7 @@ from stock_ai import (
     analyze_news_sentiment_llm, summarize_article_llm,
     get_hybrid_signal,
     get_advanced_sentiment, get_related_sector_performance,
+    get_full_market_movers,
     KOSPI_STOCKS, US_STOCKS, INDICES,
 )
 
@@ -117,6 +118,9 @@ if "watchlist" not in st.session_state:
 _saved_settings = load_settings()
 if "dart_api_key" not in st.session_state:
     st.session_state["dart_api_key"] = _saved_settings.get("dart_api_key", "")
+# DART key 위젯 초기값 (key= 방식 지원용)
+if "_dart_key_input" not in st.session_state:
+    st.session_state["_dart_key_input"] = _saved_settings.get("dart_api_key", "")
 
 # KRX 로그인 자격증명을 환경변수로 자동 설정 (pykrx 인증용)
 if _saved_settings.get("krx_id") and not os.environ.get("KRX_ID"):
@@ -134,6 +138,11 @@ def _movers(n: int = 100):
     """시가총액 상위 n개 KOSPI 종목 등락률"""
     stocks = _top_kospi(n)
     return get_market_movers(stocks)
+
+@st.cache_data(ttl=300)
+def _full_movers():
+    """KOSPI+KOSDAQ 전체 종목 급등/급락 상위 10개"""
+    return get_full_market_movers(top_n=10)
 
 @st.cache_data(ttl=300)
 def _rates():
@@ -424,16 +433,20 @@ with st.sidebar:
         dart_api_key = _dart_secret
         st.caption("🟢 DART 연동 활성 (secrets 자동 적용)")
     else:
-        dart_api_key = st.text_input(
+        def _on_dart_key_change():
+            k = st.session_state.get("_dart_key_input", "")
+            if k:
+                st.session_state["dart_api_key"] = k
+                save_settings({**load_settings(), "dart_api_key": k})
+        st.text_input(
             "DART API Key",
-            value=st.session_state.get("dart_api_key", ""),
+            key="_dart_key_input",
             type="password",
             placeholder="발급키 입력...",
+            on_change=_on_dart_key_change,
             help="opendart.fss.or.kr 에서 무료 발급. 입력 시 매출액·영업이익·순이익 등 KRX 재무제표 조회.",
         )
-        if dart_api_key and dart_api_key != st.session_state.get("dart_api_key", ""):
-            st.session_state["dart_api_key"] = dart_api_key
-            save_settings({**load_settings(), "dart_api_key": dart_api_key})
+        dart_api_key = st.session_state.get("_dart_key_input") or st.session_state.get("dart_api_key", "")
         st.caption("🟢 DART 활성" if dart_api_key else "⚪ DART 미연동 (yfinance 데이터 사용)")
 
     # ── KRX API 키 ─────────────────────────────────────────────────────────
@@ -704,6 +717,37 @@ def _article_dialog(title: str, link: str, ticker_sym: str, api_key: str) -> Non
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_market:
     st.subheader("🌐 시장 현황")
+
+    # ── 전체 시장 급등/급락 TOP 10 ──────────────────────────────────────────
+    st.markdown("### 🏆 전체 시장 급등·급락 TOP 10 (KOSPI+KOSDAQ)")
+    with st.spinner("전체 시장 데이터 로딩 중..."):
+        _fm_gainers, _fm_losers = _full_movers()
+
+    if not _fm_gainers.empty or not _fm_losers.empty:
+        _fmc1, _fmc2 = st.columns(2)
+        _cols_show = ["종목명", "티커", "현재가", "등락률(%)", "시장"]
+        with _fmc1:
+            st.markdown("#### 🚀 급등 상위 10")
+            if not _fm_gainers.empty:
+                st.dataframe(
+                    _fm_gainers[_cols_show].style
+                    .format({"현재가": "{:,.0f}", "등락률(%)": "{:+.2f}%"})
+                    .map(lambda v: "color:#ef5350;font-weight:bold" if isinstance(v, float) and v > 0 else "", subset=["등락률(%)"]),
+                    use_container_width=True, hide_index=True,
+                )
+        with _fmc2:
+            st.markdown("#### 📉 급락 하위 10")
+            if not _fm_losers.empty:
+                st.dataframe(
+                    _fm_losers[_cols_show].style
+                    .format({"현재가": "{:,.0f}", "등락률(%)": "{:+.2f}%"})
+                    .map(lambda v: "color:#42a5f5;font-weight:bold" if isinstance(v, float) and v < 0 else "", subset=["등락률(%)"]),
+                    use_container_width=True, hide_index=True,
+                )
+    else:
+        st.info("pykrx 또는 FinanceDataReader 미설치 시 전체 시장 데이터를 불러올 수 없습니다.")
+
+    st.divider()
 
     col_left, col_right = st.columns([2, 1])
 
