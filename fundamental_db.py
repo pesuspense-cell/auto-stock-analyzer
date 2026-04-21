@@ -217,6 +217,53 @@ def fetch_and_cache_single(ticker: str) -> Optional[dict]:
         return None
 
 
+def save_yfinance_fundamental(ticker: str, yf_info: dict) -> None:
+    """
+    yfinance info 딕셔너리에서 PER/PBR/EPS 등을 뽑아 DB에 upsert.
+    ticker: '005930.KS' 형식
+    """
+    code   = ticker.split(".")[0]
+    suffix = ticker.split(".")[-1] if "." in ticker else "KS"
+    market = "KOSPI" if suffix == "KS" else "KOSDAQ"
+
+    def _f(key):
+        v = yf_info.get(key)
+        try:
+            return float(v) if v is not None and v == v else None
+        except Exception:
+            return None
+
+    per    = _f("trailingPE")
+    pbr    = _f("priceToBook")
+    eps    = _f("trailingEps")
+    bps    = _f("bookValue")
+    div    = _f("dividendYield")
+    if div is not None:
+        div = round(div * 100, 4)   # 0.012 → 1.2%
+    dps    = _f("lastDividendValue")
+    cap    = _f("marketCap")
+    name   = yf_info.get("shortName") or yf_info.get("longName") or code
+    now_str = datetime.now().isoformat()
+
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO fundamentals
+                (ticker, name, market, per, pbr, div, bps, eps, dps, market_cap, last_updated)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(ticker) DO UPDATE SET
+                name=COALESCE(excluded.name, name),
+                per=COALESCE(excluded.per, per),
+                pbr=COALESCE(excluded.pbr, pbr),
+                div=COALESCE(excluded.div, div),
+                bps=COALESCE(excluded.bps, bps),
+                eps=COALESCE(excluded.eps, eps),
+                dps=COALESCE(excluded.dps, dps),
+                market_cap=COALESCE(excluded.market_cap, market_cap),
+                last_updated=excluded.last_updated
+        """, (ticker, name, market, per, pbr, div, bps, eps, dps, cap, now_str))
+        conn.commit()
+
+
 # ── 전체 시장 자동 업데이트 (분기 체크 포함) ──────────────────────────────────
 
 def ensure_updated(market: str) -> bool:

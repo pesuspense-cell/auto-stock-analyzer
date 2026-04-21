@@ -923,6 +923,80 @@ def _is_krx_ticker(ticker: str) -> bool:
     return ticker.endswith(".KS") or ticker.endswith(".KQ")
 
 
+def get_naver_fundamentals(code: str, price: float = None) -> dict:
+    """
+    Naver Finance main.naver per_table에서 PER / PBR / 배당수익률 스크래핑.
+    EPS = price / PER,  BPS = price / PBR 로 역산.
+    반환: {per, pbr, eps_ttm, bps, div} or {}
+    """
+    if not code.isdigit() or not HAS_BS4:
+        return {}
+    import requests
+    from bs4 import BeautifulSoup
+
+    url = f"https://finance.naver.com/item/main.naver?code={code}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://finance.naver.com/",
+    }
+
+    def _parse_float(text: str):
+        import re
+        m = re.search(r'-?[\d,]+\.?\d*', text.strip())
+        if not m:
+            return None
+        try:
+            return float(m.group().replace(",", ""))
+        except ValueError:
+            return None
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "euc-kr"
+        soup = BeautifulSoup(resp.text, "html.parser")
+        table = soup.find("table", {"class": "per_table"})
+        if not table:
+            return {}
+
+        rows_data = []
+        row_values = []   # 두 번째 값 (EPS/BPS 원화 금액)
+        for tr in table.find_all("tr"):
+            td = tr.find("td")
+            if td:
+                parts = [p.strip() for p in td.text.split("\n") if p.strip() and p.strip() != "l"]
+                rows_data.append(_parse_float(parts[0]) if parts else None)
+                # 마지막 부분이 원화 금액 (EPS/BPS 역산보다 직접값 우선)
+                row_values.append(_parse_float(parts[-1]) if len(parts) > 1 else None)
+
+        # rows_data: [PER, 동종업체PER, PBR, 배당수익률(%)]
+        # row_values: [EPS(원), 동종업체EPS(원), BPS(원), None]
+        per = rows_data[0] if len(rows_data) > 0 else None
+        pbr = rows_data[2] if len(rows_data) > 2 else None
+        div = rows_data[3] if len(rows_data) > 3 else None   # %
+
+        # EPS/BPS: td 내 직접값 우선, 없으면 price/ratio 역산
+        eps_ttm = row_values[0] if (row_values and row_values[0]) else (
+            round(price / per, 0) if price and per and per > 0 else None
+        )
+        bps = row_values[2] if (len(row_values) > 2 and row_values[2]) else (
+            round(price / pbr, 0) if price and pbr and pbr > 0 else None
+        )
+
+        result = {}
+        if per    is not None: result["per"]    = per
+        if pbr    is not None: result["pbr"]    = pbr
+        if eps_ttm is not None: result["eps_ttm"] = eps_ttm
+        if bps    is not None: result["bps"]    = bps
+        if div    is not None: result["div"]    = div
+        return result
+    except Exception:
+        return {}
+
+
 def _krx_fundamental_to_dict(row: dict, ticker: str) -> dict:
     """fundamental_db row → get_fundamental_data 반환 형식으로 변환"""
     return {
@@ -952,17 +1026,14 @@ def _krx_fundamental_to_dict(row: dict, ticker: str) -> dict:
 
 def get_fundamental_data(ticker: str) -> dict:
     """
-    KRX 종목(.KS/.KQ): SQLite 캐시 우선 조회 → 없으면 pykrx로 단일 fetch 후 저장
+    KRX 종목(.KS/.KQ): yfinance 조회 후 DB에 PER/PBR/EPS 저장; DB 기존값과 병합
     해외 종목: yfinance 직접 조회
     """
+    _db_row = None
     if _is_krx_ticker(ticker):
         try:
-            from fundamental_db import get_ticker_fundamental, fetch_and_cache_single
-            row = get_ticker_fundamental(ticker)
-            if row is None:
-                row = fetch_and_cache_single(ticker)
-            if row:
-                return _krx_fundamental_to_dict(row, ticker)
+            from fundamental_db import get_ticker_fundamental
+            _db_row = get_ticker_fundamental(ticker)
         except Exception:
             pass
 
@@ -1007,7 +1078,7 @@ def get_fundamental_data(ticker: str) -> dict:
         except Exception:
             pass
 
-        return {
+        result = {
             "per":              per,
             "pbr":              pbr,
             "psr":              psr,
@@ -1030,7 +1101,38 @@ def get_fundamental_data(ticker: str) -> dict:
             "short_name":       info.get("shortName", ticker),
             "source":           "yfinance",
         }
+
+        # KRX 종목: Naver Finance에서 PER/PBR/EPS 보완 후 DB 저장
+        if _is_krx_ticker(ticker):
+            code = ticker.split(".")[0]
+            current_price = result.get("market_cap") and price  # price는 위에서 구함
+            naver = get_naver_fundamentals(code, price)
+            for k in ("per", "pbr", "eps_ttm", "bps", "div"):
+                if result.get(k) is None and naver.get(k) is not None:
+                    result[k] = naver[k]
+            try:
+                from fundamental_db import save_yfinance_fundamental, get_ticker_fundamental
+                # Naver 값을 info dict에 주입해 DB 저장 함수 재사용
+                merged_info = dict(info)
+                if naver.get("per")    is not None: merged_info["trailingPE"]   = naver["per"]
+                if naver.get("pbr")    is not None: merged_info["priceToBook"]  = naver["pbr"]
+                if naver.get("eps_ttm") is not None: merged_info["trailingEps"] = naver["eps_ttm"]
+                if naver.get("bps")    is not None: merged_info["bookValue"]    = naver["bps"]
+                if naver.get("div")    is not None: merged_info["dividendYield"] = naver["div"] / 100
+                save_yfinance_fundamental(ticker, merged_info)
+                # DB에만 있는 값(dps 등) 병합
+                db = _db_row or get_ticker_fundamental(ticker)
+                if db:
+                    if result.get("dps") is None and db.get("dps") is not None:
+                        result["dps"] = db["dps"]
+            except Exception:
+                pass
+
+        return result
     except Exception:
+        # yfinance 실패 시 DB 값만으로라도 반환
+        if _db_row:
+            return _krx_fundamental_to_dict(_db_row, ticker)
         return {}
 
 
