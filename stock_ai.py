@@ -1193,14 +1193,16 @@ def get_us_stock_list() -> dict:
 
         for market_tag, listing_key in [("S&P500", "S&P500"), ("NASDAQ", "NASDAQ")]:
             try:
-                df = fdr.StockListing(listing_key)
-                df = df.dropna(subset=["Name", "Symbol"])
-                for _, row in df.iterrows():
-                    sym  = str(row["Symbol"]).strip()
-                    name = str(row["Name"]).strip()
-                    if sym and name and sym.replace(".", "").isalpha():
-                        display = f"{name} ({sym}) [{market_tag}]"
-                        combined[display] = sym
+                df = fdr.StockListing(listing_key).dropna(subset=["Name", "Symbol"])
+                df["Symbol"] = df["Symbol"].astype(str).str.strip()
+                df["Name"]   = df["Name"].astype(str).str.strip()
+                mask = (
+                    df["Symbol"].ne("") & df["Name"].ne("") &
+                    df["Symbol"].str.replace(".", "", regex=False).str.isalpha()
+                )
+                df = df[mask]
+                df["_display"] = df["Name"] + " (" + df["Symbol"] + ") [" + market_tag + "]"
+                combined.update(dict(zip(df["_display"], df["Symbol"])))
             except Exception:
                 continue
 
@@ -1226,12 +1228,13 @@ def get_krx_stock_list() -> dict:
             df = fdr.StockListing(market)
             if df.empty:
                 continue
-            for _, row in df.iterrows():
-                code = str(row.get("Code", "")).strip()
-                name = str(row.get("Name", "")).strip()
-                if name and code and len(code) == 6 and code.isdigit():
-                    display = f"{name} ({code})"
-                    result[display] = f"{code}.{suffix}"
+            df["Code"] = df["Code"].astype(str).str.strip()
+            df["Name"] = df["Name"].astype(str).str.strip()
+            mask = df["Name"].ne("") & df["Code"].str.len().eq(6) & df["Code"].str.isdigit()
+            df = df[mask]
+            df["_display"] = df["Name"] + " (" + df["Code"] + ")"
+            df["_ticker"]  = df["Code"] + "." + suffix
+            result.update(dict(zip(df["_display"], df["_ticker"])))
         return result
     except Exception:
         return {}
