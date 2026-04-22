@@ -1361,12 +1361,43 @@ def get_fundamental_data(ticker: str) -> dict:
             pass
 
     try:
-        t         = yf.Ticker(ticker)
-        info      = t.info
-        price     = info.get("currentPrice") or info.get("regularMarketPrice")
+        t    = yf.Ticker(ticker)
+        info = t.info
+
+        # ── 가격 (info → previousClose → fast_info 순서로 fallback) ─────────────
+        price = (info.get("currentPrice")
+                 or info.get("regularMarketPrice")
+                 or info.get("previousClose"))
+        if price is None:
+            try:
+                price = t.fast_info.last_price
+            except Exception:
+                pass
+
+        # ── 시가총액 (info → fast_info) ──────────────────────────────────────────
+        market_cap = info.get("marketCap")
+        if market_cap is None:
+            try:
+                market_cap = t.fast_info.market_cap
+            except Exception:
+                pass
+
+        # ── 52주 고/저 (info → fast_info) ───────────────────────────────────────
+        w52_high = info.get("fiftyTwoWeekHigh")
+        w52_low  = info.get("fiftyTwoWeekLow")
+        if w52_high is None:
+            try:
+                w52_high = t.fast_info.year_high
+            except Exception:
+                pass
+        if w52_low is None:
+            try:
+                w52_low = t.fast_info.year_low
+            except Exception:
+                pass
+
         eps_ttm   = info.get("trailingEps")
         book_val  = info.get("bookValue")
-        market_cap= info.get("marketCap")
         total_rev = info.get("totalRevenue")
 
         # PER fallback: price / trailingEps
@@ -1474,8 +1505,8 @@ def get_fundamental_data(ticker: str) -> dict:
             "revenue_growth":   info.get("revenueGrowth"),
             "earnings_growth":  info.get("earningsGrowth"),
             "operating_margins":info.get("operatingMargins"),
-            "w52_high":         info.get("fiftyTwoWeekHigh"),
-            "w52_low":          info.get("fiftyTwoWeekLow"),
+            "w52_high":         w52_high,
+            "w52_low":          w52_low,
             "market_cap":       market_cap,
             "total_revenue":    total_rev,
             "operating_income": operating_income,
