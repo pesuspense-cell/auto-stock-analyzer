@@ -602,6 +602,10 @@ if _pending and not _aticker:
     st.rerun()
 
 if _data_ready:
+    # 분석 섹션 전체에서 사이드바 현재 선택값이 아닌 분석된 종목 기준으로 고정
+    ticker = _aticker
+    sname  = _asname
+
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
 
     # ── 주가 데이터 + 펀더멘털 병렬 로딩 ────────────────────────────────────
