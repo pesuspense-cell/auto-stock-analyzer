@@ -337,7 +337,6 @@ with st.sidebar:
                 "종목 검색 (이름·코드 입력)",
                 options,
                 key="_krx_selected",
-                on_change=_clear_analysis,
                 help="회사 이름이나 종목 코드(6자리)를 입력하면 자동으로 필터링됩니다.",
             )
             ticker = krx[selected]
@@ -345,7 +344,7 @@ with st.sidebar:
         else:
             st.warning("종목 목록 로드 실패 — 기본 목록 사용")
             sname  = st.selectbox("종목", list(KOSPI_STOCKS.keys()),
-                                  key="_krx_fallback", on_change=_clear_analysis)
+                                  key="_krx_fallback")
             ticker = KOSPI_STOCKS[sname]
 
     elif market_sel == "미국 주식 (검색)":
@@ -358,7 +357,6 @@ with st.sidebar:
                 "종목 검색 (이름·티커 입력)",
                 us_options,
                 key="_us_selected",
-                on_change=_clear_analysis,
                 help="S&P500 + 나스닥 전체 종목. 회사명 또는 티커(예: AAPL)를 입력하면 자동 필터링됩니다.",
             )
             ticker = us_list[us_selected]
@@ -366,7 +364,7 @@ with st.sidebar:
         else:
             st.warning("미국 종목 목록 로드 실패 — 기본 목록 사용")
             sname  = st.selectbox("종목", list(US_STOCKS.keys()),
-                                  key="_us_fallback", on_change=_clear_analysis)
+                                  key="_us_fallback")
             ticker = US_STOCKS[sname]
 
     else:
