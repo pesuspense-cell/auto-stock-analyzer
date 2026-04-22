@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import pandas_ta as _pta
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -84,120 +83,111 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     low    = data["Low"]
     volume = data["Volume"]
 
-    # ── 이동평균선 (SMA / EMA) — pandas-TA 벡터 연산 ─────────────────────────
-    data["SMA_5"]  = _pta.sma(close, length=5)
-    data["SMA_20"] = _pta.sma(close, length=20)
-    data["SMA_60"] = _pta.sma(close, length=60)
-    data["EMA_20"] = _pta.ema(close, length=20)
-    data["EMA_50"] = _pta.ema(close, length=50)
+    # ── 이동평균선 (SMA / EMA) ─────────────────────────────────────────────────
+    data["SMA_5"]  = close.rolling(5).mean()
+    data["SMA_20"] = close.rolling(20).mean()
+    data["SMA_60"] = close.rolling(60).mean()
+    data["EMA_20"] = close.ewm(span=20, adjust=False).mean()
+    data["EMA_50"] = close.ewm(span=50, adjust=False).mean()
     if len(data) >= 200:
-        data["EMA_200"] = _pta.ema(close, length=200)
+        data["EMA_200"] = close.ewm(span=200, adjust=False).mean()
 
     # ── RSI (14) ──────────────────────────────────────────────────────────────
-    data["RSI"] = _pta.rsi(close, length=14)
+    _delta = close.diff()
+    _up    = _delta.clip(lower=0)
+    _down  = (-_delta).clip(lower=0)
+    _rs    = _up.rolling(14).mean() / _down.rolling(14).mean()
+    data["RSI"] = 100.0 - (100.0 / (1.0 + _rs))
 
     # ── MACD (12/26/9) ────────────────────────────────────────────────────────
-    try:
-        _macd = _pta.macd(close, fast=12, slow=26, signal=9)
-        if _macd is not None and not _macd.empty:
-            _mc = [c for c in _macd.columns]
-            data["MACD"]        = _macd[[c for c in _mc if c.startswith("MACD_")][0]]
-            data["MACD_Hist"]   = _macd[[c for c in _mc if c.startswith("MACDh_")][0]]
-            data["MACD_Signal"] = _macd[[c for c in _mc if c.startswith("MACDs_")][0]]
-    except Exception:
-        pass
+    _ema12 = close.ewm(span=12, adjust=False).mean()
+    _ema26 = close.ewm(span=26, adjust=False).mean()
+    data["MACD"]        = _ema12 - _ema26
+    data["MACD_Signal"] = data["MACD"].ewm(span=9, adjust=False).mean()
+    data["MACD_Hist"]   = data["MACD"] - data["MACD_Signal"]
 
     # ── 볼린저밴드 (20, 2σ) ───────────────────────────────────────────────────
-    try:
-        _bb = _pta.bbands(close, length=20, std=2)
-        if _bb is not None and not _bb.empty:
-            _bc = list(_bb.columns)
-            data["BB_Lower"]  = _bb[[c for c in _bc if c.startswith("BBL_")][0]]
-            data["BB_Middle"] = _bb[[c for c in _bc if c.startswith("BBM_")][0]]
-            data["BB_Upper"]  = _bb[[c for c in _bc if c.startswith("BBU_")][0]]
-            data["BB_Width"]  = _bb[[c for c in _bc if c.startswith("BBB_")][0]]
-            data["BB_PCT"]    = _bb[[c for c in _bc if c.startswith("BBP_")][0]]
-    except Exception:
-        pass
+    _bb_mid = close.rolling(20).mean()
+    _bb_std = close.rolling(20).std()
+    data["BB_Middle"] = _bb_mid
+    data["BB_Upper"]  = _bb_mid + 2 * _bb_std
+    data["BB_Lower"]  = _bb_mid - 2 * _bb_std
+    data["BB_Width"]  = (data["BB_Upper"] - data["BB_Lower"]) / _bb_mid
+    _bb_range = (data["BB_Upper"] - data["BB_Lower"]).replace(0, np.nan)
+    data["BB_PCT"]    = (close - data["BB_Lower"]) / _bb_range
 
     # ── 스토캐스틱 (14, 3) ────────────────────────────────────────────────────
-    try:
-        _stoch = _pta.stoch(high, low, close, k=14, d=3)
-        if _stoch is not None and not _stoch.empty:
-            _sc = list(_stoch.columns)
-            data["STOCH_K"] = _stoch[[c for c in _sc if c.startswith("STOCHk_")][0]]
-            data["STOCH_D"] = _stoch[[c for c in _sc if c.startswith("STOCHd_")][0]]
-    except Exception:
-        pass
+    _low14  = low.rolling(14).min()
+    _high14 = high.rolling(14).max()
+    _stoch_raw = (close - _low14) / (_high14 - _low14).replace(0, np.nan) * 100
+    data["STOCH_K"] = _stoch_raw.rolling(3).mean()
+    data["STOCH_D"] = data["STOCH_K"].rolling(3).mean()
+
+    # ── True Range (ATR 공유) ─────────────────────────────────────────────────
+    _tr = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low  - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
 
     # ── ADX + 방향성 지수 (14) ────────────────────────────────────────────────
-    try:
-        _adx = _pta.adx(high, low, close, length=14)
-        if _adx is not None and not _adx.empty:
-            _ac = list(_adx.columns)
-            data["ADX"]     = _adx[[c for c in _ac if c.startswith("ADX_")][0]]
-            data["ADX_POS"] = _adx[[c for c in _ac if c.startswith("DMP_")][0]]
-            data["ADX_NEG"] = _adx[[c for c in _ac if c.startswith("DMN_")][0]]
-    except Exception:
-        pass
+    _h_diff   = high.diff()
+    _l_diff   = (-low).diff()
+    _plus_dm  = pd.Series(np.where((_h_diff > _l_diff) & (_h_diff > 0), _h_diff, 0.0), index=data.index)
+    _minus_dm = pd.Series(np.where((_l_diff > _h_diff) & (_l_diff > 0), _l_diff, 0.0), index=data.index)
+    _atr14    = _tr.rolling(14).mean()
+    _plus_di  = 100 * _plus_dm.rolling(14).mean() / _atr14
+    _minus_di = 100 * _minus_dm.rolling(14).mean() / _atr14
+    _di_sum   = (_plus_di + _minus_di).replace(0, np.nan)
+    _dx       = (_plus_di - _minus_di).abs() / _di_sum * 100
+    data["ADX"]     = _dx.rolling(14).mean()
+    data["ADX_POS"] = _plus_di
+    data["ADX_NEG"] = _minus_di
 
     # ── CCI (20) ──────────────────────────────────────────────────────────────
-    try:
-        data["CCI"] = _pta.cci(high, low, close, length=20)
-    except Exception:
-        pass
+    _tp      = (high + low + close) / 3
+    _cci_ma  = _tp.rolling(20).mean()
+    _cci_mad = _tp.rolling(20).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
+    data["CCI"] = (_tp - _cci_ma) / (0.015 * _cci_mad.replace(0, np.nan))
 
     # ── Williams %R (14) ──────────────────────────────────────────────────────
-    try:
-        data["WILLIAMS_R"] = _pta.willr(high, low, close, length=14)
-    except Exception:
-        pass
+    _wr_high = high.rolling(14).max()
+    _wr_low  = low.rolling(14).min()
+    data["WILLIAMS_R"] = (_wr_high - close) / (_wr_high - _wr_low).replace(0, np.nan) * -100
 
     # ── ATR (14) ──────────────────────────────────────────────────────────────
-    try:
-        data["ATR"] = _pta.atr(high, low, close, length=14)
-    except Exception:
-        pass
+    data["ATR"] = _tr.rolling(14).mean()
 
     # ── ROC (12) ──────────────────────────────────────────────────────────────
-    try:
-        data["ROC"] = _pta.roc(close, length=12)
-    except Exception:
-        pass
+    data["ROC"] = (close / close.shift(12) - 1) * 100
 
     # ── OBV + MA20 ────────────────────────────────────────────────────────────
-    try:
-        data["OBV"]      = _pta.obv(close, volume)
-        data["OBV_MA20"] = data["OBV"].rolling(20).mean()
-    except Exception:
-        pass
+    _obv_dir = np.sign(close.diff()).fillna(0)
+    data["OBV"]      = (volume * _obv_dir).cumsum()
+    data["OBV_MA20"] = data["OBV"].rolling(20).mean()
 
     # ── MFI (14) ──────────────────────────────────────────────────────────────
-    try:
-        data["MFI"] = _pta.mfi(high, low, close, volume, length=14)
-    except Exception:
-        pass
+    _tp2     = (high + low + close) / 3
+    _mf      = _tp2 * volume
+    _tp_diff = _tp2.diff()
+    _pos_mf  = _mf.where(_tp_diff > 0, 0.0).rolling(14).sum()
+    _neg_mf  = _mf.where(_tp_diff < 0, 0.0).rolling(14).sum()
+    data["MFI"] = 100 - (100 / (1 + _pos_mf / _neg_mf.replace(0, np.nan)))
 
     # ── 거래량 이평 ───────────────────────────────────────────────────────────
     data["Volume_MA20"] = volume.rolling(20).mean()
 
     # ── 일목균형표 (Ichimoku Cloud) ────────────────────────────────────────────
-    try:
-        data["ICHI_TENKAN"] = (high.rolling(9).max()  + low.rolling(9).min())  / 2
-        data["ICHI_KIJUN"]  = (high.rolling(26).max() + low.rolling(26).min()) / 2
-        data["ICHI_SPAN_A"] = ((data["ICHI_TENKAN"] + data["ICHI_KIJUN"]) / 2).shift(26)
-        data["ICHI_SPAN_B"] = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
-        data["ICHI_CHIKOU"] = close.shift(-26)
-    except Exception:
-        pass
+    data["ICHI_TENKAN"] = (high.rolling(9).max()  + low.rolling(9).min())  / 2
+    data["ICHI_KIJUN"]  = (high.rolling(26).max() + low.rolling(26).min()) / 2
+    data["ICHI_SPAN_A"] = ((data["ICHI_TENKAN"] + data["ICHI_KIJUN"]) / 2).shift(26)
+    data["ICHI_SPAN_B"] = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
+    data["ICHI_CHIKOU"] = close.shift(-26)
 
     # ── Z-Score (20일) ────────────────────────────────────────────────────────
-    try:
-        _z_mean = close.rolling(20).mean()
-        _z_std  = close.rolling(20).std()
-        data["Z_SCORE"] = (close - _z_mean) / _z_std
-    except Exception:
-        pass
+    _z_mean = close.rolling(20).mean()
+    _z_std  = close.rolling(20).std()
+    data["Z_SCORE"] = (close - _z_mean) / _z_std.replace(0, np.nan)
 
     return data
 

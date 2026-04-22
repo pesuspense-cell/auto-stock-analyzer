@@ -6,7 +6,6 @@ streamlit-autorefresh>=1.0.0
 yfinance>=0.2.40
 pandas>=2.0.0
 numpy>=1.26.0
-pandas-ta
 plotly>=5.18.0
 finance-datareader>=0.9.0
 pykrx>=1.0.0
