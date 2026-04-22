@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import ta as ta_lib
+import pandas_ta as _pta
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -64,19 +64,18 @@ INDICES = {
 
 def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     """
-    주식 데이터 로드 및 기술적 지표 계산.
+    주식 데이터 로드 및 기술적 지표 계산 (pandas-TA 벡터화 엔진).
     지표 목록:
       이동평균 : SMA 5/20/60, EMA 20/50/200
       모멘텀   : RSI(14), 스토캐스틱(14,3), CCI(20), Williams %R(14), ROC(12)
-      추세     : MACD(12/26/9), ADX±DI(14)
-      변동성   : 볼린저밴드(20,2), ATR(14)
+      추세     : MACD(12/26/9), ADX±DI(14), 일목균형표
+      변동성   : 볼린저밴드(20,2σ), ATR(14), Z-Score(20)
       거래량   : Volume MA20, OBV, OBV MA20, MFI(14)
     """
     data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
     if data.empty or len(data) < 20:
         return data
 
-    # 멀티레벨 컬럼 처리 (yfinance 0.2+)
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.droplevel(1)
 
@@ -85,103 +84,120 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     low    = data["Low"]
     volume = data["Volume"]
 
-    # ── 이동평균선 (SMA / EMA) ────────────────────────────────────────────────
-    data["SMA_5"]   = ta_lib.trend.SMAIndicator(close, window=5).sma_indicator()
-    data["SMA_20"]  = ta_lib.trend.SMAIndicator(close, window=20).sma_indicator()
-    data["SMA_60"]  = ta_lib.trend.SMAIndicator(close, window=60).sma_indicator()
-    data["EMA_20"]  = ta_lib.trend.EMAIndicator(close, window=20).ema_indicator()
-    data["EMA_50"]  = ta_lib.trend.EMAIndicator(close, window=50).ema_indicator()
-    # EMA 200은 데이터가 충분할 때만 (1y/2y 조회 시 활성화)
+    # ── 이동평균선 (SMA / EMA) — pandas-TA 벡터 연산 ─────────────────────────
+    data["SMA_5"]  = _pta.sma(close, length=5)
+    data["SMA_20"] = _pta.sma(close, length=20)
+    data["SMA_60"] = _pta.sma(close, length=60)
+    data["EMA_20"] = _pta.ema(close, length=20)
+    data["EMA_50"] = _pta.ema(close, length=50)
     if len(data) >= 200:
-        data["EMA_200"] = ta_lib.trend.EMAIndicator(close, window=200).ema_indicator()
+        data["EMA_200"] = _pta.ema(close, length=200)
 
     # ── RSI (14) ──────────────────────────────────────────────────────────────
-    data["RSI"] = ta_lib.momentum.RSIIndicator(close, window=14).rsi()
+    data["RSI"] = _pta.rsi(close, length=14)
 
     # ── MACD (12/26/9) ────────────────────────────────────────────────────────
     try:
-        macd_ind = ta_lib.trend.MACD(close, window_fast=12, window_slow=26, window_sign=9)
-        data["MACD"]        = macd_ind.macd()
-        data["MACD_Signal"] = macd_ind.macd_signal()
-        data["MACD_Hist"]   = macd_ind.macd_diff()
+        _macd = _pta.macd(close, fast=12, slow=26, signal=9)
+        if _macd is not None and not _macd.empty:
+            _mc = [c for c in _macd.columns]
+            data["MACD"]        = _macd[[c for c in _mc if c.startswith("MACD_")][0]]
+            data["MACD_Hist"]   = _macd[[c for c in _mc if c.startswith("MACDh_")][0]]
+            data["MACD_Signal"] = _macd[[c for c in _mc if c.startswith("MACDs_")][0]]
     except Exception:
         pass
 
     # ── 볼린저밴드 (20, 2σ) ───────────────────────────────────────────────────
     try:
-        bb_ind = ta_lib.volatility.BollingerBands(close, window=20, window_dev=2)
-        data["BB_Upper"]  = bb_ind.bollinger_hband()
-        data["BB_Middle"] = bb_ind.bollinger_mavg()
-        data["BB_Lower"]  = bb_ind.bollinger_lband()
-        data["BB_PCT"]    = bb_ind.bollinger_pband()   # %B: 0~1 (밴드 내 위치)
-        data["BB_Width"]  = bb_ind.bollinger_wband()   # 밴드 폭 (변동성 squeeze 감지)
+        _bb = _pta.bbands(close, length=20, std=2)
+        if _bb is not None and not _bb.empty:
+            _bc = list(_bb.columns)
+            data["BB_Lower"]  = _bb[[c for c in _bc if c.startswith("BBL_")][0]]
+            data["BB_Middle"] = _bb[[c for c in _bc if c.startswith("BBM_")][0]]
+            data["BB_Upper"]  = _bb[[c for c in _bc if c.startswith("BBU_")][0]]
+            data["BB_Width"]  = _bb[[c for c in _bc if c.startswith("BBB_")][0]]
+            data["BB_PCT"]    = _bb[[c for c in _bc if c.startswith("BBP_")][0]]
     except Exception:
         pass
 
     # ── 스토캐스틱 (14, 3) ────────────────────────────────────────────────────
     try:
-        stoch_ind = ta_lib.momentum.StochasticOscillator(
-            high, low, close, window=14, smooth_window=3
-        )
-        data["STOCH_K"] = stoch_ind.stoch()
-        data["STOCH_D"] = stoch_ind.stoch_signal()
+        _stoch = _pta.stoch(high, low, close, k=14, d=3)
+        if _stoch is not None and not _stoch.empty:
+            _sc = list(_stoch.columns)
+            data["STOCH_K"] = _stoch[[c for c in _sc if c.startswith("STOCHk_")][0]]
+            data["STOCH_D"] = _stoch[[c for c in _sc if c.startswith("STOCHd_")][0]]
     except Exception:
         pass
 
     # ── ADX + 방향성 지수 (14) ────────────────────────────────────────────────
     try:
-        adx_ind = ta_lib.trend.ADXIndicator(high, low, close, window=14)
-        data["ADX"]     = adx_ind.adx()
-        data["ADX_POS"] = adx_ind.adx_pos()   # +DI (상승 추세력)
-        data["ADX_NEG"] = adx_ind.adx_neg()   # -DI (하락 추세력)
+        _adx = _pta.adx(high, low, close, length=14)
+        if _adx is not None and not _adx.empty:
+            _ac = list(_adx.columns)
+            data["ADX"]     = _adx[[c for c in _ac if c.startswith("ADX_")][0]]
+            data["ADX_POS"] = _adx[[c for c in _ac if c.startswith("DMP_")][0]]
+            data["ADX_NEG"] = _adx[[c for c in _ac if c.startswith("DMN_")][0]]
     except Exception:
         pass
 
-    # ── CCI (Commodity Channel Index, 20) ────────────────────────────────────
+    # ── CCI (20) ──────────────────────────────────────────────────────────────
     try:
-        data["CCI"] = ta_lib.trend.CCIIndicator(high, low, close, window=20).cci()
+        data["CCI"] = _pta.cci(high, low, close, length=20)
     except Exception:
         pass
 
     # ── Williams %R (14) ──────────────────────────────────────────────────────
     try:
-        data["WILLIAMS_R"] = ta_lib.momentum.WilliamsRIndicator(
-            high, low, close, lbp=14
-        ).williams_r()
+        data["WILLIAMS_R"] = _pta.willr(high, low, close, length=14)
     except Exception:
         pass
 
-    # ── ATR (Average True Range, 14) ──────────────────────────────────────────
+    # ── ATR (14) ──────────────────────────────────────────────────────────────
     try:
-        data["ATR"] = ta_lib.volatility.AverageTrueRange(
-            high, low, close, window=14
-        ).average_true_range()
+        data["ATR"] = _pta.atr(high, low, close, length=14)
     except Exception:
         pass
 
-    # ── ROC (Rate of Change, 12) ──────────────────────────────────────────────
+    # ── ROC (12) ──────────────────────────────────────────────────────────────
     try:
-        data["ROC"] = ta_lib.momentum.ROCIndicator(close, window=12).roc()
+        data["ROC"] = _pta.roc(close, length=12)
     except Exception:
         pass
 
-    # ── OBV (On-Balance Volume) + 추세선 ─────────────────────────────────────
+    # ── OBV + MA20 ────────────────────────────────────────────────────────────
     try:
-        data["OBV"]      = ta_lib.volume.OnBalanceVolumeIndicator(close, volume).on_balance_volume()
-        data["OBV_MA20"] = data["OBV"].rolling(window=20).mean()
+        data["OBV"]      = _pta.obv(close, volume)
+        data["OBV_MA20"] = data["OBV"].rolling(20).mean()
     except Exception:
         pass
 
-    # ── MFI (Money Flow Index, 14) ────────────────────────────────────────────
+    # ── MFI (14) ──────────────────────────────────────────────────────────────
     try:
-        data["MFI"] = ta_lib.volume.MFIIndicator(
-            high, low, close, volume, window=14
-        ).money_flow_index()
+        data["MFI"] = _pta.mfi(high, low, close, volume, length=14)
     except Exception:
         pass
 
     # ── 거래량 이평 ───────────────────────────────────────────────────────────
-    data["Volume_MA20"] = volume.rolling(window=20).mean()
+    data["Volume_MA20"] = volume.rolling(20).mean()
+
+    # ── 일목균형표 (Ichimoku Cloud) ────────────────────────────────────────────
+    try:
+        data["ICHI_TENKAN"] = (high.rolling(9).max()  + low.rolling(9).min())  / 2
+        data["ICHI_KIJUN"]  = (high.rolling(26).max() + low.rolling(26).min()) / 2
+        data["ICHI_SPAN_A"] = ((data["ICHI_TENKAN"] + data["ICHI_KIJUN"]) / 2).shift(26)
+        data["ICHI_SPAN_B"] = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
+        data["ICHI_CHIKOU"] = close.shift(-26)
+    except Exception:
+        pass
+
+    # ── Z-Score (20일) ────────────────────────────────────────────────────────
+    try:
+        _z_mean = close.rolling(20).mean()
+        _z_std  = close.rolling(20).std()
+        data["Z_SCORE"] = (close - _z_mean) / _z_std
+    except Exception:
+        pass
 
     return data
 
@@ -775,6 +791,320 @@ def _f(row, col):
     return float(val)
 
 
+def _find_local_peaks(series: pd.Series, order: int = 5) -> list:
+    """scipy 없이 로컬 고점 인덱스 목록 반환"""
+    vals = series.values.astype(float)
+    n    = len(vals)
+    peaks = []
+    for i in range(order, n - order):
+        w_max = max(vals[max(0, i - order):i + order + 1])
+        if not np.isnan(vals[i]) and vals[i] == w_max:
+            peaks.append(i)
+    return peaks
+
+
+def _find_local_troughs(series: pd.Series, order: int = 5) -> list:
+    """scipy 없이 로컬 저점 인덱스 목록 반환"""
+    vals = series.values.astype(float)
+    n    = len(vals)
+    troughs = []
+    for i in range(order, n - order):
+        w_min = min(vals[max(0, i - order):i + order + 1])
+        if not np.isnan(vals[i]) and vals[i] == w_min:
+            troughs.append(i)
+    return troughs
+
+
+def detect_divergence(data: pd.DataFrame, lookback: int = 40, order: int = 5) -> dict:
+    """
+    주가 vs RSI / MACD 히스토그램 다이버전스 감지.
+    Bearish: 가격 고점 상승 + 지표 고점 하락 → 추세 약화 경고
+    Bullish: 가격 저점 하락 + 지표 저점 상승 → 반등 기대 신호
+    """
+    result = {
+        "bearish_rsi": False, "bullish_rsi": False,
+        "bearish_macd": False, "bullish_macd": False,
+        "descriptions": [],
+    }
+    if len(data) < lookback + order + 5:
+        return result
+
+    recent = data.tail(lookback).reset_index(drop=True)
+    close  = recent["Close"].astype(float)
+
+    for ind_col, label in [("RSI", "RSI"), ("MACD_Hist", "MACD 히스토그램")]:
+        if ind_col not in recent.columns:
+            continue
+        ind = recent[ind_col].astype(float)
+
+        price_peaks   = _find_local_peaks(close, order=order)
+        price_troughs = _find_local_troughs(close, order=order)
+
+        # Bearish: 가격 고점↑ + 지표 고점↓
+        if len(price_peaks) >= 2:
+            p1, p2 = price_peaks[-2], price_peaks[-1]
+            if (p1 < len(ind) and p2 < len(ind) and
+                    float(close.iloc[p2]) > float(close.iloc[p1]) and
+                    float(ind.iloc[p2])   < float(ind.iloc[p1])):
+                if ind_col == "RSI":
+                    result["bearish_rsi"]  = True
+                else:
+                    result["bearish_macd"] = True
+                result["descriptions"].append(
+                    f"⚠️ 하락 다이버전스({label}): 가격 고점↑ vs {label} 고점↓"
+                )
+
+        # Bullish: 가격 저점↓ + 지표 저점↑
+        if len(price_troughs) >= 2:
+            t1, t2 = price_troughs[-2], price_troughs[-1]
+            if (t1 < len(ind) and t2 < len(ind) and
+                    float(close.iloc[t2]) < float(close.iloc[t1]) and
+                    float(ind.iloc[t2])   > float(ind.iloc[t1])):
+                if ind_col == "RSI":
+                    result["bullish_rsi"]  = True
+                else:
+                    result["bullish_macd"] = True
+                result["descriptions"].append(
+                    f"✅ 상승 다이버전스({label}): 가격 저점↓ vs {label} 저점↑"
+                )
+
+    return result
+
+
+def calculate_vpvr(data: pd.DataFrame, n_bins: int = 20) -> dict:
+    """
+    가격대별 거래량 프로파일 (Volume Profile Visible Range).
+    POC(거래량 집중가), 현재가 위 최대 매물벽(저항), 아래 최대 매물대(지지) 반환.
+    """
+    if data.empty or len(data) < 10:
+        return {}
+    close  = data["Close"].astype(float)
+    volume = data["Volume"].astype(float)
+
+    p_min, p_max = float(close.min()), float(close.max())
+    if p_max <= p_min:
+        return {}
+
+    bins        = np.linspace(p_min, p_max, n_bins + 1)
+    vol_profile = np.zeros(n_bins)
+    for i in range(n_bins):
+        if i < n_bins - 1:
+            mask = (close >= bins[i]) & (close < bins[i + 1])
+        else:
+            mask = (close >= bins[i])
+        vol_profile[i] = float(volume[mask].sum())
+
+    poc_idx   = int(np.argmax(vol_profile))
+    poc_price = float((bins[poc_idx] + bins[poc_idx + 1]) / 2)
+    current   = float(close.iloc[-1])
+
+    res_level, res_vol = None, 0.0
+    sup_level, sup_vol = None, 0.0
+    for i in range(n_bins):
+        center = float((bins[i] + bins[i + 1]) / 2)
+        if center > current and vol_profile[i] > res_vol:
+            res_level, res_vol = center, float(vol_profile[i])
+        elif center < current and vol_profile[i] > sup_vol:
+            sup_level, sup_vol = center, float(vol_profile[i])
+
+    return {
+        "poc_price":        round(poc_price, 2),
+        "poc_volume":       round(float(vol_profile[poc_idx]), 0),
+        "bins":             bins.tolist(),
+        "volumes":          vol_profile.tolist(),
+        "current_price":    current,
+        "resistance_level": round(res_level, 2) if res_level else None,
+        "support_level":    round(sup_level, 2) if sup_level else None,
+    }
+
+
+def get_advanced_analysis(data: pd.DataFrame) -> dict:
+    """
+    고급 기술 분석 종합.
+      추세 점수  (0–100): EMA 배열 + ADX + 일목균형표
+      탄력 점수  (0–100): MACD + RSI + ROC + CCI
+      에너지 점수(0–100): OBV + MFI
+    + 다이버전스 · Z-Score · VPVR · 일목균형표 구름 해석
+    """
+    _empty = {
+        "trend_score": 50.0, "momentum_score": 50.0, "volume_score": 50.0,
+        "divergence": {}, "zscore": None, "vpvr": {}, "ichimoku": {}, "summary_items": [],
+    }
+    if data.empty or len(data) < 30:
+        return _empty
+
+    last  = data.iloc[-1]
+    close = data["Close"].astype(float)
+    price = float(close.iloc[-1])
+
+    # ── 추세 점수 (±6 → 0–100) ────────────────────────────────────────────
+    t = 0.0
+    ema20  = _f(last, "EMA_20")  or price
+    ema50  = _f(last, "EMA_50")  or price
+    ema200 = _f(last, "EMA_200")
+    if ema20 > ema50:   t += 1.5
+    else:               t -= 1.5
+    if ema200:
+        if price > ema200: t += 1.5
+        else:              t -= 1.5
+
+    adx     = _f(last, "ADX")
+    adx_pos = _f(last, "ADX_POS")
+    adx_neg = _f(last, "ADX_NEG")
+    if adx:
+        if adx > 30:   t += 1.0
+        elif adx > 20: t += 0.5
+        else:          t -= 0.5
+    if adx_pos is not None and adx_neg is not None:
+        t += 0.5 if adx_pos > adx_neg else -0.5
+
+    span_a = _f(last, "ICHI_SPAN_A")
+    span_b = _f(last, "ICHI_SPAN_B")
+    tenkan = _f(last, "ICHI_TENKAN")
+    kijun  = _f(last, "ICHI_KIJUN")
+    if span_a and span_b:
+        cloud_top = max(span_a, span_b)
+        cloud_bot = min(span_a, span_b)
+        if price > cloud_top:   t += 1.5
+        elif price > cloud_bot: t += 0.3
+        else:                   t -= 1.5
+    if tenkan and kijun:
+        t += 0.5 if tenkan > kijun else -0.5
+
+    trend_score = max(0.0, min(100.0, 50.0 + t / 6.0 * 50.0))
+
+    # ── 탄력 점수 (±5 → 0–100) ────────────────────────────────────────────
+    m = 0.0
+    macd_val = _f(last, "MACD")
+    macd_sig = _f(last, "MACD_Signal")
+    rsi      = _f(last, "RSI")
+    roc      = _f(last, "ROC")
+    cci      = _f(last, "CCI")
+
+    if macd_val is not None and macd_sig is not None:
+        m += 1.5 if macd_val > macd_sig else -1.5
+    if rsi is not None:
+        if rsi < 30:    m += 2.0
+        elif rsi < 45:  m += 0.8
+        elif rsi > 70:  m -= 2.0
+        elif rsi > 55:  m -= 0.8
+    if roc is not None:
+        if roc > 10:    m += 0.8
+        elif roc > 0:   m += 0.3
+        elif roc < -10: m -= 0.8
+        else:           m -= 0.3
+    if cci is not None:
+        if cci < -100:  m += 0.7
+        elif cci > 100: m -= 0.7
+
+    momentum_score = max(0.0, min(100.0, 50.0 + m / 5.0 * 50.0))
+
+    # ── 에너지 점수 (±2 → 0–100) ──────────────────────────────────────────
+    v = 0.0
+    obv    = _f(last, "OBV")
+    obv_ma = _f(last, "OBV_MA20")
+    mfi    = _f(last, "MFI")
+
+    if obv is not None and obv_ma is not None:
+        v += 1.0 if obv > obv_ma else -1.0
+    if mfi is not None:
+        if mfi < 20:   v += 1.0
+        elif mfi < 40: v += 0.4
+        elif mfi > 80: v -= 1.0
+        elif mfi > 60: v -= 0.4
+
+    volume_score = max(0.0, min(100.0, 50.0 + v / 2.0 * 50.0))
+
+    # ── 보조 지표 ──────────────────────────────────────────────────────────
+    zscore     = _f(last, "Z_SCORE")
+    divergence = detect_divergence(data)
+    vpvr       = calculate_vpvr(data)
+
+    # ── 일목균형표 해석 ────────────────────────────────────────────────────
+    ichimoku = {}
+    if span_a and span_b:
+        cloud_top = max(span_a, span_b)
+        cloud_bot = min(span_a, span_b)
+        thick_pct = abs(span_a - span_b) / max(span_a, span_b) * 100
+        if price > cloud_top:
+            ichi_signal, ichi_color = "☁️ 구름 위 (강세)", "#a5d6a7"
+        elif price > cloud_bot:
+            ichi_signal, ichi_color = "☁️ 구름 내 (중립)", "#fff176"
+        else:
+            ichi_signal, ichi_color = "☁️ 구름 아래 (약세)", "#ef9a9a"
+        ichimoku = {
+            "signal": ichi_signal, "color": ichi_color,
+            "cloud_top": cloud_top, "cloud_bot": cloud_bot,
+            "thickness_pct": round(thick_pct, 1),
+            "bullish_cloud": bool(span_a > span_b),
+            "tenkan": tenkan, "kijun": kijun,
+        }
+
+    # ── 스코어보드 요약 항목 ───────────────────────────────────────────────
+    items = []
+    div = divergence
+    if div.get("bearish_rsi") or div.get("bearish_macd"):
+        items.append({"항목": "다이버전스", "상태": "⚠️ 하락 다이버전스 포착", "색상": "#ffcc80"})
+    elif div.get("bullish_rsi") or div.get("bullish_macd"):
+        items.append({"항목": "다이버전스", "상태": "✅ 상승 다이버전스 포착", "색상": "#a5d6a7"})
+    else:
+        items.append({"항목": "다이버전스", "상태": "—  감지 없음", "색상": "#757575"})
+
+    if vpvr.get("resistance_level"):
+        r      = vpvr["resistance_level"]
+        r_dist = abs(r - price) / price * 100
+        items.append({
+            "항목": "매물대 저항",
+            "상태": f"🛑 {r:,.0f}원  (현재가 +{r_dist:.1f}%)",
+            "색상": "#ef9a9a",
+        })
+    if vpvr.get("poc_price"):
+        poc     = vpvr["poc_price"]
+        poc_d   = (poc - price) / price * 100
+        poc_dir = "위" if poc > price else "아래"
+        items.append({
+            "항목": "POC (핵심매물)",
+            "상태": f"🎯 {poc:,.0f}원  ({abs(poc_d):.1f}% {poc_dir})",
+            "색상": "#80cbc4",
+        })
+
+    if zscore is not None:
+        if zscore > 2.5:
+            items.append({"항목": "Z-Score", "상태": f"📉 +{zscore:.2f}σ  통계적 과매수", "색상": "#ef9a9a"})
+        elif zscore < -2.5:
+            items.append({"항목": "Z-Score", "상태": f"📈 {zscore:.2f}σ  통계적 과매도", "색상": "#a5d6a7"})
+        else:
+            items.append({"항목": "Z-Score", "상태": f"〰️ {zscore:.2f}σ  정상 범위", "색상": "#757575"})
+
+    atr_val = _f(last, "ATR")
+    if atr_val:
+        atr_stop = price - 2.0 * atr_val
+        items.append({
+            "항목": "변동성 (ATR)",
+            "상태": f"⚡ ATR {atr_val:,.2f}  |  ATR×2 손절 {atr_stop:,.0f}",
+            "색상": "#fff176",
+        })
+
+    if ichimoku.get("signal"):
+        thick_txt = f"  |  구름 두께 {ichimoku['thickness_pct']:.1f}%" if ichimoku.get("thickness_pct") else ""
+        items.append({
+            "항목": "일목균형표",
+            "상태": ichimoku["signal"] + thick_txt,
+            "색상": ichimoku["color"],
+        })
+
+    return {
+        "trend_score":    round(trend_score, 1),
+        "momentum_score": round(momentum_score, 1),
+        "volume_score":   round(volume_score, 1),
+        "divergence":     divergence,
+        "zscore":         zscore,
+        "vpvr":           vpvr,
+        "ichimoku":       ichimoku,
+        "summary_items":  items,
+    }
+
+
 # ─── 상위 종목 리스트 ─────────────────────────────────────────────────────────
 
 def get_top_kospi_stocks(n: int = 500) -> dict:
@@ -1061,20 +1391,83 @@ def get_fundamental_data(ticker: str) -> dict:
         if market_cap and total_rev and total_rev > 0:
             psr = round(market_cap / total_rev, 2)
 
-        # 영업이익·순이익: financials DataFrame에서 추출
+        # ── 재무제표: 영업이익·순이익·OCF·자본 (멀티연도) ────────────────────────
         operating_income = None
         net_income       = None
+        ocf              = info.get("operatingCashflow")   # yfinance info 직접값 (최신년)
+        roe_history: list[float] = []                       # ROE 연도별 리스트
+
         try:
             fin = t.financials
+            bs  = t.balance_sheet
+            cf  = t.cashflow
+
             if fin is not None and not fin.empty:
                 for label in ["Operating Income", "EBIT"]:
                     if label in fin.index:
                         operating_income = float(fin.loc[label].iloc[0])
                         break
-                for label in ["Net Income", "Net Income Common Stockholders"]:
+                for label in ["Net Income", "Net Income Common Stockholders",
+                               "Net Income From Continuing Operation Net Minority Interest"]:
                     if label in fin.index:
                         net_income = float(fin.loc[label].iloc[0])
                         break
+
+                # OCF (cashflow 우선, info fallback)
+                if cf is not None and not cf.empty:
+                    for cf_label in ["Operating Cash Flow", "Total Cash From Operating Activities"]:
+                        if cf_label in cf.index:
+                            ocf = float(cf.loc[cf_label].iloc[0])
+                            break
+
+                # ROE 연도별 계산 (최대 4년)
+                if bs is not None and not bs.empty:
+                    ni_vals   = None
+                    eq_vals   = None
+                    for label in ["Net Income", "Net Income Common Stockholders",
+                                   "Net Income From Continuing Operation Net Minority Interest"]:
+                        if label in fin.index:
+                            ni_vals = fin.loc[label]
+                            break
+                    for label in ["Common Stock Equity", "Stockholders Equity",
+                                   "Total Equity Gross Minority Interest"]:
+                        if label in bs.index:
+                            eq_vals = bs.loc[label]
+                            break
+                    if ni_vals is not None and eq_vals is not None:
+                        common_cols = [c for c in ni_vals.index if c in eq_vals.index]
+                        for col in common_cols[:4]:
+                            ni_v  = ni_vals.get(col)
+                            eq_v  = eq_vals.get(col)
+                            if ni_v and eq_v and float(eq_v) > 0 and not pd.isna(ni_v) and not pd.isna(eq_v):
+                                roe_history.append(round(float(ni_v) / float(eq_v) * 100, 2))
+        except Exception:
+            pass
+
+        # ── 자사주 매입 + 배당금 → 주주환원율 ────────────────────────────────────
+        buyback_amount = None
+        div_paid_amount = None
+        shareholder_yield = None
+        try:
+            cf = t.cashflow
+            if cf is not None and not cf.empty:
+                for label in ["Repurchase Of Capital Stock", "Common Stock Payments",
+                               "Purchase Of Business", "Common Stock Repurchased"]:
+                    if label in cf.index:
+                        v = cf.loc[label].iloc[0]
+                        if pd.notna(v) and float(v) < 0:
+                            buyback_amount = abs(float(v))
+                            break
+                for label in ["Cash Dividends Paid", "Payment Of Dividends"]:
+                    if label in cf.index:
+                        v = cf.loc[label].iloc[0]
+                        if pd.notna(v) and float(v) < 0:
+                            div_paid_amount = abs(float(v))
+                            break
+            if market_cap and market_cap > 0:
+                total_return = (buyback_amount or 0) + (div_paid_amount or 0)
+                if total_return > 0:
+                    shareholder_yield = round(total_return / market_cap * 100, 2)
         except Exception:
             pass
 
@@ -1083,6 +1476,7 @@ def get_fundamental_data(ticker: str) -> dict:
             "pbr":              pbr,
             "psr":              psr,
             "roe":              info.get("returnOnEquity"),
+            "roe_history":      roe_history,           # 연도별 ROE(%) 리스트
             "debt_equity":      info.get("debtToEquity"),
             "revenue_growth":   info.get("revenueGrowth"),
             "earnings_growth":  info.get("earningsGrowth"),
@@ -1094,8 +1488,13 @@ def get_fundamental_data(ticker: str) -> dict:
             "operating_income": operating_income,
             "net_income":       net_income,
             "free_cashflow":    info.get("freeCashflow"),
+            "ocf":              ocf,                   # 영업활동현금흐름
+            "buyback_amount":   buyback_amount,        # 자사주 매입액
+            "div_paid_amount":  div_paid_amount,       # 배당금 지급액
+            "shareholder_yield": shareholder_yield,    # 주주환원율(%)
             "eps_ttm":          eps_ttm,
             "forward_pe":       info.get("forwardPE"),
+            "div_yield":        info.get("dividendYield"),
             "sector":           info.get("sector", "N/A"),
             "industry":         info.get("industry", "N/A"),
             "short_name":       info.get("shortName", ticker),
@@ -1138,100 +1537,345 @@ def get_fundamental_data(ticker: str) -> dict:
 
 def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
     """
-    버핏·그레이엄·린치·오닐 투자 법칙 기반 펀더멘털 점수
-    참고 문헌: 《현명한 투자자》《전설로 떠나는 월가의 영웅》《최고의 주식 최적의 타이밍》
-    점수 범위: -8 ~ +8
+    버핏·그레이엄·린치·오닐 투자 법칙 기반 펀더멘털 점수 (가중 4분류 체계)
+
+    가중치 구조:
+      성장성   (40%): PEG, 매출성장 — 린치 핵심
+      수익성   (30%): ROE 지속성, FCF Yield, OCF/NI 품질 — 버핏 핵심
+      안정성   (20%): 그레이엄 공식, 부채비율
+      모멘텀   (10%): 52주 고가 근접, 주주환원율 — 오닐·Value-up
+
+    최종 점수: ±8 (각 분류 ±1 정규화 후 가중합 × 8)
     """
-    score = 0.0
-    reasons = []
+    reasons: list[str] = []
 
     per             = info.get("per")
     pbr             = info.get("pbr")
-    roe             = info.get("roe")
+    roe             = info.get("roe")             # 최신년 ROE (소수, e.g. 0.15 = 15%)
+    roe_history     = info.get("roe_history", []) # 연도별 ROE(%) 리스트
     debt_equity     = info.get("debt_equity")
     revenue_growth  = info.get("revenue_growth")
     earnings_growth = info.get("earnings_growth")
     w52_high        = info.get("w52_high")
     w52_low         = info.get("w52_low")
     fcf             = info.get("free_cashflow")
+    ocf             = info.get("ocf")
+    net_income      = info.get("net_income")
     market_cap      = info.get("market_cap")
+    sh_yield        = info.get("shareholder_yield")   # 주주환원율(%)
+    buyback         = info.get("buyback_amount")
+    div_paid        = info.get("div_paid_amount")
 
-    # ── 그레이엄 공식: PBR × PER < 22.5 ────────────────────────────────────
-    if per and pbr and per > 0 and pbr > 0:
-        gnum = per * pbr
-        if gnum < 15:
-            score += 2.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} < 15 → 강한 저평가")
-        elif gnum < 22.5:
-            score += 1.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} < 22.5 → 적정 평가")
-        elif gnum > 45:
-            score -= 2.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} > 45 → 고평가 경고")
-        elif gnum > 30:
-            score -= 1.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} > 30 → 다소 고평가")
+    g = 0.0   # 성장성 raw score  (cap ±3.5)
+    p = 0.0   # 수익성 raw score  (cap ±6.0)
+    s = 0.0   # 안정성 raw score  (cap ±3.5)
+    m = 0.0   # 모멘텀 raw score  (cap ±2.5)
 
-    # ── 버핏: ROE 15% 이상 ──────────────────────────────────────────────────
-    if roe is not None:
-        roe_pct = roe * 100
-        if roe_pct >= 20:
-            score += 2.0; reasons.append(f"[버핏] ROE {roe_pct:.1f}% ≥ 20% → 우량 기업")
-        elif roe_pct >= 15:
-            score += 1.0; reasons.append(f"[버핏] ROE {roe_pct:.1f}% ≥ 15% → 버핏 기준 충족")
-        elif roe_pct < 5:
-            score -= 1.0; reasons.append(f"[버핏] ROE {roe_pct:.1f}% < 5% → 수익성 부진")
+    # ════════════════════════════════════════════════════════════════
+    # 성장성 (Growth) — 린치 핵심, 가중치 40%
+    # ════════════════════════════════════════════════════════════════
 
-    # ── 버핏: 부채비율 50% 이하 ─────────────────────────────────────────────
-    if debt_equity is not None and debt_equity >= 0:
-        if debt_equity < 50:
-            score += 1.0; reasons.append(f"[버핏] 부채비율 {debt_equity:.0f}% < 50% → 재무 우량")
-        elif debt_equity > 200:
-            score -= 1.5; reasons.append(f"[버핏] 부채비율 {debt_equity:.0f}% > 200% → 재무 위험")
-        elif debt_equity > 100:
-            score -= 0.5; reasons.append(f"[버핏] 부채비율 {debt_equity:.0f}% > 100% → 주의 필요")
-
-    # ── 버핏: FCF Yield > 5% ────────────────────────────────────────────────
-    if fcf and market_cap and market_cap > 0:
-        fcf_yield = fcf / market_cap * 100
-        if fcf_yield > 8:
-            score += 1.5; reasons.append(f"[버핏] FCF Yield {fcf_yield:.1f}% > 8% → 현금창출 탁월")
-        elif fcf_yield > 5:
-            score += 0.5; reasons.append(f"[버핏] FCF Yield {fcf_yield:.1f}% > 5% → 양호")
-        elif fcf_yield < 0:
-            score -= 1.0; reasons.append(f"[버핏] FCF Yield {fcf_yield:.1f}% < 0 → 현금소진 경고")
-
-    # ── 피터 린치: PEG < 1.0 매수, > 2.0 매도 ──────────────────────────────
+    # PEG (±2.0)
+    peg = None
     if per and earnings_growth and per > 0 and earnings_growth > 0:
         peg = per / (earnings_growth * 100)
         if peg < 0.5:
-            score += 2.0; reasons.append(f"[린치] PEG={peg:.2f} < 0.5 → 강력 성장 저평가")
+            g += 2.0; reasons.append(f"[린치] PEG={peg:.2f} < 0.5 → 강력 성장 저평가")
         elif peg < 1.0:
-            score += 1.0; reasons.append(f"[린치] PEG={peg:.2f} < 1.0 → 성장 대비 저평가")
+            g += 1.0; reasons.append(f"[린치] PEG={peg:.2f} < 1.0 → 성장 대비 저평가")
+        elif peg < 1.5:
+            g += 0.3
         elif peg > 2.0:
-            score -= 1.0; reasons.append(f"[린치] PEG={peg:.2f} > 2.0 → 성장 대비 고평가")
+            g -= 1.0; reasons.append(f"[린치] PEG={peg:.2f} > 2.0 → 성장 대비 고평가")
 
-    # ── 피터 린치: 매출 성장 20% 이상 (텐배거) ──────────────────────────────
+    # 매출 성장 (±1.5)
     if revenue_growth is not None:
         rev_pct = revenue_growth * 100
         if rev_pct >= 25:
-            score += 1.5; reasons.append(f"[린치] 매출 {rev_pct:.1f}% 급성장 → 텐배거 후보")
+            g += 1.5; reasons.append(f"[린치] 매출 {rev_pct:.1f}% 급성장 → 텐배거 후보")
         elif rev_pct >= 10:
-            score += 0.5; reasons.append(f"[린치] 매출 {rev_pct:.1f}% 성장 → 양호")
+            g += 0.5; reasons.append(f"[린치] 매출 {rev_pct:.1f}% 성장 → 양호")
         elif rev_pct < -10:
-            score -= 1.0; reasons.append(f"[린치] 매출 {rev_pct:.1f}% 감소 → 펀더멘털 악화")
+            g -= 1.0; reasons.append(f"[린치] 매출 {rev_pct:.1f}% 감소 → 펀더멘털 악화")
 
-    # ── 오닐 CANSLIM: 52주 고가 근접 (신고가 모멘텀) ────────────────────────
+    # ════════════════════════════════════════════════════════════════
+    # 수익성/지속성 (Profitability) — 버핏 핵심, 가중치 30%
+    # ════════════════════════════════════════════════════════════════
+
+    # ROE 지속성 (±2.0) — 단발성 vs 꾸준함
+    roe_mean_val = None
+    roe_std_val  = None
+    if len(roe_history) >= 2:
+        roe_mean_val = float(np.mean(roe_history))
+        roe_std_val  = float(np.std(roe_history, ddof=min(1, len(roe_history)-1)))
+        if roe_mean_val >= 15 and roe_std_val <= 5:
+            p += 2.0
+            reasons.append(
+                f"[버핏] ROE 지속성 우수: 평균 {roe_mean_val:.1f}%·표준편차 {roe_std_val:.1f}%p "
+                f"→ 꾸준한 수익 창출 우량 기업"
+            )
+        elif roe_mean_val >= 15 and roe_std_val <= 10:
+            p += 1.0
+            reasons.append(
+                f"[버핏] ROE 평균 {roe_mean_val:.1f}% 충족, 편차 {roe_std_val:.1f}%p "
+                f"→ 다소 들쭉날쭉하나 수익성 양호"
+            )
+        elif roe_mean_val >= 15:
+            reasons.append(
+                f"[버핏] ROE 평균 {roe_mean_val:.1f}%이나 편차 {roe_std_val:.1f}%p 과대 "
+                f"→ 단발성 고ROE, 지속성 미흡"
+            )
+        elif roe_mean_val < 8:
+            p -= 1.0
+            reasons.append(f"[버핏] ROE 평균 {roe_mean_val:.1f}% → 수익성 부진")
+    elif roe is not None:
+        # 단년도 데이터만 있을 때
+        roe_pct = roe * 100
+        if roe_pct >= 20:
+            p += 1.5; reasons.append(f"[버핏] ROE {roe_pct:.1f}% ≥ 20% → 우량 기업")
+        elif roe_pct >= 15:
+            p += 0.8; reasons.append(f"[버핏] ROE {roe_pct:.1f}% ≥ 15% → 버핏 기준 충족")
+        elif roe_pct < 5:
+            p -= 1.0; reasons.append(f"[버핏] ROE {roe_pct:.1f}% < 5% → 수익성 부진")
+
+    # FCF Yield (±1.5)
+    fcf_yield = None
+    if fcf and market_cap and market_cap > 0:
+        fcf_yield = fcf / market_cap * 100
+        if fcf_yield > 8:
+            p += 1.5; reasons.append(f"[버핏] FCF Yield {fcf_yield:.1f}% > 8% → 현금창출 탁월")
+        elif fcf_yield > 5:
+            p += 0.5; reasons.append(f"[버핏] FCF Yield {fcf_yield:.1f}% > 5% → 양호")
+        elif fcf_yield < 0:
+            p -= 1.0; reasons.append(f"[버핏] FCF Yield {fcf_yield:.1f}% < 0 → 현금소진 경고")
+
+    # OCF / 당기순이익 (±1.5) — 현금흐름 품질 (Accrual 분석)
+    ocf_ni_ratio = None
+    if ocf and net_income and net_income > 0 and not pd.isna(ocf) and not pd.isna(net_income):
+        ocf_ni_ratio = ocf / net_income
+        if ocf_ni_ratio > 1.5:
+            p += 1.5
+            reasons.append(
+                f"[버핏/린치] OCF/NI={ocf_ni_ratio:.2f} > 1.5 → 현금흐름 품질 탁월 (이익의 질 높음)"
+            )
+        elif ocf_ni_ratio > 1.0:
+            p += 0.8
+            reasons.append(
+                f"[버핏/린치] OCF/NI={ocf_ni_ratio:.2f} > 1.0 → 현금흐름 양호 (이익 신뢰성 높음)"
+            )
+        elif ocf_ni_ratio < 0.5:
+            p -= 0.8
+            reasons.append(
+                f"[주의] OCF/NI={ocf_ni_ratio:.2f} < 0.5 → 이익 대비 현금 부족 (분식·채권 회수 이슈 점검)"
+            )
+        elif ocf_ni_ratio < 0:
+            p -= 1.5
+            reasons.append(
+                f"[경고] OCF/NI={ocf_ni_ratio:.2f} < 0 → 이익 발생 중 현금 유출 경고 (재무 위험)"
+            )
+
+    # ════════════════════════════════════════════════════════════════
+    # 안정성 (Stability) — 그레이엄·버핏, 가중치 20%
+    # ════════════════════════════════════════════════════════════════
+
+    # 그레이엄: PBR × PER < 22.5 (±2.0)
+    gnum = None
+    if per and pbr and per > 0 and pbr > 0:
+        gnum = per * pbr
+        if gnum < 15:
+            s += 2.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} < 15 → 강한 저평가")
+        elif gnum < 22.5:
+            s += 1.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} < 22.5 → 적정 평가")
+        elif gnum > 45:
+            s -= 2.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} > 45 → 고평가 경고")
+        elif gnum > 30:
+            s -= 1.0; reasons.append(f"[그레이엄] PBR×PER={gnum:.1f} > 30 → 다소 고평가")
+
+    # 버핏: 부채비율 (±1.5)
+    if debt_equity is not None and debt_equity >= 0:
+        if debt_equity < 50:
+            s += 1.5; reasons.append(f"[버핏] 부채비율 {debt_equity:.0f}% < 50% → 재무 우량")
+        elif debt_equity < 100:
+            s += 0.5
+        elif debt_equity > 200:
+            s -= 1.5; reasons.append(f"[버핏] 부채비율 {debt_equity:.0f}% > 200% → 재무 위험")
+        elif debt_equity > 100:
+            s -= 0.5; reasons.append(f"[버핏] 부채비율 {debt_equity:.0f}% > 100% → 주의 필요")
+
+    # ════════════════════════════════════════════════════════════════
+    # 모멘텀/주주환원 (Momentum) — 오닐·Value-up, 가중치 10%
+    # ════════════════════════════════════════════════════════════════
+
+    # 오닐 CANSLIM: 52주 고가 근접 (±1.5)
+    oneil_ratio = None
     if close_price and w52_high and w52_low and w52_high > w52_low:
-        ratio = close_price / w52_high
-        pos   = (close_price - w52_low) / (w52_high - w52_low)
-        if ratio >= 0.95:
-            score += 1.5; reasons.append(f"[오닐] 52주 고가 {ratio*100:.1f}% 근접 → 신고가 돌파 모멘텀")
+        oneil_ratio = close_price / w52_high
+        pos = (close_price - w52_low) / (w52_high - w52_low)
+        if oneil_ratio >= 0.95:
+            m += 1.5; reasons.append(f"[오닐] 52주 고가 {oneil_ratio*100:.1f}% 근접 → 신고가 돌파 모멘텀")
+        elif oneil_ratio >= 0.85:
+            m += 0.5
         elif pos <= 0.15:
-            score += 0.5; reasons.append(f"[오닐] 52주 저가 근접 ({pos*100:.0f}%) → 바닥 반등 기대")
+            m += 0.3; reasons.append(f"[오닐] 52주 저가 근접 ({pos*100:.0f}%) → 바닥 반등 기대")
 
-    label = "펀더멘털 강함" if score >= 3 else ("펀더멘털 약함" if score <= -2 else "펀더멘털 보통")
+    # 주주환원율 (±1.0) — 배당 + 자사주 소각
+    if sh_yield is not None and sh_yield > 0:
+        if sh_yield >= 5:
+            m += 1.0; reasons.append(f"[주주환원] 배당+자사주 {sh_yield:.1f}% → 주주 가치 우수")
+        elif sh_yield >= 3:
+            m += 0.5; reasons.append(f"[주주환원] 배당+자사주 {sh_yield:.1f}% → 주주 환원 양호")
+        elif sh_yield >= 1:
+            m += 0.2
+
+    # ════════════════════════════════════════════════════════════════
+    # 가중 합산: 40·30·20·10 정규화 후 ±8 스케일
+    # ════════════════════════════════════════════════════════════════
+    def _norm(val, cap):
+        return max(-1.0, min(1.0, val / cap)) if cap > 0 else 0.0
+
+    score = round(
+        (_norm(g, 3.5) * 0.40 + _norm(p, 6.0) * 0.30 +
+         _norm(s, 3.5) * 0.20 + _norm(m, 2.5) * 0.10) * 8,
+        1
+    )
+
+    # ── 세부 서브 점수 (0~100 스케일, UI 표시용) ─────────────────────────────
+    growth_sub   = round(50 + _norm(g, 3.5) * 50, 1)
+    profit_sub   = round(50 + _norm(p, 6.0) * 50, 1)
+    stable_sub   = round(50 + _norm(s, 3.5) * 50, 1)
+    moment_sub   = round(50 + _norm(m, 2.5) * 50, 1)
+
+    # ── 거장의 한 줄 평 ───────────────────────────────────────────────────────
+    master_verdicts: dict[str, dict] = {}
+
+    # 그레이엄
+    if gnum is not None:
+        if gnum < 22.5:
+            master_verdicts["그레이엄"] = {
+                "icon": "✅", "판정": "통과",
+                "comment": f"안전마진 확보. PBR×PER={gnum:.1f}으로 그레이엄 기준({22.5}) 이내입니다."
+            }
+        elif gnum < 35:
+            master_verdicts["그레이엄"] = {
+                "icon": "⚠️", "판정": "주의",
+                "comment": f"안전마진이 부족합니다. PBR×PER={gnum:.1f}이 기준치({22.5})를 초과했습니다."
+            }
+        else:
+            master_verdicts["그레이엄"] = {
+                "icon": "🚫", "판정": "경고",
+                "comment": f"안전마진 없음. PBR×PER={gnum:.1f}은 현명한 투자자 기준을 크게 초과합니다."
+            }
+    else:
+        master_verdicts["그레이엄"] = {"icon": "—", "판정": "데이터 부족", "comment": "PER·PBR 정보가 없어 평가 불가"}
+
+    # 버핏
+    _buffett_ok = []
+    _buffett_ng = []
+    roe_pct_display = (roe_history[0] if roe_history else ((roe or 0) * 100))
+    if roe_mean_val is not None and roe_mean_val >= 15 and (roe_std_val or 99) <= 10:
+        _buffett_ok.append(f"ROE 지속성 {roe_mean_val:.0f}%")
+    elif roe_pct_display >= 15:
+        _buffett_ok.append(f"ROE {roe_pct_display:.0f}%")
+    else:
+        _buffett_ng.append(f"ROE {roe_pct_display:.0f}%")
+    if debt_equity is not None:
+        if debt_equity < 100:
+            _buffett_ok.append(f"부채비율 {debt_equity:.0f}%")
+        else:
+            _buffett_ng.append(f"부채비율 {debt_equity:.0f}%")
+    if fcf_yield is not None:
+        if fcf_yield > 5:
+            _buffett_ok.append(f"FCF Yield {fcf_yield:.1f}%")
+        elif fcf_yield < 0:
+            _buffett_ng.append(f"FCF 음수")
+    if ocf_ni_ratio is not None:
+        if ocf_ni_ratio > 1.0:
+            _buffett_ok.append(f"OCF/NI={ocf_ni_ratio:.1f}")
+        elif ocf_ni_ratio < 0.5:
+            _buffett_ng.append(f"OCF/NI 낮음({ocf_ni_ratio:.1f})")
+
+    if len(_buffett_ok) >= 3 and not _buffett_ng:
+        master_verdicts["버핏"] = {
+            "icon": "✅", "판정": "통과",
+            "comment": f"{', '.join(_buffett_ok)}로 경제적 해자가 튼튼한 기업입니다."
+        }
+    elif len(_buffett_ng) >= 2:
+        master_verdicts["버핏"] = {
+            "icon": "🚫", "판정": "미달",
+            "comment": f"{', '.join(_buffett_ng)} 등 버핏 기준 미달. 장기 보유 신중 검토 필요."
+        }
+    else:
+        master_verdicts["버핏"] = {
+            "icon": "⚠️", "판정": "부분 충족",
+            "comment": f"긍정 {', '.join(_buffett_ok) or '없음'} / 우려 {', '.join(_buffett_ng) or '없음'}"
+        }
+
+    # 린치
+    if peg is not None:
+        if peg < 0.5:
+            master_verdicts["린치"] = {
+                "icon": "🚀", "판정": "강력추천",
+                "comment": f"성장성 대비 주가가 매우 쌉니다 (PEG={peg:.2f}). 전형적인 성장주 패턴입니다."
+            }
+        elif peg < 1.0:
+            master_verdicts["린치"] = {
+                "icon": "✅", "판정": "추천",
+                "comment": f"PEG={peg:.2f}로 성장 대비 저평가. 린치 기준 매수권입니다."
+            }
+        elif peg > 2.0:
+            master_verdicts["린치"] = {
+                "icon": "⚠️", "판정": "과열",
+                "comment": f"PEG={peg:.2f} > 2.0. 성장률 대비 주가가 앞서 나갔습니다."
+            }
+        else:
+            master_verdicts["린치"] = {
+                "icon": "⚪", "판정": "중립",
+                "comment": f"PEG={peg:.2f}. 성장성 대비 적정 밸류에이션 구간입니다."
+            }
+    else:
+        master_verdicts["린치"] = {"icon": "—", "판정": "데이터 부족", "comment": "PEG 계산 불가 (EPS 성장률 데이터 없음)"}
+
+    # 오닐
+    if oneil_ratio is not None:
+        if oneil_ratio >= 0.95:
+            master_verdicts["오닐"] = {
+                "icon": "🔥", "판정": "추세확인",
+                "comment": f"신고가 {oneil_ratio*100:.0f}% 수준. 거래량 동반 여부를 확인하고 진입하세요."
+            }
+        elif oneil_ratio >= 0.80:
+            master_verdicts["오닐"] = {
+                "icon": "👀", "판정": "관망",
+                "comment": f"52주 고가 {oneil_ratio*100:.0f}%. 신고가 돌파 시 진입 전략을 준비하세요."
+            }
+        else:
+            master_verdicts["오닐"] = {
+                "icon": "⚠️", "판정": "조심",
+                "comment": f"52주 고가 대비 {oneil_ratio*100:.0f}%. CANSLIM 기준 아직 상승 모멘텀 부재."
+            }
+    else:
+        master_verdicts["오닐"] = {"icon": "—", "판정": "데이터 부족", "comment": "52주 고가/저가 데이터 없음"}
+
+    label = ("펀더멘털 강함" if score >= 3 else
+             "펀더멘털 약함" if score <= -2 else
+             "펀더멘털 보통")
 
     return {
-        "fund_score":   round(score, 1),
-        "fund_label":   label,
-        "fund_reasons": reasons,
+        "fund_score":      score,
+        "fund_label":      label,
+        "fund_reasons":    reasons,
+        "master_verdicts": master_verdicts,
+        # 서브 점수 (0~100)
+        "sub_growth":   growth_sub,
+        "sub_profit":   profit_sub,
+        "sub_stable":   stable_sub,
+        "sub_moment":   moment_sub,
+        # 계산된 보조 지표 (UI 표시용)
+        "roe_mean":      round(roe_mean_val, 1) if roe_mean_val is not None else None,
+        "roe_std":       round(roe_std_val,  1) if roe_std_val  is not None else None,
+        "ocf_ni_ratio":  round(ocf_ni_ratio, 2) if ocf_ni_ratio is not None else None,
+        "shareholder_yield": info.get("shareholder_yield"),
+        "fcf_yield":     round(fcf_yield, 1) if fcf_yield is not None else None,
+        "peg":           round(peg, 2) if peg is not None else None,
     }
 
 

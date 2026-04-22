@@ -4,6 +4,7 @@ app.py - AI 주식 분석 대시보드 v2.0
 """
 import json
 import os
+import concurrent.futures
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -32,6 +33,7 @@ from stock_ai import (
     get_hybrid_signal,
     get_advanced_sentiment, get_related_sector_performance,
     get_full_market_movers, get_investor_trading_naver,
+    get_advanced_analysis, calculate_vpvr, detect_divergence,
     KOSPI_STOCKS, US_STOCKS, INDICES,
 )
 
@@ -62,13 +64,15 @@ if not st.session_state.get("app_authenticated"):
     with col:
         st.markdown("## 📈 AI 주식 분석 터미널")
         st.markdown("---")
-        pw_input = st.text_input(
-            "비밀번호",
-            type="password",
-            placeholder="비밀번호를 입력하세요",
-            label_visibility="collapsed",
-        )
-        if st.button("입장하기", use_container_width=True, type="primary"):
+        with st.form("login_form"):
+            pw_input = st.text_input(
+                "비밀번호",
+                type="password",
+                placeholder="비밀번호를 입력하세요",
+                label_visibility="collapsed",
+            )
+            submitted = st.form_submit_button("입장하기", use_container_width=True, type="primary")
+        if submitted:
             if pw_input == _APP_PASSWORD:
                 st.session_state["app_authenticated"] = True
                 st.rerun()
@@ -168,7 +172,7 @@ def _index_data(sym):
         d.columns = d.columns.droplevel(1)
     return d
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def _fundamental(ticker):
     info = get_fundamental_data(ticker)
     return info
@@ -382,9 +386,10 @@ with st.sidebar:
     st.divider()
     if st.button("🔍 종목 분석 시작", type="primary", use_container_width=True):
         st.session_state.pop("analyzed_ticker", None)
-        st.session_state["_pending_ticker"] = ticker
-        st.session_state["_pending_sname"]  = sname
-        st.session_state["_pending_period"] = period
+        st.session_state["_pending_ticker"]   = ticker
+        st.session_state["_pending_sname"]    = sname
+        st.session_state["_pending_period"]   = period
+        st.session_state["_switch_to_chart"]  = True
         st.rerun()
 
     # ── Gemini API 키 ──────────────────────────────────────────────────────
@@ -552,6 +557,18 @@ tab_market, tab_chart, tab_rec, tab_news, tab_fund = st.tabs([
     "🏛️ 펀더멘털 & 기관",
 ])
 
+# 분석 완료 직후 차트 탭으로 자동 이동
+if st.session_state.pop("_switch_to_chart", False):
+    st.markdown(
+        """<script>
+        setTimeout(function() {
+            var tabs = window.parent.document.querySelectorAll('[data-testid="stTab"]');
+            if (tabs.length > 1) tabs[1].click();
+        }, 300);
+        </script>""",
+        unsafe_allow_html=True,
+    )
+
 # ─── 데이터 로드 (분석 시작 버튼 클릭 후에만 실행) ────────────────────────────
 _aticker = st.session_state.get("analyzed_ticker")
 _asname  = st.session_state.get("analyzed_sname", "")
@@ -585,27 +602,32 @@ if _pending and not _aticker:
 if _data_ready:
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
 
-    with tab_chart:
-        with st.spinner("📊 차트 데이터 로딩 중..."):
-            data = _stock_data(_aticker, _aperiod)
-        if data.empty:
-            st.session_state.pop("analyzed_ticker", None)
-            st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
-            st.stop()
-        signals  = generate_signals(data)
-        expected = calculate_expected_return(data, signals)
-        close    = data["Close"]
+    # ── 주가 데이터 + 펀더멘털 병렬 로딩 ────────────────────────────────────
+    with st.spinner("📊 주가·재무 데이터 병렬 분석 중..."):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
+            _f_data = _pool.submit(_stock_data, _aticker, _aperiod)
+            _f_fund = _pool.submit(_fundamental, _aticker)
+            data      = _f_data.result()
+            fund_info = _f_fund.result()
 
-    with tab_fund:
-        with st.spinner("🏛️ 펛더멘털 데이터 로딩 중..."):
-            fund_info = _fundamental(_aticker)
-        fund_score_data = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
+    if data.empty:
+        st.session_state.pop("analyzed_ticker", None)
+        st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
+        st.stop()
+
+    close    = data["Close"]
+    signals  = generate_signals(data)
+    expected = calculate_expected_return(data, signals)
+    advanced = get_advanced_analysis(data)
+    fund_score_data = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
 
 else:
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분석을 시작하세요.")
     data            = pd.DataFrame()
     signals         = {"score": 0, "label": "분석 대기", "badge": "—"}
     expected        = None
+    advanced        = {"trend_score": 50.0, "momentum_score": 50.0, "volume_score": 50.0,
+                       "divergence": {}, "zscore": None, "vpvr": {}, "ichimoku": {}, "summary_items": []}
     close           = pd.Series(dtype=float, name="Close")
     fund_info       = {}
     fund_score_data = {"fund_score": 0, "fund_label": "분석 대기", "fund_reasons": []}
@@ -1401,11 +1423,31 @@ with tab_fund:
         </div>
         """, unsafe_allow_html=True)
 
+        # ── 4분류 서브 점수 바 ────────────────────────────────────────────────
+        def _fund_bar(label, score, weight):
+            c = "#a5d6a7" if score >= 65 else ("#ef9a9a" if score <= 35 else "#fff176")
+            st.markdown(
+                f'<div style="margin-bottom:5px;">'
+                f'<div style="display:flex;justify-content:space-between;font-size:0.75rem;">'
+                f'<span style="color:#ccc;">{label} <span style="color:#555;">({weight})</span></span>'
+                f'<b style="color:{c};">{score:.0f}</b></div>'
+                f'<div style="background:#2a2d3e;border-radius:3px;height:5px;">'
+                f'<div style="background:{c};width:{int(score)}%;height:5px;border-radius:3px;"></div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        _fund_bar("성장성 (PEG·매출)",        fund_score_data.get("sub_growth", 50), "40%")
+        _fund_bar("수익성 (ROE·FCF·OCF)",     fund_score_data.get("sub_profit", 50), "30%")
+        _fund_bar("안정성 (그레이엄·부채)",   fund_score_data.get("sub_stable", 50), "20%")
+        _fund_bar("모멘텀 (52주·주주환원)",   fund_score_data.get("sub_moment", 50), "10%")
+
         st.markdown("**📋 투자법칙 신호 근거**")
+        _pos_kw = ["저평가", "우량", "충족", "탁월", "양호", "성장", "모멘텀", "지속성", "환원", "높음", "품질"]
+        _neg_kw = ["경고", "위험", "부진", "고평가", "감소", "소진", "낮음", "이슈", "미흡", "단발성"]
         for r in fund_score_data.get("fund_reasons", []):
-            if any(k in r for k in ["저평가", "우량", "충족", "탁월", "양호", "성장", "모멘텀"]):
+            if any(k in r for k in _pos_kw):
                 st.success(r, icon="🔺")
-            elif any(k in r for k in ["경고", "위험", "부진", "고평가", "감소", "소진"]):
+            elif any(k in r for k in _neg_kw):
                 st.error(r, icon="🔻")
             else:
                 st.info(r, icon="🔷")
@@ -1450,6 +1492,19 @@ with tab_fund:
         if fcf and mc and mc > 0:
             mkt_rows.insert(4, {"지표": "FCF Yield", "값": f"{fcf/mc*100:.1f}%", "참고 법칙": "버핏: 5% 이상"})
 
+        # 새 보조 지표 행 추가
+        _roe_mean = fund_score_data.get("roe_mean")
+        _roe_std  = fund_score_data.get("roe_std")
+        if _roe_mean is not None:
+            _roe_consist = f"평균 {_roe_mean:.1f}% / 편차 {_roe_std:.1f}%p" if _roe_std is not None else f"평균 {_roe_mean:.1f}%"
+            mkt_rows.append({"지표": "ROE 지속성 (다년)", "값": _roe_consist, "참고 법칙": "버핏: 평균≥15% & 편차≤5%"})
+        _ocf_ni = fund_score_data.get("ocf_ni_ratio")
+        if _ocf_ni is not None:
+            mkt_rows.append({"지표": "OCF/순이익 (현금질)", "값": f"{_ocf_ni:.2f}x", "참고 법칙": "> 1.0 = 이익 신뢰성 높음"})
+        _sh = fund_score_data.get("shareholder_yield")
+        if _sh is not None:
+            mkt_rows.append({"지표": "주주환원율", "값": f"{_sh:.1f}%", "참고 법칙": "배당+자사주 / 시총 (≥3% 양호)"})
+
         st.dataframe(pd.DataFrame(mkt_rows), use_container_width=True, hide_index=True)
 
         # ── 재무제표 (DART 우선 → yfinance fallback) ──────────────────────
@@ -1487,6 +1542,36 @@ with tab_fund:
 
         _src = fund_info.get("source", "yfinance")
         st.caption(f"시장 지표: **{_src}** | 재무 지표: **{fin_src}**")
+
+    # ── 거장의 한 줄 평 ──────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🎖️ 투자 거장의 한 줄 평")
+
+    _verdicts = fund_score_data.get("master_verdicts", {})
+    _master_meta = [
+        ("그레이엄", "📖 벤저민 그레이엄", "#80cbc4",  "안전마진·가치투자의 아버지"),
+        ("버핏",    "🏛️ 워렌 버핏",       "#a5d6a7",  "ROE 지속성·경제적 해자"),
+        ("린치",    "🚀 피터 린치",        "#ce93d8",  "PEG·성장주 발굴"),
+        ("오닐",    "🔥 윌리엄 오닐",      "#ffcc80",  "신고가·CANSLIM"),
+    ]
+    _vcols = st.columns(4)
+    for _vcol, (_key, _name, _clr, _sub) in zip(_vcols, _master_meta):
+        _v = _verdicts.get(_key, {})
+        _icon    = _v.get("icon", "—")
+        _verdict = _v.get("판정", "N/A")
+        _comment = _v.get("comment", "데이터 부족")
+        _vcol.markdown(
+            f'<div style="background:#12141f;border-radius:10px;padding:12px;'
+            f'border-left:3px solid {_clr};min-height:140px;">'
+            f'<div style="font-size:0.72rem;color:#888;margin-bottom:4px;">{_sub}</div>'
+            f'<div style="font-size:0.9rem;font-weight:bold;color:{_clr};margin-bottom:4px;">'
+            f'{_name}</div>'
+            f'<div style="font-size:1.1rem;margin-bottom:6px;">'
+            f'{_icon} <b style="color:#e0e0e0;">{_verdict}</b></div>'
+            f'<div style="font-size:0.75rem;color:#aaa;line-height:1.5;">{_comment}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     # ── 전날 매매 동향 (Naver Finance) ───────────────────────────────────────
     if _is_krx_f:
@@ -1707,6 +1792,29 @@ with tab_chart:
                 x=data.index, y=data["BB_Lower"], name="BB하단",
                 line=dict(color="rgba(158,158,158,0.6)", width=1, dash="dot"),
                 fill="tonexty", fillcolor="rgba(158,158,158,0.07)", showlegend=False,
+            ), row=1, col=1)
+
+        # ── 일목균형표 (Ichimoku Cloud) ──────────────────────────────────────
+        if "ICHI_SPAN_A" in data.columns and "ICHI_SPAN_B" in data.columns:
+            fig.add_trace(go.Scatter(
+                x=data.index, y=data["ICHI_SPAN_A"], name="선행스팬A",
+                line=dict(color="rgba(102,187,106,0.7)", width=1),
+                fill=None, showlegend=True,
+            ), row=1, col=1)
+            fig.add_trace(go.Scatter(
+                x=data.index, y=data["ICHI_SPAN_B"], name="선행스팬B",
+                line=dict(color="rgba(239,83,80,0.7)", width=1),
+                fill="tonexty", fillcolor="rgba(120,120,120,0.12)", showlegend=True,
+            ), row=1, col=1)
+        if "ICHI_TENKAN" in data.columns:
+            fig.add_trace(go.Scatter(
+                x=data.index, y=data["ICHI_TENKAN"], name="전환선",
+                line=dict(color="#ef5350", width=1.1, dash="dot"),
+            ), row=1, col=1)
+        if "ICHI_KIJUN" in data.columns:
+            fig.add_trace(go.Scatter(
+                x=data.index, y=data["ICHI_KIJUN"], name="기준선",
+                line=dict(color="#42a5f5", width=1.1, dash="dot"),
             ), row=1, col=1)
 
         # ── 거래량 (Row 2) ───────────────────────────────────────────────────
@@ -2056,6 +2164,78 @@ with tab_chart:
                 val = last_row[col]
                 if pd.notna(val):
                     st.caption(f"**{lbl}:** {float(val):{fmt}}")
+
+        # ── 종합 판단 스코어보드 ──────────────────────────────────────────────
+        st.divider()
+        with st.expander("📊 종합 판단 스코어보드", expanded=True):
+            ts = advanced.get("trend_score",    50.0)
+            ms = advanced.get("momentum_score", 50.0)
+            vs = advanced.get("volume_score",   50.0)
+
+            def _score_color(s):
+                if s >= 65: return "#a5d6a7"
+                if s <= 35: return "#ef9a9a"
+                return "#fff176"
+
+            def _score_bar(label, score, weight, desc):
+                color = _score_color(score)
+                pct   = int(score)
+                st.markdown(
+                    f'<div style="margin-bottom:8px;">'
+                    f'<div style="display:flex;justify-content:space-between;font-size:0.78rem;">'
+                    f'<span style="color:#ccc;">{label} <span style="color:#666;">({weight})</span></span>'
+                    f'<b style="color:{color};">{score:.0f}점</b></div>'
+                    f'<div style="background:#2a2d3e;border-radius:4px;height:7px;margin-top:3px;">'
+                    f'<div style="background:{color};width:{pct}%;height:7px;border-radius:4px;"></div>'
+                    f'</div>'
+                    f'<div style="font-size:0.72rem;color:#666;margin-top:2px;">{desc}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            _score_bar("추세 (Trend)",     ts, "40%", "EMA 배열 · ADX · 일목균형표")
+            _score_bar("탄력 (Momentum)",  ms, "30%", "MACD · RSI · ROC · CCI")
+            _score_bar("에너지 (Volume)",  vs, "30%", "OBV · MFI")
+
+            composite_adv = round(ts * 0.4 + ms * 0.3 + vs * 0.3, 1)
+            if composite_adv >= 65:
+                adv_txt, adv_clr = "강세 우위 — 에너지와 추세 모두 양호", "#a5d6a7"
+            elif composite_adv <= 35:
+                adv_txt, adv_clr = "약세 우위 — 지표 전반 약화 중", "#ef9a9a"
+            else:
+                adv_txt, adv_clr = "중립 — 방향 확인 필요", "#fff176"
+            st.markdown(
+                f'<div style="background:#1e2130;border-radius:6px;padding:8px 12px;margin-top:6px;">'
+                f'<span style="font-size:0.75rem;color:#888;">가중 종합: </span>'
+                f'<b style="color:{adv_clr};">{composite_adv:.0f}점 — {adv_txt}</b>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # 추가 분석 항목 테이블
+            items = advanced.get("summary_items", [])
+            if items:
+                st.markdown('<div style="margin-top:10px;font-size:0.75rem;color:#888;">추가 분석 항목</div>',
+                            unsafe_allow_html=True)
+                for it in items:
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'background:#12141f;border-radius:5px;padding:5px 10px;margin-top:4px;'
+                        f'border-left:3px solid {it["색상"]};">'
+                        f'<span style="color:#9e9e9e;font-size:0.77rem;">{it["항목"]}</span>'
+                        f'<span style="color:{it["색상"]};font-size:0.77rem;font-weight:bold;">{it["상태"]}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            # 다이버전스 상세 설명
+            div_descs = advanced.get("divergence", {}).get("descriptions", [])
+            if div_descs:
+                for d in div_descs:
+                    if "하락" in d:
+                        st.warning(d, icon="⚠️")
+                    else:
+                        st.success(d, icon="✅")
 
         # ── 손절·익절 레벨 ────────────────────────────────────────────────
         st.divider()
