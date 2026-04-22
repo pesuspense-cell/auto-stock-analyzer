@@ -6,7 +6,7 @@ streamlit-autorefresh>=1.0.0
 yfinance>=0.2.40
 pandas>=2.0.0
 numpy>=1.26.0
-pandas-ta>=0.3.14b
+https://github.com/twopirllc/pandas-ta/archive/master.zip
 plotly>=5.18.0
 finance-datareader>=0.9.0
 pykrx>=1.0.0
