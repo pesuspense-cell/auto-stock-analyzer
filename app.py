@@ -384,10 +384,9 @@ with st.sidebar:
     st.divider()
     if st.button("🔍 종목 분석 시작", type="primary", use_container_width=True):
         st.session_state.pop("analyzed_ticker", None)
-        st.session_state["_pending_ticker"]   = ticker
-        st.session_state["_pending_sname"]    = sname
-        st.session_state["_pending_period"]   = period
-        st.session_state["_switch_to_chart"]  = True
+        st.session_state["_pending_ticker"]  = ticker
+        st.session_state["_pending_sname"]   = sname
+        st.session_state["_pending_period"]  = period
         st.rerun()
 
     # ── Gemini API 키 ──────────────────────────────────────────────────────
@@ -557,14 +556,18 @@ tab_market, tab_chart, tab_rec, tab_news, tab_fund = st.tabs([
 
 # 분석 완료 직후 차트 탭으로 자동 이동
 if st.session_state.pop("_switch_to_chart", False):
-    st.markdown(
+    import streamlit.components.v1 as _components
+    _components.html(
         """<script>
         setTimeout(function() {
-            var tabs = window.parent.document.querySelectorAll('[data-testid="stTab"]');
+            var p = window.parent.document;
+            var tabs = p.querySelectorAll('[data-testid="stTab"]');
+            if (tabs.length > 1) { tabs[1].click(); return; }
+            tabs = p.querySelectorAll('button[role="tab"]');
             if (tabs.length > 1) tabs[1].click();
-        }, 300);
+        }, 400);
         </script>""",
-        unsafe_allow_html=True,
+        height=0,
     )
 
 # ─── 데이터 로드 (분석 시작 버튼 클릭 후에만 실행) ────────────────────────────
@@ -591,10 +594,11 @@ if _pending and not _aticker:
         for _v in [20, 40, 60, 80]:
             import time as _time; _time.sleep(0.05)
             _lp2.progress(_v)
-    # pending → analyzed 로 전환 후 rerun
-    st.session_state["analyzed_ticker"] = st.session_state.pop("_pending_ticker")
-    st.session_state["analyzed_sname"]  = st.session_state.pop("_pending_sname", _pending)
-    st.session_state["analyzed_period"] = st.session_state.pop("_pending_period", period)
+    # pending → analyzed 로 전환 후 rerun (탭 이동은 분석 완료 후)
+    st.session_state["analyzed_ticker"]  = st.session_state.pop("_pending_ticker")
+    st.session_state["analyzed_sname"]   = st.session_state.pop("_pending_sname", _pending)
+    st.session_state["analyzed_period"]  = st.session_state.pop("_pending_period", period)
+    st.session_state["_switch_to_chart"] = True
     st.rerun()
 
 if _data_ready:
