@@ -202,6 +202,18 @@ def _sector_perf(ticker: str) -> dict:
     return get_related_sector_performance(ticker)
 
 @st.cache_data(ttl=3600)
+def _bench_returns(ticker: str) -> "pd.Series":
+    """S&P500 또는 KOSPI 6개월 일간 수익률 (베타 계산용)"""
+    sym = "^KS11" if (ticker.endswith(".KS") or ticker.endswith(".KQ")) else "^GSPC"
+    try:
+        d = yf.download(sym, period="6mo", auto_adjust=True, progress=False)
+        if isinstance(d.columns, pd.MultiIndex):
+            d.columns = d.columns.droplevel(1)
+        return d["Close"].pct_change().dropna()
+    except Exception:
+        return pd.Series(dtype=float)
+
+@st.cache_data(ttl=3600)
 def _news_sentiment_kw(ticker: str) -> dict:
     news = _naver_news(ticker)
     if not news:
@@ -641,8 +653,12 @@ if _data_ready:
 
     close    = data["Close"]
     signals  = generate_signals(data)
-    expected = calculate_expected_return(data, signals)
     advanced = get_advanced_analysis(data)
+    expected = calculate_expected_return(
+        data, signals,
+        ticker=_aticker,
+        benchmark_returns=_bench_returns(_aticker),
+    )
     fund_score_data = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
 
 else:
@@ -2145,41 +2161,104 @@ with tab_chart:
                       help="최근 거래일 종가. 아래 숫자(화살표)는 전일 대비 등락률입니다.")
 
         if expected:
-            st.metric("예상 수익률 (20일)", f"{expected['expected_return_pct']:+.2f}%",
-                      help=(
-                          "지금 매수 시 20거래일(약 1개월) 후의 예상 수익률 추정치.\n\n"
-                          "계산 방식: 기술 신호 강도 × 역사적 변동성 + 20일 모멘텀 + 평균 일간 드리프트\n\n"
-                          "⚠️ 보장 수익이 아닌 통계적 추정치입니다. 참고용으로만 활용하세요."
-                      ))
-            st.metric("연간 변동성", f"{expected['hist_volatility']:.1f}%",
-                      help=(
-                          "과거 일간 수익률의 표준편차 × √252 (연환산).\n\n"
-                          "• 낮을수록 가격이 안정적 (예: 10~15% = 안정형)\n"
-                          "• 높을수록 등락 폭이 큼 (예: 40%+ = 고위험)\n"
-                          "• 리스크 척도로 활용합니다."
-                      ))
-            st.metric("20일 모멘텀", f"{expected['momentum_20d']:+.2f}%",
-                      help=(
-                          "20거래일(약 1개월) 전 대비 현재가 등락률.\n\n"
-                          "• 양수(+): 최근 한 달 상승 추세 (매수 모멘텀)\n"
-                          "• 음수(-): 최근 한 달 하락 추세 (매도 모멘텀)\n"
-                          "• 과거 성과로 미래를 보장하지 않습니다."
-                      ))
-            st.metric("최대 낙폭", f"{expected['max_drawdown']:.2f}%",
-                      help=(
-                          "조회 기간 내 고점 대비 최대 하락폭 (MDD, Maximum Drawdown).\n\n"
-                          "• 예: -15%이면 최고점에서 15%까지 하락한 적 있음\n"
-                          "• 클수록(음수가 클수록) 과거에 큰 손실 구간이 있었음\n"
-                          "• 리스크 및 손실 내성 파악에 활용합니다."
-                      ))
-            st.metric("샤프 지수", f"{expected['sharpe']:.2f}",
-                      help=(
-                          "무위험 수익률(3.5%) 초과 수익 ÷ 변동성 (연환산).\n\n"
-                          "• 1.0 이상: 리스크 대비 양호한 수익\n"
-                          "• 2.0 이상: 우수한 리스크/리워드 비율\n"
-                          "• 0 미만: 리스크 대비 손실 구간\n"
-                          "• 높을수록 효율적인 투자 대상입니다."
-                      ))
+            _M    = expected["expected_return_pct"]
+            _A    = expected.get("return_low",  _M - 5.0)
+            _B    = expected.get("return_high", _M + 5.0)
+            _beta = expected.get("beta", 1.0)
+            _mw   = expected.get("market_weight", 1.0)
+            _atr  = expected.get("atr_pct", 0.0)
+            _kelly = expected.get("kelly_pct", 0.0)
+            _winp  = expected.get("win_prob", 50.0)
+            _vpvr  = expected.get("vpvr_resistance", False)
+
+            _m_clr = "#a5d6a7" if _M >= 0 else "#ef9a9a"
+            _a_clr = "#ef9a9a" if _A < 0 else "#fff176"
+            _b_clr = "#a5d6a7" if _B >= 0 else "#ef9a9a"
+
+            # M 위치 (바 안에서의 %)
+            _rng = _B - _A
+            _m_pos  = max(2, min(98, int((_M - _A) / _rng * 100))) if _rng > 0 else 50
+            _z_pos  = max(0, min(100, int((0  - _A) / _rng * 100))) if _rng > 0 else 50
+
+            _beta_clr = "#a5d6a7" if _beta >= 1.0 else "#fff176"
+            _mw_clr   = "#a5d6a7" if _mw   >= 1.0 else "#ef9a9a"
+            _kelly_bar = min(int(_kelly * 2), 100)
+            _rr_str   = f"{abs(_B) / max(abs(_A), 0.1):.1f}:1" if _A < 0 else f"—"
+            _vpvr_html = (
+                '<div style="background:#2d1e0a;border-radius:5px;padding:5px 8px;'
+                'margin-top:7px;font-size:0.72rem;color:#ffab91;">'
+                '⚠️ 목표가 부근 매물대 저항 — 상단 B 하향 보정됨'
+                '</div>'
+            ) if _vpvr else ""
+
+            st.markdown(f"""
+<div style="background:#1a1d2e;border-radius:10px;padding:12px 14px;margin-bottom:8px;
+            border:1px solid #2a2d3e;">
+  <div style="font-size:0.68rem;color:#888;letter-spacing:0.5px;margin-bottom:9px;">
+    📈 예상 수익률 구간 (20거래일)
+    <span style="float:right;color:#555;">M ± ATR×√20×1.5</span>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;margin-bottom:7px;">
+    <div style="text-align:center;">
+      <div style="font-size:0.62rem;color:#777;">최저 A</div>
+      <div style="font-size:0.88rem;font-weight:bold;color:{_a_clr};">{_A:+.1f}%</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:0.62rem;color:#777;">중간값 M</div>
+      <div style="font-size:1.0rem;font-weight:bold;color:{_m_clr};">{_M:+.1f}%</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:0.62rem;color:#777;">최고 B{'⚠️' if _vpvr else ''}</div>
+      <div style="font-size:0.88rem;font-weight:bold;color:{_b_clr};">{_B:+.1f}%</div>
+    </div>
+  </div>
+
+  <div style="position:relative;background:#2a2d3e;border-radius:4px;height:9px;">
+    <div style="position:absolute;left:{_z_pos}%;top:0;width:1px;height:100%;
+                background:rgba(255,255,255,0.25);"></div>
+    <div style="position:absolute;left:{_m_pos}%;top:-2px;width:3px;height:13px;
+                background:{_m_clr};border-radius:2px;transform:translateX(-50%);"></div>
+  </div>
+  <div style="font-size:0.65rem;color:#555;margin-top:3px;margin-bottom:8px;">
+    ATR {_atr:.2f}%  |  V = ATR × √{20} = {_atr * 20**0.5:.2f}%
+  </div>
+
+  <div style="border-top:1px solid #2a2d3e;padding-top:7px;">
+    <div style="display:flex;justify-content:space-between;font-size:0.76rem;">
+      <span style="color:#888;">β 베타 (시장 동조화)</span>
+      <b style="color:{_beta_clr};">{_beta:+.2f}</b>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:0.76rem;margin-top:3px;">
+      <span style="color:#888;">시장 가중치</span>
+      <b style="color:{_mw_clr};">×{_mw:.2f}</b>
+    </div>
+  </div>
+  {_vpvr_html}
+</div>
+
+<div style="background:#1a1d2e;border-radius:10px;padding:11px 14px;margin-bottom:8px;
+            border:1px solid #2a2d3e;">
+  <div style="font-size:0.68rem;color:#888;margin-bottom:5px;">🎯 켈리 추천 비중 (하프-켈리)</div>
+  <div style="font-size:1.05rem;font-weight:bold;color:#90caf9;">{_kelly:.1f}%</div>
+  <div style="background:#2a2d3e;border-radius:4px;height:6px;margin:5px 0 4px;">
+    <div style="background:#90caf9;width:{_kelly_bar}%;height:6px;border-radius:4px;"></div>
+  </div>
+  <div style="font-size:0.69rem;color:#666;">
+    승률 추정 {_winp:.0f}% &nbsp;|&nbsp; W/L {_rr_str}
+  </div>
+</div>
+            """, unsafe_allow_html=True)
+
+            with st.expander("📐 상세 통계 지표", expanded=False):
+                st.metric("연간 변동성", f"{expected['hist_volatility']:.1f}%",
+                          help="과거 일간 수익률의 표준편차 × √252 (연환산)")
+                st.metric("20일 모멘텀", f"{expected['momentum_20d']:+.2f}%",
+                          help="20거래일 전 대비 현재가 등락률")
+                st.metric("최대 낙폭", f"{expected['max_drawdown']:.2f}%",
+                          help="조회 기간 내 고점 대비 최대 하락폭 (MDD)")
+                st.metric("샤프 지수", f"{expected['sharpe']:.2f}",
+                          help="무위험 수익률(3.5%) 초과 수익 ÷ 변동성 (연환산)")
 
         st.divider()
         st.markdown("**📋 기술 신호 근거**")

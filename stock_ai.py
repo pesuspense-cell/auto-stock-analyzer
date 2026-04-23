@@ -540,41 +540,128 @@ def generate_signals(data: pd.DataFrame) -> dict:
 
 # ─── 예상 수익률 & 리스크 분석 ────────────────────────────────────────────────
 
-def calculate_expected_return(data: pd.DataFrame, signals: dict, horizon_days: int = 20) -> dict:
+def calculate_expected_return(
+    data: pd.DataFrame,
+    signals: dict,
+    horizon_days: int = 20,
+    ticker: str = "",
+    benchmark_returns: "pd.Series | None" = None,
+) -> dict:
     """
-    기술 신호 + 역사적 변동성 + 모멘텀 기반 예상 수익률 추정
+    기술 신호 + ATR 구간 + 베타 + 매물대 저항 + 켈리 공식 기반 예상 수익률 추정.
+
+    수익률 구간: A(최저) = M - V×1.5 / M(중간) / B(최고) = M + V×1.5
+      V = ATR% × √horizon  (시장 위험 계수 1.5 적용)
+    베타: benchmark_returns(S&P500 or KOSPI) 대비 상관관계 → M에 반영
+    매물대 저항: 목표가 부근 거래량 집중 시 B 하향 조정
+    켈리: 승률·RR비로 추천 투자 비중(%) 산출 (하프-켈리)
     """
     if data.empty or not signals:
         return {}
 
     close   = data["Close"]
     returns = close.pct_change().dropna()
+    if len(returns) < 10:
+        return {}
 
-    hist_vol_annual = float(returns.std() * np.sqrt(252) * 100)       # 연간 변동성(%)
-    daily_drift     = float(returns.mean() * 100)                      # 평균 일간 수익률(%)
+    current_price   = float(close.iloc[-1])
+    hist_vol_annual = float(returns.std() * np.sqrt(252) * 100)
+    daily_drift     = float(returns.mean() * 100)
     momentum_20d    = float((close.iloc[-1] / close.iloc[-21] - 1) * 100) if len(close) >= 21 else 0.0
+    score           = signals.get("score", 0)
 
-    score = signals.get("score", 0)
+    # ── ATR (변동폭 V 기반) ───────────────────────────────────────────────────
+    if "High" in data.columns and "Low" in data.columns:
+        hl  = data["High"] - data["Low"]
+        hpc = (data["High"] - close.shift(1)).abs()
+        lpc = (data["Low"]  - close.shift(1)).abs()
+        tr  = pd.concat([hl, hpc, lpc], axis=1).max(axis=1)
+        atr_14 = float(tr.rolling(14).mean().iloc[-1])
+        if np.isnan(atr_14):
+            atr_14 = float(tr.mean())
+    else:
+        atr_14 = current_price * hist_vol_annual / 100 / np.sqrt(252)
+    atr_pct = atr_14 / current_price * 100
 
-    # 신호 기반 기대 수익률 = (신호 강도 × 일평균변동폭) + 모멘텀 조정
+    # V = ATR% × √horizon
+    V = atr_pct * np.sqrt(horizon_days)
+
+    # ── Beta + 시장 가중치 ─────────────────────────────────────────────────────
+    beta, market_weight = 1.0, 1.0
+    if benchmark_returns is not None and not benchmark_returns.empty:
+        common = returns.index.intersection(benchmark_returns.index)
+        if len(common) >= 30:
+            rs = returns.loc[common].values.astype(float)
+            rb = benchmark_returns.loc[common].values.astype(float)
+            cov = np.cov(rs, rb)
+            var_b = cov[1, 1]
+            beta = float(cov[0, 1] / var_b) if var_b > 0 else 1.0
+            beta = max(-2.0, min(3.0, beta))
+            recent_bench = float(benchmark_returns.iloc[-20:].add(1).prod() - 1)
+            market_weight = max(0.6, min(1.4, 1.0 + recent_bench * 0.5))
+
+    # ── 중간값 M = 기존 수식 × beta_factor × market_weight ────────────────────
+    beta_factor         = max(0.5, beta)
     signal_contribution = score * (hist_vol_annual / 252) * horizon_days * 0.35
     momentum_adj        = momentum_20d * 0.15
-    expected_return     = signal_contribution + momentum_adj + daily_drift * horizon_days
+    base_return         = signal_contribution + momentum_adj + daily_drift * horizon_days
+    expected_return     = base_return * beta_factor * market_weight
 
-    # 최대낙폭
-    max_drawdown = float(((close / close.cummax()) - 1).min() * 100)
+    # ── 구간: A = M - V×1.5 / B = M + V×1.5 ────────────────────────────────
+    return_low      = expected_return - V * 1.5
+    return_high_raw = expected_return + V * 1.5
 
-    # 샤프 비율 근사 (무위험 수익률 3.5% 가정)
-    risk_free = 3.5 / 252 * 100
+    # ── 매물대 저항 보정 (인라인 간이 VPVR) ─────────────────────────────────
+    vpvr_resistance = False
+    return_high     = return_high_raw
+    if "Volume" in data.columns and len(data) >= 20 and return_high_raw > 0:
+        target_price = current_price * (1 + return_high_raw / 100)
+        recent_n     = data.tail(min(120, len(data)))
+        p_min = float(recent_n["Close"].min())
+        p_max = float(recent_n["Close"].max())
+        if p_max > p_min and p_min <= target_price <= p_max * 1.05:
+            n_bins   = 20
+            bin_size = (p_max - p_min) / n_bins
+            vol_bins = np.zeros(n_bins)
+            for _i in range(len(recent_n)):
+                _p = float(recent_n["Close"].iloc[_i])
+                _v = float(recent_n["Volume"].iloc[_i])
+                _b = min(int((_p - p_min) / bin_size), n_bins - 1)
+                vol_bins[_b] += _v
+            total_vol = vol_bins.sum()
+            if total_vol > 0:
+                t_bin = max(0, min(n_bins - 1, int((target_price - p_min) / bin_size)))
+                if vol_bins[t_bin] / total_vol > 0.10:
+                    vpvr_resistance = True
+                    return_high = return_high_raw - V * 0.5
+
+    # ── 켈리 공식 (하프-켈리) ────────────────────────────────────────────────
+    win_prob  = max(0.15, min(0.85, 0.5 + score / 25.0))
+    loss_side = max(abs(return_low), 0.1)
+    rr_ratio  = abs(return_high) / loss_side if return_low < 0 else max(2.0, abs(return_high))
+    kelly_full = win_prob - (1.0 - win_prob) / max(rr_ratio, 0.01)
+    kelly_pct  = max(0.0, min(50.0, kelly_full * 50.0))  # 하프-켈리, 최대 50%
+
+    # ── 기타 ─────────────────────────────────────────────────────────────────
+    max_drawdown  = float(((close / close.cummax()) - 1).min() * 100)
+    risk_free     = 3.5 / 252 * 100
     sharpe_approx = ((daily_drift - risk_free) / (returns.std() * 100) * np.sqrt(252)) if returns.std() > 0 else 0.0
 
     return {
         "expected_return_pct": round(expected_return, 2),
+        "return_low":          round(return_low, 2),
+        "return_high":         round(return_high, 2),
         "hist_volatility":     round(hist_vol_annual, 2),
+        "atr_pct":             round(atr_pct, 2),
         "momentum_20d":        round(momentum_20d, 2),
         "max_drawdown":        round(max_drawdown, 2),
         "sharpe":              round(sharpe_approx, 2),
         "daily_drift":         round(daily_drift, 3),
+        "beta":                round(beta, 2),
+        "market_weight":       round(market_weight, 2),
+        "vpvr_resistance":     vpvr_resistance,
+        "kelly_pct":           round(kelly_pct, 1),
+        "win_prob":            round(win_prob * 100, 1),
     }
 
 
