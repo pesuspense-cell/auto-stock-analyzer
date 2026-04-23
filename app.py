@@ -20,23 +20,31 @@ try:
 except ImportError:
     HAS_AUTOREFRESH = False
 
-from stock_ai import (
-    get_stock_data, generate_signals, calculate_expected_return,
-    get_market_movers, get_exchange_rates, get_recommendations,
-    get_fundamental_data, calculate_fundamental_score,
-    get_stop_loss_targets, get_insider_trades_sec,
-    get_krx_stock_list, get_us_stock_list,
-    get_top_kospi_stocks, get_top_kosdaq_stocks, get_top_us_stocks,
-    get_top_nasdaq_stocks,
-    get_naver_news, analyze_news_sentiment_keywords,
-    analyze_news_sentiment_llm, summarize_article_llm,
-    get_hybrid_signal,
-    get_advanced_sentiment, get_related_sector_performance,
-    get_full_market_movers, get_investor_trading_naver,
-    get_advanced_analysis, calculate_vpvr, detect_divergence,
-    get_investment_recommendation,
-    KOSPI_STOCKS, US_STOCKS, INDICES,
-)
+try:
+    from stock_ai import (
+        get_stock_data, generate_signals, calculate_expected_return,
+        get_market_movers, get_exchange_rates, get_recommendations,
+        get_fundamental_data, calculate_fundamental_score,
+        get_stop_loss_targets, get_insider_trades_sec,
+        get_krx_stock_list, get_us_stock_list,
+        get_top_kospi_stocks, get_top_kosdaq_stocks, get_top_us_stocks,
+        get_top_nasdaq_stocks,
+        get_naver_news, analyze_news_sentiment_keywords,
+        analyze_news_sentiment_llm, summarize_article_llm,
+        get_hybrid_signal,
+        get_advanced_sentiment, get_related_sector_performance,
+        get_full_market_movers, get_investor_trading_naver,
+        get_advanced_analysis, calculate_vpvr, detect_divergence,
+        get_investment_recommendation,
+        KOSPI_STOCKS, US_STOCKS, INDICES,
+    )
+except Exception as _import_err:
+    import traceback as _tb
+    st.error(
+        f"**stock_ai 모듈 로딩 오류** — 아래 전체 트레이스백을 확인하세요:\n\n"
+        f"```\n{_tb.format_exc()}\n```"
+    )
+    st.stop()
 
 # ─── 페이지 설정 ──────────────────────────────────────────────────────────────
 st.set_page_config(
