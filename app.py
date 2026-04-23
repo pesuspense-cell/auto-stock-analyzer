@@ -34,6 +34,7 @@ from stock_ai import (
     get_advanced_sentiment, get_related_sector_performance,
     get_full_market_movers, get_investor_trading_naver,
     get_advanced_analysis, calculate_vpvr, detect_divergence,
+    get_investment_recommendation,
     KOSPI_STOCKS, US_STOCKS, INDICES,
 )
 
@@ -55,32 +56,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── 비밀번호 게이트 ──────────────────────────────────────────────────────────
-_APP_PASSWORD = "qnwkehlwk"
-
-if not st.session_state.get("app_authenticated"):
-    st.markdown("<br>" * 4, unsafe_allow_html=True)
-    _, col, _ = st.columns([1.5, 1, 1.5])
-    with col:
-        st.markdown("## 📈 AI 주식 분석 터미널")
-        st.markdown("---")
-        with st.form("login_form"):
-            pw_input = st.text_input(
-                "비밀번호",
-                type="password",
-                placeholder="비밀번호를 입력하세요",
-                label_visibility="collapsed",
-            )
-            submitted = st.form_submit_button("입장하기", use_container_width=True, type="primary")
-        if submitted:
-            if pw_input == _APP_PASSWORD:
-                st.session_state["app_authenticated"] = True
-                st.rerun()
-            else:
-                st.error("비밀번호가 틀렸습니다.")
-    st.stop()
-
-# ─── 관심종목 관리 ────────────────────────────────────────────────────────────
+# ─── 설정 파일 (비밀번호 게이트보다 먼저 로드) ──────────────────────────────────
 WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), "watchlist.json")
 SETTINGS_FILE  = os.path.join(os.path.dirname(__file__), "settings.json")
 
@@ -100,6 +76,39 @@ def save_settings(data: dict) -> None:
     except Exception:
         pass
 
+# ─── 비밀번호 게이트 ──────────────────────────────────────────────────────────
+_APP_PASSWORD = "qnwkehlwk"
+
+# settings.json에 저장된 인증 상태 복원 (세션 시작 시 1회만)
+if not st.session_state.get("app_authenticated"):
+    _boot_settings = load_settings()
+    if _boot_settings.get("app_authenticated"):
+        st.session_state["app_authenticated"] = True
+
+if not st.session_state.get("app_authenticated"):
+    st.markdown("<br>" * 4, unsafe_allow_html=True)
+    _, col, _ = st.columns([1.5, 1, 1.5])
+    with col:
+        st.markdown("## 📈 AI 주식 분석 터미널")
+        st.markdown("---")
+        with st.form("login_form"):
+            pw_input = st.text_input(
+                "비밀번호",
+                type="password",
+                placeholder="비밀번호를 입력하세요",
+                label_visibility="collapsed",
+            )
+            submitted = st.form_submit_button("입장하기", use_container_width=True, type="primary")
+        if submitted:
+            if pw_input == _APP_PASSWORD:
+                st.session_state["app_authenticated"] = True
+                save_settings({**load_settings(), "app_authenticated": True})
+                st.rerun()
+            else:
+                st.error("비밀번호가 틀렸습니다.")
+    st.stop()
+
+# ─── 관심종목 관리 ────────────────────────────────────────────────────────────
 def load_watchlist() -> list:
     try:
         if os.path.exists(WATCHLIST_FILE):
@@ -125,6 +134,9 @@ if "dart_api_key" not in st.session_state:
 # DART key 위젯 초기값 (key= 방식 지원용)
 if "_dart_key_input" not in st.session_state:
     st.session_state["_dart_key_input"] = _saved_settings.get("dart_api_key", "")
+# Gemini API 키 복원
+if "gemini_api_key" not in st.session_state:
+    st.session_state["gemini_api_key"] = _saved_settings.get("gemini_api_key", "")
 
 # KRX 로그인 자격증명을 환경변수로 자동 설정 (pykrx 인증용)
 if _saved_settings.get("krx_id") and not os.environ.get("KRX_ID"):
@@ -208,7 +220,7 @@ def _news_sentiment_kw(ticker: str) -> dict:
             news = items
         except Exception:
             news = []
-    return analyze_news_sentiment_keywords(news)
+    return analyze_news_sentiment_keywords(news, ticker)
 
 def _news_sentiment_llm_cached(ticker: str, api_key: str) -> dict:
     """LLM 분석은 API 키가 세션마다 다를 수 있어 session_state 캐시 사용"""
@@ -405,11 +417,18 @@ with st.sidebar:
         gemini_api_key = _secret_key
         st.caption("🟢 AI 분석 활성 (secrets 자동 적용)")
     else:
-        gemini_api_key = st.text_input(
+        def _on_gemini_key_change():
+            k = st.session_state.get("_gemini_key_input", "")
+            st.session_state["gemini_api_key"] = k
+            save_settings({**load_settings(), "gemini_api_key": k})
+        if "_gemini_key_input" not in st.session_state:
+            st.session_state["_gemini_key_input"] = _default_key
+        st.text_input(
             "Gemini API Key",
-            value=_default_key,
+            key="_gemini_key_input",
             type="password",
             placeholder="AIza...",
+            on_change=_on_gemini_key_change,
             help=(
                 "Google AI Studio (aistudio.google.com)에서 발급받은 Gemini API 키.\n\n"
                 "• 입력 시: LangChain + Gemini로 뉴스 감성 AI 분석\n"
@@ -418,9 +437,8 @@ with st.sidebar:
                 "  대시보드 Secrets에 GEMINI_API_KEY 를 등록하면 UI 없이 자동 적용됩니다."
             ),
         )
-        if gemini_api_key:
-            st.session_state["gemini_api_key"] = gemini_api_key
-        st.caption("🟢 AI 분석 활성" if gemini_api_key else "⚪ 키워드 분석 모드 (API 키 없음)")
+        gemini_api_key = st.session_state.get("gemini_api_key", "")
+        st.caption("🟢 AI 분석 활성 (저장됨)" if gemini_api_key else "⚪ 키워드 분석 모드 (API 키 없음)")
 
     use_llm = bool(gemini_api_key)
 
@@ -935,7 +953,7 @@ with tab_rec:
 
             | 항목 | 범위 | 역할 |
             |------|------|------|
-            | 기술점수 | -10 ~ +10 | RSI·MACD·EMA·ADX 등 8개 지표 복합 신호 |
+            | 기술점수 | -10 ~ +10 | RSI·MACD·EMA·ADX·일목·Z-Score·다이버전스 등 11개 지표 복합 신호 |
             | 수익률점수 | -5 ~ +5 | 예상수익률(%)÷2 — **마이너스면 패널티** |
             | 샤프점수 | -3 ~ +3 | 샤프지수×1.5 — 리스크 대비 수익 효율 |
 
@@ -1053,7 +1071,7 @@ with tab_rec:
 
         | 항목 | 기준값 | 비고 |
         |------|--------|------|
-        | 기술점수 | RSI·MACD·EMA·ADX·OBV 등 8개 지표 | 범위 -10 ~ +10 |
+        | 기술점수 | RSI·MACD·EMA·ADX·OBV·일목·Z-Score·다이버전스 등 11개 지표 | 범위 -10 ~ +10 |
         | 예상수익률 | +10% → +5점 / -10% → -5점 | 마이너스 시 패널티 |
         | 샤프지수 | 2.0 이상 → +3점 / 음수 → 감점 | 리스크 보정 |
 
@@ -1065,6 +1083,9 @@ with tab_rec:
         | EMA200 | 장기 추세 | 가격 상단 | 가격 하단 |
         | ADX  | 추세 강도 | > 25 추세 신호 신뢰 | < 15 횡보 약화 |
         | OBV + MFI | 수급 | 매집 추세 | 분산 추세 |
+        | 일목균형표 | 중기 추세 | 구름 위 강세 | 구름 아래 약세 |
+        | Z-Score | 통계적 위치 | < -2.5σ 과매도 | > +2.5σ 과매수 |
+        | 다이버전스 | 추세 전환 | 상승 다이버전스 | 하락 다이버전스 |
         """)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1117,9 +1138,11 @@ with tab_news:
             st.info("뉴스 데이터가 없습니다.")
         else:
             # 전체 감성 요약 배너
-            s_score   = sent.get("score", 0.0)
-            s_label   = sent.get("label", "중립")
-            s_summary = sent.get("summary", "")
+            s_score        = sent.get("score", 0.0)
+            s_label        = sent.get("label", "중립")
+            s_summary      = sent.get("summary", "")
+            s_indiv        = sent.get("individual_score")
+            s_sector       = sent.get("sector_score", 0.0)
             if s_score >= 1:
                 banner_color, text_color = "#1b5e20", "#a5d6a7"
             elif s_score <= -1:
@@ -1127,11 +1150,26 @@ with tab_news:
             else:
                 banner_color, text_color = "#1e2130", "#bdbdbd"
 
+            sector_html = ""
+            if s_sector != 0.0:
+                sector_clr = "#a5d6a7" if s_sector > 0 else "#ef9a9a"
+                sector_html = (
+                    f'<span style="font-size:0.82rem;color:{sector_clr};margin-left:8px;">'
+                    f'섹터 {s_sector:+.1f}</span>'
+                )
+            indiv_html = ""
+            if s_indiv is not None and s_sector != 0.0:
+                indiv_html = (
+                    f'<span style="font-size:0.82rem;color:#bdbdbd;margin-left:4px;">'
+                    f'(종목 {s_indiv:+.1f})</span>'
+                )
+
             st.markdown(f"""
             <div style="background:{banner_color};border-radius:10px;padding:12px 18px;margin-bottom:14px;">
                 <div style="font-size:1.05rem;font-weight:bold;color:{text_color};">
                     뉴스 감성: {s_label} &nbsp;
                     <span style="font-size:0.95rem;font-weight:normal;">({s_score:+.1f}점 / ±5)</span>
+                    {sector_html}{indiv_html}
                     {"&nbsp;|&nbsp; 🤖 Gemini AI 분석" if use_llm else "&nbsp;|&nbsp; 🔑 키워드 분석"}
                 </div>
                 {f'<div style="font-size:0.88rem;color:#ccc;margin-top:6px;">{s_summary}</div>' if s_summary else ""}
@@ -1148,6 +1186,8 @@ with tab_news:
                 d          = detail_map.get(title, {})
                 art_score  = d.get("score", 0.0)
                 art_reason = d.get("reason", "")
+                art_tier   = d.get("tier", "")
+                art_decay  = d.get("decay", 1.0)
 
                 if art_score >= 0.3:
                     dot_color, dot = "#66bb6a", "🟢"
@@ -1156,12 +1196,19 @@ with tab_news:
                 else:
                     dot_color, dot = "#9e9e9e", "⚪"
 
+                tier_badge = {
+                    "A": '<span style="background:#e65100;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">A급</span>',
+                    "B": '<span style="background:#1565c0;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">B급</span>',
+                    "C": '<span style="background:#37474f;color:#ccc;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">C급</span>',
+                }.get(art_tier, "")
+
                 col_article, col_btn = st.columns([8, 1])
 
                 with col_article:
                     st.markdown(
                         f'<div style="margin-bottom:2px;">'
                         f'<span style="color:{dot_color};font-size:0.8rem;">{dot} {art_score:+.1f}</span>'
+                        f'{tier_badge}'
                         f' &nbsp;<b><a href="{link}" target="_blank"'
                         f' style="color:#90caf9;text-decoration:none;">{title}</a></b>'
                         f'</div>',
@@ -1170,6 +1217,7 @@ with tab_news:
                     meta_parts = []
                     if publisher: meta_parts.append(f"📌 {publisher}")
                     if pub_date:  meta_parts.append(f"🕐 {pub_date}")
+                    if art_decay < 1.0: meta_parts.append(f"감쇠×{art_decay:.1f}")
                     if meta_parts:
                         st.caption("  ·  ".join(meta_parts))
                     if art_reason:
@@ -2253,6 +2301,94 @@ with tab_chart:
             st.caption(f"🟡 목표 2R: **{sl['target_2r']:,.2f}**")
             st.caption(f"🟢 목표 3R: **{sl['target_3r']:,.2f}**")
             st.caption(f"📏 ATR({sl['atr_ratio']:.2f}%): {sl['atr']:,.2f}")
+
+        # ── 내 주식 분석 ────────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("**🧑‍💼 내 주식 분석**")
+
+        _avg_key   = f"avg_price_{ticker}"
+        _saved_avg = st.session_state.get(_avg_key, 0.0)
+        _step      = 100.0 if ticker.endswith((".KS", ".KQ")) else 0.01
+
+        avg_price_input = st.number_input(
+            "평단가",
+            min_value=0.0,
+            value=float(_saved_avg),
+            step=_step,
+            format="%.2f" if _step < 1 else "%.0f",
+            placeholder="평단가 입력",
+            label_visibility="collapsed",
+            key=f"avg_input_{ticker}",
+        )
+
+        if st.button("📊 내 주식 분석", use_container_width=True,
+                     type="primary", key=f"my_analyze_{ticker}"):
+            if avg_price_input <= 0:
+                st.warning("평단가를 입력해주세요.")
+            elif close.empty:
+                st.warning("주가 데이터가 없습니다.")
+            else:
+                st.session_state[_avg_key] = avg_price_input
+                _last_price = float(close.iloc[-1])
+                _last_row   = data.iloc[-1]
+
+                def _safe(col):
+                    v = _last_row.get(col) if col in data.columns else None
+                    return float(v) if v is not None and pd.notna(v) else None
+
+                _indicators = {
+                    "RSI":       _safe("RSI")       or 50.0,
+                    "MACD_Hist": _safe("MACD_Hist") or 0.0,
+                    "ADX":       _safe("ADX")        or 20.0,
+                    "BB_Lower":  _safe("BB_Lower"),
+                    "BB_Upper":  _safe("BB_Upper"),
+                }
+
+                rec = get_investment_recommendation(
+                    current_price = _last_price,
+                    avg_price     = avg_price_input,
+                    indicators    = _indicators,
+                    tech_score    = tech_score,
+                    news_score    = news_score,
+                    fund_score    = fs,
+                )
+                st.session_state[f"rec_{ticker}"] = rec
+
+        # 분석 결과 표시 (버튼 클릭 후 세션에 저장된 결과 렌더링)
+        _rec = st.session_state.get(f"rec_{ticker}")
+        if _rec:
+            _pr   = _rec["profit_rate"]
+            _pbg  = "#1b5e20" if _pr > 0 else ("#b71c1c" if _pr < 0 else "#1e2130")
+            _pfc  = "#a5d6a7" if _pr > 0 else ("#ef9a9a" if _pr < 0 else "#bdbdbd")
+            _psgn = "+" if _pr > 0 else ""
+
+            st.markdown(f"""
+            <div style="background:{_rec['color_bg']};border-radius:12px;
+                        padding:14px 16px;margin-top:8px;
+                        border:1px solid {_rec['color_fg']}44;">
+                <div style="font-size:1.3rem;font-weight:bold;
+                            color:{_rec['color_fg']};margin-bottom:4px;">
+                    {_rec['badge']} {_rec['title']}
+                </div>
+                <div style="display:inline-block;background:{_pbg};
+                            border-radius:6px;padding:2px 10px;
+                            font-size:0.85rem;color:{_pfc};margin-bottom:8px;">
+                    수익률 {_psgn}{_pr:.2f}%
+                </div>
+                <div style="font-size:0.83rem;color:#ccc;line-height:1.6;">
+                    {_rec['reason']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.expander("📋 상세 분석 근거", expanded=True):
+                for _d in _rec["details"]:
+                    if any(k in _d for k in ["손실", "⚠️", "✂️", "음수", "하락"]):
+                        st.error(_d, icon="🔻")
+                    elif any(k in _d for k in ["수익", "💡", "✅", "양수", "상승", "우량"]):
+                        st.success(_d, icon="🔺")
+                    else:
+                        st.info(_d, icon="🔷")
 
     # ── 투자자별 매매 동향 (Naver Finance) ──────────────────────────────────────
     _is_krx_chart = _aticker and (_aticker.endswith(".KS") or _aticker.endswith(".KQ"))

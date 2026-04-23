@@ -196,7 +196,7 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
 
 def generate_signals(data: pd.DataFrame) -> dict:
     """
-    8개 모듈 복합 채점으로 매매 신호 생성.
+    11개 모듈 복합 채점으로 매매 신호 생성.
     점수 범위: -10 ~ +10  (양수=매수, 음수=매도)
 
     모듈별 최대 기여도:
@@ -209,7 +209,10 @@ def generate_signals(data: pd.DataFrame) -> dict:
       6. ADX 필터 적용 EMA 크로스        ±2.0  — 추세 방향 (신뢰도 보정)
       7. 볼린저밴드 + Squeeze            ±1.0  — 변동성 위치
       8. ROC 모멘텀 확인                 ±0.5  — 가격 변화율 필터
-    이론적 최대: ±13 → cap ±10
+      9. 일목균형표 구름 위치            ±1.8  — 중기 추세 국면 (구름 위·아래·내부)
+     10. Z-Score 통계적 위치            ±1.0  — 통계적 과매수/과매도 감지
+     11. 다이버전스 (RSI·MACD)          ±1.5  — 추세 전환 조기 경보
+    이론적 최대: ±18 → cap ±10
     """
     if data.empty or len(data) < 21:
         return {}
@@ -466,6 +469,54 @@ def generate_signals(data: pd.DataFrame) -> dict:
             score -= 0.5; reasons.append(f"ROC 강한 하락 모멘텀 ({roc:.1f}%)")
         elif roc < -5:
             score -= 0.2
+
+    # ══ 9. 일목균형표 구름 위치 — ±1.8 ═══════════════════════════════════════
+    span_a = _f(last, "ICHI_SPAN_A")
+    span_b = _f(last, "ICHI_SPAN_B")
+    tenkan = _f(last, "ICHI_TENKAN")
+    kijun  = _f(last, "ICHI_KIJUN")
+    if span_a and span_b:
+        cloud_top = max(span_a, span_b)
+        cloud_bot = min(span_a, span_b)
+        if price > cloud_top:
+            score += 1.5
+            reasons.append(f"일목 구름 위 ({price:,.0f} > {cloud_top:,.0f}) → 중기 강세 추세")
+        elif price > cloud_bot:
+            score += 0.3
+            reasons.append(f"일목 구름 내부 → 방향 탐색 중 (중립)")
+        else:
+            score -= 1.5
+            reasons.append(f"일목 구름 아래 ({price:,.0f} < {cloud_bot:,.0f}) → 중기 약세 추세")
+    if tenkan is not None and kijun is not None:
+        if tenkan > kijun:
+            score += 0.3
+            reasons.append(f"일목 전환선 > 기준선 ({tenkan:,.0f} > {kijun:,.0f}) → 단기 강세")
+        else:
+            score -= 0.3
+            reasons.append(f"일목 전환선 < 기준선 ({tenkan:,.0f} < {kijun:,.0f}) → 단기 약세")
+
+    # ══ 10. Z-Score 통계적 위치 — ±1.0 ══════════════════════════════════════
+    zscore = _f(last, "Z_SCORE")
+    if zscore is not None:
+        if zscore > 2.5:
+            score -= 1.0; reasons.append(f"Z-Score +{zscore:.2f}σ → 통계적 과매수 (평균 회귀 위험)")
+        elif zscore > 1.5:
+            score -= 0.4
+        elif zscore < -2.5:
+            score += 1.0; reasons.append(f"Z-Score {zscore:.2f}σ → 통계적 과매도 (평균 회귀 기대)")
+        elif zscore < -1.5:
+            score += 0.4
+
+    # ══ 11. 다이버전스 (RSI·MACD 히스토그램) — ±1.5 ═════════════════════════
+    div = detect_divergence(data)
+    if div.get("bearish_rsi") and div.get("bearish_macd"):
+        score -= 1.5; reasons.append("RSI·MACD 이중 하락 다이버전스 → 강한 추세 약화 경고")
+    elif div.get("bearish_rsi") or div.get("bearish_macd"):
+        score -= 0.8; reasons.append("하락 다이버전스 포착 → 추세 약화 경고")
+    elif div.get("bullish_rsi") and div.get("bullish_macd"):
+        score += 1.5; reasons.append("RSI·MACD 이중 상승 다이버전스 → 강한 추세 전환 기대")
+    elif div.get("bullish_rsi") or div.get("bullish_macd"):
+        score += 0.8; reasons.append("상승 다이버전스 포착 → 추세 전환 기대")
 
     # ══ 최종 판정 ════════════════════════════════════════════════════════════
     score = max(-10.0, min(10.0, score))  # cap ±10
@@ -1465,8 +1516,45 @@ def get_fundamental_data(ticker: str) -> dict:
                             eq_v  = eq_vals.get(col)
                             if ni_v and eq_v and float(eq_v) > 0 and not pd.isna(ni_v) and not pd.isna(eq_v):
                                 roe_history.append(round(float(ni_v) / float(eq_v) * 100, 2))
+
+            # ── EPS 연도별 리스트 (린치 3년 CAGR 직접 계산용) ─────────────────
+            # yfinance financials 열 순서: 최신→과거, 역순하여 과거→현재로 저장
+            eps_history: list[float] = []
+            for _eps_label in ["Diluted EPS", "Basic EPS"]:
+                if _eps_label in fin.index:
+                    _eps_row = fin.loc[_eps_label].dropna()
+                    eps_history = [float(v) for v in reversed(_eps_row.values[:4])]
+                    break
+
+            # fallback: Net Income ÷ Diluted Average Shares
+            if not eps_history:
+                _ni_row     = None
+                _shares_row = None
+                for _lbl in ["Net Income", "Net Income Common Stockholders",
+                              "Net Income From Continuing Operation Net Minority Interest"]:
+                    if _lbl in fin.index:
+                        _ni_row = fin.loc[_lbl]
+                        break
+                for _lbl in ["Diluted Average Shares", "Ordinary Shares Number", "Share Issued"]:
+                    if _lbl in fin.index:
+                        _shares_row = fin.loc[_lbl]
+                        break
+                    if bs is not None and _lbl in bs.index:
+                        _shares_row = bs.loc[_lbl]
+                        break
+                if _ni_row is not None and _shares_row is not None:
+                    _common = [c for c in _ni_row.index if c in _shares_row.index]
+                    _raw = []
+                    for col in _common[:4]:
+                        _ni_v  = _ni_row.get(col)
+                        _sh_v  = _shares_row.get(col)
+                        if (_ni_v is not None and _sh_v is not None
+                                and float(_sh_v) > 0
+                                and not pd.isna(_ni_v) and not pd.isna(_sh_v)):
+                            _raw.append(float(_ni_v) / float(_sh_v))
+                    eps_history = list(reversed(_raw))  # 과거→현재 순
         except Exception:
-            pass
+            eps_history = []
 
         # ── 자사주 매입 + 배당금 → 주주환원율 ────────────────────────────────────
         buyback_amount = None
@@ -1501,6 +1589,7 @@ def get_fundamental_data(ticker: str) -> dict:
             "psr":              psr,
             "roe":              info.get("returnOnEquity"),
             "roe_history":      roe_history,           # 연도별 ROE(%) 리스트
+            "eps_history":      eps_history,           # 연도별 EPS 리스트 (과거→현재, 린치 CAGR용)
             "debt_equity":      info.get("debtToEquity"),
             "revenue_growth":   info.get("revenueGrowth"),
             "earnings_growth":  info.get("earningsGrowth"),
@@ -1580,6 +1669,7 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
     debt_equity     = info.get("debt_equity")
     revenue_growth  = info.get("revenue_growth")
     earnings_growth = info.get("earnings_growth")
+    eps_history     = info.get("eps_history", [])   # 연도별 EPS 리스트 (과거→현재)
     w52_high        = info.get("w52_high")
     w52_low         = info.get("w52_low")
     fcf             = info.get("free_cashflow")
@@ -1590,6 +1680,37 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
     buyback         = info.get("buyback_amount")
     div_paid        = info.get("div_paid_amount")
 
+    # ── 린치 EPS 3년 CAGR 직접 계산 ────────────────────────────────────────────
+    # (금년 EPS / 3년 전 EPS)^(1/3) - 1
+    # eps_history: [eps_n-3, eps_n-2, eps_n-1, eps_n] (과거→현재 순)
+    eps_cagr_3yr: float | None = None
+    eps_cagr_note: str = ""
+    if len(eps_history) >= 4:
+        eps_old = eps_history[-4]   # 3년 전
+        eps_new = eps_history[-1]   # 최신년
+        if eps_old > 0 and eps_new > 0:
+            eps_cagr_3yr = (eps_new / eps_old) ** (1.0 / 3.0) - 1.0
+            eps_cagr_note = (
+                f"EPS 3년 CAGR {eps_cagr_3yr*100:.1f}%"
+                f"  ({eps_old:.2f} → {eps_new:.2f})"
+            )
+        elif eps_old <= 0 or eps_new <= 0:
+            eps_cagr_note = f"EPS 음수 포함 (CAGR 계산 불가: {eps_old:.2f}→{eps_new:.2f})"
+    elif len(eps_history) >= 2:
+        # 2~3년치만 있을 때: 가용 기간으로 연환산
+        eps_old = eps_history[0]
+        eps_new = eps_history[-1]
+        n = len(eps_history) - 1
+        if eps_old > 0 and eps_new > 0:
+            eps_cagr_3yr = (eps_new / eps_old) ** (1.0 / n) - 1.0
+            eps_cagr_note = (
+                f"EPS {n}년 CAGR {eps_cagr_3yr*100:.1f}%"
+                f"  ({eps_old:.2f} → {eps_new:.2f}, {n}년 데이터)"
+            )
+
+    # EPS CAGR 우선, 없으면 yfinance earningsGrowth fallback
+    effective_growth = eps_cagr_3yr if eps_cagr_3yr is not None else earnings_growth
+
     g = 0.0   # 성장성 raw score  (cap ±3.5)
     p = 0.0   # 수익성 raw score  (cap ±6.0)
     s = 0.0   # 안정성 raw score  (cap ±3.5)
@@ -1599,18 +1720,23 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
     # 성장성 (Growth) — 린치 핵심, 가중치 40%
     # ════════════════════════════════════════════════════════════════
 
-    # PEG (±2.0)
+    # PEG (±2.0) — EPS 3년 CAGR 직접 계산값 우선 사용
     peg = None
-    if per and earnings_growth and per > 0 and earnings_growth > 0:
-        peg = per / (earnings_growth * 100)
+    if per and effective_growth and per > 0 and effective_growth > 0:
+        peg = per / (effective_growth * 100)
+        growth_src = eps_cagr_note if eps_cagr_3yr is not None else f"성장률={earnings_growth*100:.1f}%(yf)"
         if peg < 0.5:
-            g += 2.0; reasons.append(f"[린치] PEG={peg:.2f} < 0.5 → 강력 성장 저평가")
+            g += 2.0; reasons.append(f"[린치] PEG={peg:.2f} < 0.5 → 강력 성장 저평가  ({growth_src})")
         elif peg < 1.0:
-            g += 1.0; reasons.append(f"[린치] PEG={peg:.2f} < 1.0 → 성장 대비 저평가")
+            g += 1.0; reasons.append(f"[린치] PEG={peg:.2f} < 1.0 → 성장 대비 저평가  ({growth_src})")
         elif peg < 1.5:
-            g += 0.3
+            g += 0.3; reasons.append(f"[린치] PEG={peg:.2f}  ({growth_src})")
         elif peg > 2.0:
-            g -= 1.0; reasons.append(f"[린치] PEG={peg:.2f} > 2.0 → 성장 대비 고평가")
+            g -= 1.0; reasons.append(f"[린치] PEG={peg:.2f} > 2.0 → 성장 대비 고평가  ({growth_src})")
+        else:
+            reasons.append(f"[린치] PEG={peg:.2f}  ({growth_src})")
+    elif eps_cagr_note:
+        reasons.append(f"[린치] {eps_cagr_note} (PER 없어 PEG 계산 불가)")
 
     # 매출 성장 (±1.5)
     if revenue_growth is not None:
@@ -1835,29 +1961,43 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
         }
 
     # 린치
+    _growth_basis = eps_cagr_note if eps_cagr_note else (
+        f"성장률={earnings_growth*100:.1f}%(yf)" if earnings_growth else "성장률 데이터 없음"
+    )
     if peg is not None:
         if peg < 0.5:
             master_verdicts["린치"] = {
                 "icon": "🚀", "판정": "강력추천",
-                "comment": f"성장성 대비 주가가 매우 쌉니다 (PEG={peg:.2f}). 전형적인 성장주 패턴입니다."
+                "comment": (
+                    f"성장성 대비 주가가 매우 쌉니다 (PEG={peg:.2f}). 전형적인 성장주 패턴입니다. "
+                    f"({_growth_basis})"
+                )
             }
         elif peg < 1.0:
             master_verdicts["린치"] = {
                 "icon": "✅", "판정": "추천",
-                "comment": f"PEG={peg:.2f}로 성장 대비 저평가. 린치 기준 매수권입니다."
+                "comment": f"PEG={peg:.2f}로 성장 대비 저평가. 린치 기준 매수권입니다. ({_growth_basis})"
             }
         elif peg > 2.0:
             master_verdicts["린치"] = {
                 "icon": "⚠️", "판정": "과열",
-                "comment": f"PEG={peg:.2f} > 2.0. 성장률 대비 주가가 앞서 나갔습니다."
+                "comment": f"PEG={peg:.2f} > 2.0. 성장률 대비 주가가 앞서 나갔습니다. ({_growth_basis})"
             }
         else:
             master_verdicts["린치"] = {
                 "icon": "⚪", "판정": "중립",
-                "comment": f"PEG={peg:.2f}. 성장성 대비 적정 밸류에이션 구간입니다."
+                "comment": f"PEG={peg:.2f}. 성장성 대비 적정 밸류에이션 구간입니다. ({_growth_basis})"
             }
+    elif eps_cagr_note:
+        master_verdicts["린치"] = {
+            "icon": "—", "판정": "데이터 부족",
+            "comment": f"PER 없어 PEG 계산 불가. {eps_cagr_note}"
+        }
     else:
-        master_verdicts["린치"] = {"icon": "—", "판정": "데이터 부족", "comment": "PEG 계산 불가 (EPS 성장률 데이터 없음)"}
+        master_verdicts["린치"] = {
+            "icon": "—", "판정": "데이터 부족",
+            "comment": "PEG 계산 불가 (EPS 이력 및 성장률 데이터 없음)"
+        }
 
     # 오닐
     if oneil_ratio is not None:
@@ -1900,6 +2040,8 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
         "shareholder_yield": info.get("shareholder_yield"),
         "fcf_yield":     round(fcf_yield, 1) if fcf_yield is not None else None,
         "peg":           round(peg, 2) if peg is not None else None,
+        "eps_history":   eps_history,
+        "eps_cagr_3yr":  round(eps_cagr_3yr * 100, 1) if eps_cagr_3yr is not None else None,
     }
 
 
@@ -2027,17 +2169,260 @@ def get_insider_trades_sec(ticker: str, days: int = 90) -> pd.DataFrame:
 
 # ─── 뉴스 감성 분석 ───────────────────────────────────────────────────────────
 
-# 긍정/부정 키워드 사전
-_POS_KEYWORDS = [
+# ── A급 (가중치 2.0): 실적·수주·판매량·M&A — 종목 직접 영향 ─────────────────────
+_KW_A_POS = [
+    "어닝서프라이즈", "어닝 서프라이즈", "어닝비트", "실적 서프라이즈",
+    "역대 최대", "사상 최대", "역대 최고", "분기 최대", "최대 실적",
+    "판매량", "판매 호조", "출하량", "점유율", "시장점유율",
+    "대규모 수주", "수주 확보", "수주 잔고", "계약 체결", "신규 계약",
+    "인수합병", "M&A", "기업 인수",
+    "배당 확대", "특별배당", "자사주 소각",
+    "흑자전환", "턴어라운드",
+    "FDA 승인", "양산 시작", "상업화",
+]
+_KW_A_NEG = [
+    "어닝쇼크", "어닝 쇼크", "어닝미스", "실적 쇼크",
+    "적자전환", "대규모 적자", "순손실 전환",
+    "파산", "상장폐지", "영업정지",
+    "검찰 수사", "금감원 제재", "분식회계", "회계 부정",
+    "집단소송", "대규모 리콜",
+    "배당 삭감", "배당 중단",
+]
+
+# ── B급 (가중치 1.0): 업황·섹터·목표가·ETF — 간접 영향 ──────────────────────────
+_KW_B_POS = [
     "수주", "돌파", "상승", "이익", "증가", "추천", "급등", "호재", "성장", "흑자",
-    "신고가", "매수", "목표가 상향", "어닝서프라이즈", "배당", "실적 개선", "확대",
+    "신고가", "매수", "목표가 상향", "배당", "실적 개선", "확대",
     "강세", "반등", "회복", "신규", "수혜", "기대", "긍정", "상향", "계약", "수출",
+    "ETF 자금", "ETF 유입", "ETF 순유입", "머니무브",
+    "반도체 업황", "DRAM 가격", "HBM", "메모리 수요", "AI 반도체",
+    "목표가 올려", "투자의견 상향",
+    "수요 회복", "공급 부족", "업종 강세",
 ]
-_NEG_KEYWORDS = [
-    "하락", "감소", "적자", "조사", "우려", "매도", "급락", "악재", "손실", "적자전환",
-    "신저가", "목표가 하향", "어닝쇼크", "부진", "위기", "하향", "규제", "소송", "제재",
-    "약세", "불안", "취소", "철수", "파산", "실망", "하락세", "폭락",
+_KW_B_NEG = [
+    "하락", "감소", "적자", "조사", "우려", "매도", "급락", "악재", "손실",
+    "신저가", "목표가 하향", "부진", "위기", "하향", "규제", "소송", "제재",
+    "약세", "불안", "취소", "철수", "실망", "하락세", "폭락",
+    "DRAM 가격 하락", "반도체 업황 악화",
+    "투자의견 하향",
+    "수요 감소", "공급 과잉",
 ]
+
+# ── C급 (가중치 0.5): 거시경제·시황 — 배경 영향 ─────────────────────────────────
+_KW_C_POS = [
+    "코스피 상승", "코스닥 상승", "증시 반등",
+    "외국인 순매수", "기관 순매수",
+    "달러 약세", "원화 강세", "금리 인하", "경기 회복",
+]
+_KW_C_NEG = [
+    "코스피 하락", "코스닥 하락", "증시 급락",
+    "외국인 순매도", "기관 순매도",
+    "달러 강세", "원화 약세", "금리 인상", "경기 침체",
+    "중동 위기", "지정학 리스크", "전쟁",
+]
+
+# 하위호환 (get_advanced_sentiment 등 기존 코드에서 참조)
+_POS_KEYWORDS = _KW_B_POS
+_NEG_KEYWORDS = _KW_B_NEG
+
+# ── 섹터별 업황 지표 키워드 ────────────────────────────────────────────────────
+_TICKER_SECTOR: dict[str, str] = {
+    "005930.KS": "반도체", "000660.KS": "반도체", "042700.KS": "반도체",
+    "005380.KS": "자동차", "000270.KS": "자동차", "012330.KS": "자동차",
+    "373220.KS": "배터리", "006400.KS": "배터리", "051910.KS": "배터리",
+    "035420.KS": "플랫폼", "035720.KS": "플랫폼",
+    "207940.KS": "바이오",  "068270.KS": "바이오",  "128940.KS": "바이오",
+    "NVDA": "semiconductor", "AMD": "semiconductor",
+    "INTC": "semiconductor", "AVGO": "semiconductor", "QCOM": "semiconductor",
+    "AAPL": "bigtech", "MSFT": "bigtech", "GOOGL": "bigtech",
+    "META": "bigtech", "AMZN": "bigtech",
+    "TSLA": "ev", "RIVN": "ev", "NIO": "ev",
+    "GM": "auto", "F": "auto",
+    "JPM": "finance", "BAC": "finance", "GS": "finance", "MS": "finance",
+}
+
+_SECTOR_KEYWORDS: dict[str, dict[str, list[str]]] = {
+    "반도체": {
+        "pos": [
+            "DRAM 가격 상승", "NAND 가격 상승", "HBM 수요", "AI 반도체 수요",
+            "반도체 업황 개선", "필라델피아 반도체", "메모리 수요 증가",
+            "서버 수요 증가", "DDR5", "CoWoS", "반도체 수출 증가",
+        ],
+        "neg": [
+            "DRAM 가격 하락", "메모리 가격 하락", "반도체 업황 악화",
+            "반도체 재고 급증", "공급 과잉", "메모리 수요 감소",
+        ],
+    },
+    "semiconductor": {
+        "pos": [
+            "DRAM price rise", "HBM demand", "AI chip demand",
+            "Philadelphia Semiconductor", "server demand surge", "chip shortage",
+        ],
+        "neg": [
+            "DRAM price fall", "chip oversupply", "inventory buildup",
+            "semiconductor slowdown", "memory demand weakness",
+        ],
+    },
+    "자동차": {
+        "pos": [
+            "전기차 판매 증가", "친환경차 수요", "자동차 수출 증가",
+            "완성차 판매 호조", "자동차 수주 확대",
+        ],
+        "neg": [
+            "완성차 판매 감소", "전기차 캐즘", "자동차 파업",
+            "자동차 관세", "판매 부진",
+        ],
+    },
+    "배터리": {
+        "pos": [
+            "배터리 수주 증가", "전고체 배터리", "에너지 밀도 향상",
+            "배터리 수요 급증", "생산 캐파 확대",
+        ],
+        "neg": [
+            "배터리 화재", "배터리 리콜", "전기차 캐즘",
+            "배터리 수요 부진", "중국 배터리 경쟁",
+        ],
+    },
+    "플랫폼": {
+        "pos": [
+            "MAU 증가", "광고 매출 증가", "구독자 급증", "AI 서비스 확대",
+        ],
+        "neg": [
+            "이용자 감소", "광고 규제", "플랫폼 규제",
+            "반독점 조사",
+        ],
+    },
+    "바이오": {
+        "pos": [
+            "임상 성공", "FDA 승인", "글로벌 라이선스 계약",
+            "기술 수출", "신약 허가", "블록버스터",
+        ],
+        "neg": [
+            "임상 실패", "FDA 거부", "심각한 부작용",
+            "임상 중단",
+        ],
+    },
+    "bigtech": {
+        "pos": [
+            "cloud revenue record", "AI revenue growth", "subscription growth",
+            "ad revenue beat", "data center expansion",
+        ],
+        "neg": [
+            "antitrust lawsuit", "regulatory fine", "user growth stall",
+            "ad revenue miss", "layoff",
+        ],
+    },
+    "ev": {
+        "pos": [
+            "delivery record", "EV demand surge", "charging network expansion",
+            "autonomous driving approval",
+        ],
+        "neg": [
+            "delivery miss", "EV slowdown", "price cut margin hit",
+            "vehicle recall",
+        ],
+    },
+    "auto": {
+        "pos": ["sales record", "export growth", "EV transition", "strong delivery"],
+        "neg": ["recall", "strike", "tariff impact", "sales decline"],
+    },
+    "finance": {
+        "pos": ["interest income growth", "loan growth", "trading revenue beat", "rate benefit"],
+        "neg": ["credit loss surge", "regulatory fine", "loan default rise", "NIM compression"],
+    },
+}
+
+
+def _news_time_decay(pub_date_str: str) -> float:
+    """뉴스 발행 시간 경과에 따른 감쇠 계수.
+    1h 이내: 1.0 / 4h 이내: 0.7 / 12h 이내: 0.5 / 이후: 0.3
+    """
+    if not pub_date_str:
+        return 0.5
+    fmts = [
+        "%Y.%m.%d %H:%M", "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ",
+        "%Y.%m.%d", "%Y-%m-%d",
+    ]
+    for fmt in fmts:
+        try:
+            dt = datetime.strptime(pub_date_str.strip()[:19], fmt)
+            hours_ago = (datetime.now() - dt).total_seconds() / 3600
+            if hours_ago <= 1:    return 1.0
+            elif hours_ago <= 4:  return 0.7
+            elif hours_ago <= 12: return 0.5
+            else:                 return 0.3
+        except ValueError:
+            continue
+    return 0.5
+
+
+def _classify_news_tier(text: str) -> tuple[float, str, list[str]]:
+    """뉴스 텍스트의 A/B/C 등급 분류 및 기본 점수 반환.
+
+    Returns: (raw_score[-1~+1], tier, matched_keywords)
+    A급 먼저 검사 → 매칭 없으면 B급 → C급
+    """
+    # A급: 직접 실적·판매량·M&A (가중치 2.0)
+    a_pos = [kw for kw in _KW_A_POS if kw in text]
+    a_neg = [kw for kw in _KW_A_NEG if kw in text]
+    if a_pos or a_neg:
+        raw = (len(a_pos) - len(a_neg)) * 2.0
+        return max(-1.0, min(1.0, raw)), "A", a_pos + a_neg
+
+    # B급: 업황·섹터·ETF·목표가 (가중치 1.0)
+    b_pos = [kw for kw in _KW_B_POS if kw in text]
+    b_neg = [kw for kw in _KW_B_NEG if kw in text]
+    if b_pos or b_neg:
+        raw = (len(b_pos) - len(b_neg)) * 0.5
+        return max(-1.0, min(1.0, raw)), "B", b_pos + b_neg
+
+    # C급: 거시·시황 (가중치 0.5)
+    c_pos = [kw for kw in _KW_C_POS if kw in text]
+    c_neg = [kw for kw in _KW_C_NEG if kw in text]
+    raw = (len(c_pos) - len(c_neg)) * 0.5
+    return max(-1.0, min(1.0, raw)), "C", c_pos + c_neg
+
+
+def _select_top_news(news_items: list[dict], n: int = 3) -> list[dict]:
+    """A/B/C 등급 순 → 같은 등급 내 최신순으로 상위 n개 선택."""
+    _TIER_ORDER = {"A": 0, "B": 1, "C": 2}
+
+    def _key(item: dict) -> tuple:
+        text = item.get("title", "") + " " + item.get("summary", "")
+        _, tier, _ = _classify_news_tier(text)
+        decay = _news_time_decay(item.get("pub_date", ""))
+        return (_TIER_ORDER.get(tier, 2), -decay)
+
+    return sorted(news_items, key=_key)[:n]
+
+
+def _calc_sector_score(ticker: str, news_items: list[dict]) -> float:
+    """섹터 업황 키워드 기반 섹터 점수 계산. 매핑 없으면 0.0 반환."""
+    sector = _TICKER_SECTOR.get(ticker, "")
+    if not sector:
+        return 0.0
+    kw_def = _SECTOR_KEYWORDS.get(sector, {})
+    pos_kws = kw_def.get("pos", [])
+    neg_kws = kw_def.get("neg", [])
+    if not pos_kws and not neg_kws:
+        return 0.0
+
+    weighted_sum = 0.0
+    count = 0
+    for item in news_items:
+        text = item.get("title", "") + " " + item.get("summary", "")
+        decay = _news_time_decay(item.get("pub_date", ""))
+        pos_hits = sum(1 for kw in pos_kws if kw in text)
+        neg_hits = sum(1 for kw in neg_kws if kw in text)
+        if pos_hits or neg_hits:
+            raw = max(-1.0, min(1.0, (pos_hits - neg_hits) * 0.5))
+            weighted_sum += raw * decay
+            count += 1
+
+    if count == 0:
+        return 0.0
+    return round(max(-5.0, min(5.0, (weighted_sum / count) * 5.0)), 2)
 
 
 def get_naver_news(ticker_code: str, max_items: int = 10) -> list[dict]:
@@ -2094,39 +2479,77 @@ def get_naver_news(ticker_code: str, max_items: int = 10) -> list[dict]:
         return []
 
 
-def analyze_news_sentiment_keywords(news_items: list[dict]) -> dict:
+def analyze_news_sentiment_keywords(news_items: list[dict], ticker: str = "") -> dict:
     """
-    키워드 매칭 기반 뉴스 감성 분석 (API 없이 동작하는 폴백)
-    반환: {"score": float(-5~+5), "label": str, "detail": list[dict]}
+    A/B/C 등급 가중치 + 시간 감쇠 + 섹터 블렌딩 키워드 감성 분석.
+
+    등급별 집계 가중치:
+      A급 (실적·판매량·M&A):  2.0
+      B급 (업황·ETF·목표가):  1.0
+      C급 (거시·시황):        0.5
+
+    시간 감쇠: 1h→1.0 / 4h→0.7 / 12h→0.5 / 이후→0.3
+
+    섹터 블렌딩: ticker가 있고 섹터 매핑이 있으면 개별 70% + 섹터 30%
+
+    반환: {
+      "score": float(-5~+5),          # 최종 점수 (섹터 블렌딩 포함)
+      "individual_score": float,       # 개별 종목 점수
+      "sector_score": float,           # 섹터 업황 점수
+      "label": str,
+      "detail": list[dict],
+    }
     """
     if not news_items:
-        return {"score": 0.0, "label": "중립", "detail": []}
+        return {
+            "score": 0.0, "individual_score": 0.0,
+            "sector_score": 0.0, "label": "중립", "detail": [],
+        }
 
-    detail = []
-    total  = 0.0
+    _TIER_AGG_WEIGHT = {"A": 2.0, "B": 1.0, "C": 0.5}
+
+    detail        = []
+    weighted_sum  = 0.0
+    total_weight  = 0.0
 
     for item in news_items:
-        text = (item.get("title", "") + " " + item.get("summary", "")).lower()
-        pos  = sum(1 for kw in _POS_KEYWORDS if kw in text)
-        neg  = sum(1 for kw in _NEG_KEYWORDS if kw in text)
-        raw  = pos - neg
-        # 기사 1건당 점수를 -1~+1로 클리핑
-        item_score = max(-1.0, min(1.0, raw * 0.5))
-        total += item_score
+        text  = item.get("title", "") + " " + item.get("summary", "")
+        decay = _news_time_decay(item.get("pub_date", ""))
+
+        base_score, tier, matched_kw = _classify_news_tier(text)
+
+        item_score  = round(base_score * decay, 2)
+        agg_weight  = _TIER_AGG_WEIGHT.get(tier, 1.0)
+
+        weighted_sum += item_score * agg_weight
+        total_weight += agg_weight
+
         detail.append({
-            "title":  item.get("title", ""),
-            "link":   item.get("link", "#"),
-            "publisher": item.get("publisher", ""),
-            "pub_date":  item.get("pub_date", ""),
-            "score":  round(item_score, 2),
-            "pos_kw": pos,
-            "neg_kw": neg,
+            "title":      item.get("title", ""),
+            "link":       item.get("link", "#"),
+            "publisher":  item.get("publisher", ""),
+            "pub_date":   item.get("pub_date", ""),
+            "score":      item_score,
+            "tier":       tier,
+            "matched_kw": matched_kw[:4],
+            "decay":      round(decay, 2),
+            "reason":     (
+                f"[{tier}급] {'·'.join(matched_kw[:3]) or '키워드 없음'}"
+                f"  시간감쇠×{decay:.1f}"
+            ),
         })
 
-    # 전체 점수: 평균 × 5 (스케일 -5~+5)
-    avg   = total / len(news_items)
-    score = round(avg * 5, 2)
-    score = max(-5.0, min(5.0, score))
+    avg              = weighted_sum / max(total_weight, 1.0)
+    individual_score = round(max(-5.0, min(5.0, avg * 5.0)), 2)
+
+    # 섹터 업황 점수 계산
+    sector_score = _calc_sector_score(ticker, news_items) if ticker else 0.0
+
+    # 섹터 데이터가 있으면 70:30 블렌딩
+    if sector_score != 0.0:
+        score = round(max(-5.0, min(5.0, 0.7 * individual_score + 0.3 * sector_score)), 2)
+    else:
+        score = individual_score
 
     if   score >= 3:  label = "매우 긍정"
     elif score >= 1:  label = "긍정"
@@ -2134,7 +2557,13 @@ def analyze_news_sentiment_keywords(news_items: list[dict]) -> dict:
     elif score >= -3: label = "부정"
     else:             label = "매우 부정"
 
-    return {"score": score, "label": label, "detail": detail}
+    return {
+        "score":            score,
+        "individual_score": individual_score,
+        "sector_score":     sector_score,
+        "label":            label,
+        "detail":           detail,
+    }
 
 
 def analyze_news_sentiment_llm(
@@ -2143,84 +2572,120 @@ def analyze_news_sentiment_llm(
     api_key: str,
 ) -> dict:
     """
-    LangChain + Gemini API를 이용한 뉴스 감성 분석
-    반환: {"score": float(-5~+5), "label": str, "detail": list[dict], "summary": str}
-    API 키가 없거나 오류 시 키워드 폴백
+    LangChain + Gemini API를 이용한 뉴스 감성 분석.
+    - 상위 3개 핵심 뉴스(A/B등급 우선)만 AI에 전달해 응답 품질 향상
+    - PydanticOutputParser로 구조화된 응답 강제
+    - 실패 시 키워드+섹터 분석으로 폴백
+
+    반환: {"score": float(-5~+5), "label": str, "detail": list[dict],
+            "summary": str, "individual_score": float, "sector_score": float}
     """
     if not api_key or not news_items:
-        return analyze_news_sentiment_keywords(news_items)
+        return analyze_news_sentiment_keywords(news_items, ticker)
+
+    # 섹터 점수는 키워드 분석에서 항상 계산 (AI 실패와 무관하게 사용)
+    kw_result    = analyze_news_sentiment_keywords(news_items, ticker)
+    sector_score = kw_result.get("sector_score", 0.0)
 
     try:
+        import json as _json
+        import re as _re
         from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_core.messages import HumanMessage
 
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.0-flash",
             google_api_key=api_key,
-            temperature=0.1,
+            temperature=0.0,
         )
 
-        titles = "\n".join(
-            f"{i+1}. {it.get('title','')}" for i, it in enumerate(news_items[:10])
+        # 상위 3개 핵심 뉴스 선택 (A등급 → B등급 → 최신순)
+        top3 = _select_top_news(news_items, n=3)
+
+        ticker_display = ticker.replace(".KS", "").replace(".KQ", "")
+        headlines = "\n".join(
+            f"{i+1}. {it.get('title', '')} ({it.get('pub_date', '날짜미상')})"
+            for i, it in enumerate(top3)
         )
-        prompt = f"""다음은 주식 종목 '{ticker}'에 관한 최신 뉴스 헤드라인입니다.
 
-{titles}
+        prompt = f"""당신은 주식 애널리스트입니다. 아래 {len(top3)}개 뉴스 헤드라인이 종목 '{ticker_display}'의 향후 7일 주가에 미칠 영향을 분석하세요.
 
-각 헤드라인을 분석하여 아래 형식으로 JSON을 출력하세요.
-- 전체 감성 점수: -5(매우 부정) ~ +5(매우 긍정) 사이의 소수
-- 각 뉴스 별 점수: -1 ~ +1
+[뉴스 헤드라인]
+{headlines}
 
-출력 형식 (JSON만, 설명 없이):
+[분석 지침]
+- 각 기사가 해당 종목의 7일 이내 주가에 미칠 영향을 -2~+2점으로 수치화하세요.
+- 실적/수주/판매량 등 직접 재무 영향 기사는 점수 영향이 큽니다.
+- 업황/ETF/시황 기사는 간접 영향이므로 점수를 보수적으로 주세요.
+- 전체 종합 점수는 -5(매우 부정)~+5(매우 긍정)입니다.
+
+[출력 형식] JSON만 출력하고 다른 설명은 절대 포함하지 마세요:
 {{
-  "overall_score": <float>,
-  "overall_summary": "<한국어 2~3문장 요약>",
+  "overall_score": <-5~+5 소수>,
+  "overall_summary": "<종목에 미치는 핵심 영향 2~3문장 한국어>",
   "items": [
-    {{"index": 1, "score": <float>, "reason": "<한국어 한 줄>"}},
-    ...
+    {{"index": 1, "score": <-2~+2 소수>, "reason": "<한 줄 근거 한국어>"}},
+    {{"index": 2, "score": <-2~+2 소수>, "reason": "<한 줄 근거 한국어>"}},
+    {{"index": 3, "score": <-2~+2 소수>, "reason": "<한 줄 근거 한국어>"}}
   ]
 }}"""
 
         response = llm.invoke([HumanMessage(content=prompt)])
         raw = response.content.strip()
 
-        # JSON 파싱
-        import json, re
-        json_match = re.search(r'\{[\s\S]*\}', raw)
+        # JSON 블록 추출 (```json ... ``` 또는 { ... } 형태 모두 처리)
+        json_match = _re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})', raw)
         if not json_match:
             raise ValueError("JSON not found in response")
-        parsed = json.loads(json_match.group())
+        json_str = json_match.group(1) or json_match.group(2)
+        parsed = _json.loads(json_str)
 
-        overall_score = float(parsed.get("overall_score", 0))
+        # 필수 필드 검증
+        if "overall_score" not in parsed or "items" not in parsed:
+            raise ValueError("Missing required fields in response")
+
+        overall_score = float(parsed["overall_score"])
         overall_score = max(-5.0, min(5.0, overall_score))
         summary       = parsed.get("overall_summary", "")
 
-        # 키워드 분석 결과와 병합 (링크, 출판사 등 메타 보존)
-        kw_result = analyze_news_sentiment_keywords(news_items)
+        # top3 기사에 AI 점수/근거 반영, 나머지는 키워드 결과 유지
         detail    = kw_result["detail"]
+        top3_titles = {it.get("title", ""): i for i, it in enumerate(top3)}
+        detail_by_title = {d["title"]: d for d in detail}
+
         for item_res in parsed.get("items", []):
             idx = item_res.get("index", 0) - 1
-            if 0 <= idx < len(detail):
-                detail[idx]["score"]  = round(float(item_res.get("score", 0)), 2)
-                detail[idx]["reason"] = item_res.get("reason", "")
+            if 0 <= idx < len(top3):
+                t = top3[idx].get("title", "")
+                if t in detail_by_title:
+                    raw_score = float(item_res.get("score", 0))
+                    detail_by_title[t]["score"]  = round(max(-2.0, min(2.0, raw_score)), 2)
+                    detail_by_title[t]["reason"] = item_res.get("reason", "")
 
-        if   overall_score >= 3:  label = "매우 긍정"
-        elif overall_score >= 1:  label = "긍정"
-        elif overall_score >= -1: label = "중립"
-        elif overall_score >= -3: label = "부정"
-        else:                     label = "매우 부정"
+        # 섹터 블렌딩 반영
+        if sector_score != 0.0:
+            blended = round(max(-5.0, min(5.0, 0.7 * overall_score + 0.3 * sector_score)), 2)
+        else:
+            blended = round(overall_score, 2)
+
+        if   blended >= 3:  label = "매우 긍정"
+        elif blended >= 1:  label = "긍정"
+        elif blended >= -1: label = "중립"
+        elif blended >= -3: label = "부정"
+        else:               label = "매우 부정"
 
         return {
-            "score":   round(overall_score, 2),
-            "label":   label,
-            "detail":  detail,
-            "summary": summary,
+            "score":            blended,
+            "individual_score": round(overall_score, 2),
+            "sector_score":     sector_score,
+            "label":            label,
+            "detail":           list(detail_by_title.values()),
+            "summary":          summary,
         }
 
     except Exception:
-        # API 오류 시 키워드 폴백
-        result = analyze_news_sentiment_keywords(news_items)
-        result["summary"] = "(AI 분석 실패 — 키워드 분석으로 대체)"
+        result = kw_result.copy()
+        result["summary"] = "(AI 분석 실패 — 키워드+섹터 분석으로 대체)"
         return result
 
 
@@ -2367,6 +2832,184 @@ def get_hybrid_signal(technical_score: float, news_score: float) -> dict:
     else:         label, badge = "강력 매도", "🔴🔴"
 
     return {"hybrid_score": hybrid, "label": label, "badge": badge}
+
+
+def get_investment_recommendation(
+    current_price: float,
+    avg_price: float,
+    indicators: dict,
+    tech_score: float,
+    news_score: float,
+    fund_score: float,
+) -> dict:
+    """
+    평단가 기반 개인화 매매 추천.
+
+    우선순위: 손절 > 익절 > 추가매수 > 보유 > 관망
+
+    반환: {
+      "action":     str,   # "손절검토" | "익절" | "추가매수" | "보유" | "관망"
+      "badge":      str,
+      "title":      str,
+      "color_bg":   str,
+      "color_fg":   str,
+      "profit_rate": float,
+      "reason":     str,
+      "details":    list[str],
+    }
+    """
+    if avg_price <= 0 or current_price <= 0:
+        return {
+            "action": "오류", "badge": "—", "title": "입력 오류",
+            "color_bg": "#1e2130", "color_fg": "#bdbdbd",
+            "profit_rate": 0.0, "reason": "평단가 또는 현재가가 0입니다.",
+            "details": [],
+        }
+
+    profit_rate = (current_price - avg_price) / avg_price * 100
+    rsi       = float(indicators.get("RSI",       50.0) or 50.0)
+    macd_hist = float(indicators.get("MACD_Hist",  0.0) or 0.0)
+    bb_lower  = indicators.get("BB_Lower")
+    bb_upper  = indicators.get("BB_Upper")
+    is_profit = profit_rate > 0
+
+    # ── 손절 검토 ─────────────────────────────────────────────────────────────
+    if profit_rate <= -7.0 and tech_score <= -1 and macd_hist < 0:
+        return {
+            "action": "손절검토", "badge": "🛑", "title": "손절 검토",
+            "color_bg": "#3a1212", "color_fg": "#ef9a9a",
+            "profit_rate": profit_rate,
+            "reason": f"손실 {profit_rate:.1f}% — 오닐 -7% 기준 초과 + 하락 지표 확인",
+            "details": [
+                f"현재 손실 {profit_rate:.1f}% (오닐 손절 기준 -7% 초과)",
+                f"기술 신호 {tech_score:+.1f}점 (하락 추세 강화)",
+                f"MACD 히스토그램 음수 ({macd_hist:+.4f})",
+                f"뉴스 감성 {news_score:+.1f}점",
+                "✂️ 추가 손실 방지를 위한 리스크 관리 권장",
+            ],
+        }
+
+    if profit_rate <= -5.0 and tech_score <= -2:
+        return {
+            "action": "손절검토", "badge": "⚠️", "title": "손절 주의",
+            "color_bg": "#2d1818", "color_fg": "#ffab91",
+            "profit_rate": profit_rate,
+            "reason": f"손실 {profit_rate:.1f}% — 손절선 -7% 접근, 기술 지표 약세",
+            "details": [
+                f"현재 손실 {profit_rate:.1f}% (손절 기준 -7% 접근)",
+                f"기술 신호 {tech_score:+.1f}점 (약세)",
+                f"RSI {rsi:.0f}",
+                "⚠️ 추이 모니터링 — 이탈 시 손절 실행 고려",
+            ],
+        }
+
+    # ── 익절 추천 ─────────────────────────────────────────────────────────────
+    if profit_rate >= 10.0 and rsi >= 70:
+        return {
+            "action": "익절", "badge": "💰", "title": "익절 추천",
+            "color_bg": "#0d2b1a", "color_fg": "#c8e6c9",
+            "profit_rate": profit_rate,
+            "reason": f"수익 {profit_rate:.1f}% + RSI {rsi:.0f} 과매수 — 차익 실현 시점",
+            "details": [
+                f"수익 {profit_rate:.1f}% 확보",
+                f"RSI {rsi:.0f} (70 이상 = 과매수 구간)",
+                f"기술 신호 {tech_score:+.1f}점",
+                f"뉴스 감성 {news_score:+.1f}점",
+                "💡 일부 또는 전량 익절 고려 / 트레일링 스탑 활용 가능",
+            ],
+        }
+
+    if profit_rate >= 15.0 and rsi >= 65 and macd_hist < 0:
+        return {
+            "action": "익절", "badge": "💰", "title": "익절 고려",
+            "color_bg": "#0d2b1a", "color_fg": "#a5d6a7",
+            "profit_rate": profit_rate,
+            "reason": f"수익 {profit_rate:.1f}% + MACD 약화 — 추세 전환 징후",
+            "details": [
+                f"수익 {profit_rate:.1f}% 확보",
+                f"MACD 히스토그램 음전환 ({macd_hist:+.4f})",
+                f"RSI {rsi:.0f}",
+                "💡 부분 익절 또는 손절선 상향 조정 고려",
+            ],
+        }
+
+    # ── 추가 매수 ─────────────────────────────────────────────────────────────
+    if (not is_profit and fund_score >= 5 and rsi < 40
+            and tech_score >= 0 and macd_hist > 0):
+        return {
+            "action": "추가매수", "badge": "✨", "title": "추가 매수 유효",
+            "color_bg": "#0a1e30", "color_fg": "#90caf9",
+            "profit_rate": profit_rate,
+            "reason": f"손실 {profit_rate:.1f}% — 우량주 저점, 평단가 낮추기 기회",
+            "details": [
+                f"현재 손실 {profit_rate:.1f}% (평단가 대비 저렴)",
+                f"펀더멘털 점수 {fund_score:+.1f}점 (우량 기업)",
+                f"RSI {rsi:.0f} (40 미만 = 저평가 구간)",
+                f"MACD 히스토그램 양전환 ({macd_hist:+.4f})",
+                "💡 기존 비중의 30~50% 이내 분할 추가 매수 권장",
+            ],
+        }
+
+    if not is_profit and fund_score >= 3 and rsi < 40:
+        return {
+            "action": "추가매수", "badge": "📉➕", "title": "추가 매수 검토",
+            "color_bg": "#101828", "color_fg": "#80cbc4",
+            "profit_rate": profit_rate,
+            "reason": f"손실 {profit_rate:.1f}% — 펀더멘털 양호, 기술 반전 대기",
+            "details": [
+                f"현재 손실 {profit_rate:.1f}%",
+                f"펀더멘털 점수 {fund_score:+.1f}점 (양호)",
+                f"RSI {rsi:.0f} (저평가 구간)",
+                f"MACD {macd_hist:+.4f} (양전환 대기 중)",
+                "⚠️ MACD 양전환 확인 후 매수 권장",
+            ],
+        }
+
+    # ── 보유 ─────────────────────────────────────────────────────────────────
+    if is_profit and rsi < 70 and macd_hist >= 0 and tech_score >= 0:
+        return {
+            "action": "보유", "badge": "📈", "title": "보유 (추세 유지)",
+            "color_bg": "#121e14", "color_fg": "#a5d6a7",
+            "profit_rate": profit_rate,
+            "reason": f"수익 {profit_rate:.1f}% — 상승 모멘텀 지속, 과열 없음",
+            "details": [
+                f"수익 {profit_rate:.1f}% 진행 중",
+                f"RSI {rsi:.0f} (과매수 아님)",
+                f"MACD 히스토그램 양수 ({macd_hist:+.4f})",
+                f"기술 신호 {tech_score:+.1f}점",
+                "💡 트레일링 스탑 설정으로 수익 보호 권장",
+            ],
+        }
+
+    if not is_profit and bb_lower is not None and current_price > bb_lower:
+        return {
+            "action": "보유", "badge": "🛡️", "title": "보유 (지지선 확인)",
+            "color_bg": "#1e1e12", "color_fg": "#fff176",
+            "profit_rate": profit_rate,
+            "reason": f"손실 {profit_rate:.1f}% — BB 하단 지지선 위, 반등 대기",
+            "details": [
+                f"현재 손실 {profit_rate:.1f}%",
+                f"BB 하단({bb_lower:,.2f}) 위에서 지지 중",
+                f"RSI {rsi:.0f}",
+                "⚠️ BB 하단 이탈 시 손절 재검토 필요",
+            ],
+        }
+
+    # ── 관망 (기본) ───────────────────────────────────────────────────────────
+    direction = "수익" if is_profit else "손실"
+    return {
+        "action": "관망", "badge": "😐", "title": "관망 / 보유",
+        "color_bg": "#1e2130", "color_fg": "#bdbdbd",
+        "profit_rate": profit_rate,
+        "reason": f"{direction} {abs(profit_rate):.1f}% — 특이 신호 없음, 방향 확인 필요",
+        "details": [
+            f"수익률 {profit_rate:+.1f}%",
+            f"기술 신호 {tech_score:+.1f}점",
+            f"뉴스 감성 {news_score:+.1f}점",
+            f"RSI {rsi:.0f}",
+            "😐 뚜렷한 매매 신호 없음 — 추가 지표 확인 후 판단",
+        ],
+    }
 
 
 # ─── 확장 감성 분석 ───────────────────────────────────────────────────────────
