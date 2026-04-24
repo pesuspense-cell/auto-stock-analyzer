@@ -34,8 +34,41 @@ def _init_db(conn: sqlite3.Connection):
             market           TEXT PRIMARY KEY,
             last_full_update TEXT
         );
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        );
     """)
     conn.commit()
+
+
+def load_settings_db() -> dict:
+    try:
+        with _get_conn() as conn:
+            rows = conn.execute("SELECT key, value FROM settings").fetchall()
+            result = {}
+            for row in rows:
+                k, v = row["key"], row["value"]
+                if v in ("true", "false"):
+                    result[k] = v == "true"
+                else:
+                    result[k] = v
+            return result
+    except Exception:
+        return {}
+
+
+def save_settings_db(data: dict) -> None:
+    try:
+        with _get_conn() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                [(k, "true" if v is True else "false" if v is False else str(v))
+                 for k, v in data.items()],
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 
 @contextmanager

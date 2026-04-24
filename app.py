@@ -6,6 +6,7 @@ import json
 import os
 import concurrent.futures
 import streamlit as st
+from fundamental_db import load_settings_db, save_settings_db
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -64,23 +65,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── 설정 파일 (비밀번호 게이트보다 먼저 로드) ──────────────────────────────────
+# ─── 설정 저장소 (fundamentals.db → settings 테이블) ────────────────────────────
 WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), "watchlist.json")
-SETTINGS_FILE  = os.path.join(os.path.dirname(__file__), "settings.json")
 
 def load_settings() -> dict:
-    try:
-        if os.path.exists(SETTINGS_FILE):
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
+    return load_settings_db()
 
 def save_settings(data: dict) -> None:
+    save_settings_db(data)
+
+# 기존 settings.json → DB 1회 마이그레이션
+_SETTINGS_JSON = os.path.join(os.path.dirname(__file__), "settings.json")
+if os.path.exists(_SETTINGS_JSON):
     try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with open(_SETTINGS_JSON, "r", encoding="utf-8") as _f:
+            _old = json.load(_f)
+        if _old:
+            save_settings(_old)
+        os.rename(_SETTINGS_JSON, _SETTINGS_JSON + ".migrated")
     except Exception:
         pass
 
