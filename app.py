@@ -430,7 +430,7 @@ with st.sidebar:
         st.session_state["_pending_period"]  = period
         st.rerun()
 
-    # ── API 키 상태 표시 (키는 DB에서 자동 로드) ───────────────────────────
+    # ── API 키 상태 표시 ────────────────────────────────────────────────────
     st.divider()
     st.markdown("### 🔑 API 연동 상태")
 
@@ -455,12 +455,65 @@ with st.sidebar:
     dart_api_key = _dart_secret or st.session_state.get("dart_api_key", "")
     st.caption("📑 DART:  " + ("🟢 활성" if dart_api_key else "⚪ 미설정 (yfinance 사용)"))
 
+    _krx_ok = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
+    st.caption("📊 KRX:   " + ("🟢 자동 로그인 활성" if _krx_ok else "⚪ 인증 미설정"))
+
     use_llm = bool(gemini_api_key)
 
-    # ── KRX API 키 ─────────────────────────────────────────────────────────
+    # ── API 키 설정 폼 (미설정 키 있으면 자동 펼침) ────────────────────────
+    _any_missing = not (gemini_api_key and groq_api_key and dart_api_key and _krx_ok)
+    with st.expander("🔧 API 키 설정", expanded=_any_missing):
+        with st.form("api_key_form"):
+            _new_gemini = st.text_input(
+                "🤖 Gemini API 키",
+                value=st.session_state.get("gemini_api_key", ""),
+                type="password",
+                placeholder="AIza...",
+            )
+            _new_groq = st.text_input(
+                "🦙 Groq API 키",
+                value=st.session_state.get("groq_api_key", ""),
+                type="password",
+                placeholder="gsk_...",
+            )
+            _new_dart = st.text_input(
+                "📑 DART API 키",
+                value=st.session_state.get("dart_api_key", ""),
+                type="password",
+                placeholder="DART OpenAPI 키",
+            )
+            _new_krx_id = st.text_input(
+                "📊 KRX 아이디",
+                value=_saved_settings.get("krx_id", ""),
+                placeholder="KRX 로그인 ID",
+            )
+            _new_krx_pw = st.text_input(
+                "📊 KRX 비밀번호",
+                value=_saved_settings.get("krx_pw", ""),
+                type="password",
+                placeholder="KRX 로그인 PW",
+            )
+            if st.form_submit_button("💾 저장", use_container_width=True, type="primary"):
+                _to_save = {**load_settings()}
+                _to_save["gemini_api_key"] = _new_gemini
+                _to_save["groq_api_key"]   = _new_groq
+                _to_save["dart_api_key"]   = _new_dart
+                _to_save["krx_id"]         = _new_krx_id
+                _to_save["krx_pw"]         = _new_krx_pw
+                save_settings(_to_save)
+                st.session_state["gemini_api_key"] = _new_gemini
+                st.session_state["groq_api_key"]   = _new_groq
+                st.session_state["dart_api_key"]   = _new_dart
+                if _new_krx_id:
+                    os.environ["KRX_ID"] = _new_krx_id
+                if _new_krx_pw:
+                    os.environ["KRX_PW"] = _new_krx_pw
+                st.success("저장되었습니다!")
+                st.rerun()
+
+    # ── KRX 데이터 ─────────────────────────────────────────────────────────
     st.divider()
     st.markdown("### 📊 KRX 데이터")
-    _krx_ok = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
     st.caption("🟢 KRX 자동 로그인 활성" if _krx_ok else "⚪ KRX 인증 미설정")
 
     # ── 자동 새로고침 ──────────────────────────────────────────────────────
