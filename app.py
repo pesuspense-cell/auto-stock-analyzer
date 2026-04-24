@@ -78,6 +78,37 @@ def load_settings() -> dict:
 
 def save_settings(data: dict) -> None:
     save_settings_db(data)
+    _persist_to_secrets(data)
+
+_SECRETS_PATH = os.path.join(os.path.dirname(__file__), ".streamlit", "secrets.toml")
+_SECRETS_KEY_MAP = {
+    "gemini_api_key": "GEMINI_API_KEY",
+    "groq_api_key":   "GROQ_API_KEY",
+    "dart_api_key":   "DART_API_KEY",
+}
+
+def _persist_to_secrets(data: dict) -> None:
+    """API 키를 .streamlit/secrets.toml 에도 저장 — 재시작 후 st.secrets 로 자동 로드됨"""
+    try:
+        existing: dict[str, str] = {}
+        try:
+            with open(_SECRETS_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" in line and not line.startswith("#"):
+                        k, _, v = line.partition("=")
+                        existing[k.strip()] = v.strip().strip('"').strip("'")
+        except FileNotFoundError:
+            pass
+        for db_key, secret_key in _SECRETS_KEY_MAP.items():
+            if data.get(db_key):
+                existing[secret_key] = data[db_key]
+        os.makedirs(os.path.dirname(_SECRETS_PATH), exist_ok=True)
+        with open(_SECRETS_PATH, "w", encoding="utf-8") as f:
+            for k, v in existing.items():
+                f.write(f'{k} = "{v}"\n')
+    except Exception:
+        pass
 
 # 기존 settings.json → DB 1회 마이그레이션
 _SETTINGS_JSON = os.path.join(os.path.dirname(__file__), "settings.json")
@@ -144,12 +175,32 @@ if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist()
 
 _saved_settings = load_settings()
+
+# st.secrets → DB 역방향 동기화 (재시작 후 DB가 비어 있어도 secrets에서 복원)
+_secrets_loaded: dict[str, str] = {}
+try:
+    for _db_key, _sec_key in _SECRETS_KEY_MAP.items():
+        _v = st.secrets.get(_sec_key, "")
+        if _v:
+            _secrets_loaded[_db_key] = _v
+except Exception:
+    pass
+if _secrets_loaded and not any(_saved_settings.get(k) for k in _SECRETS_KEY_MAP):
+    save_settings({**_saved_settings, **_secrets_loaded})
+    _saved_settings = load_settings()
+
 if "gemini_api_key" not in st.session_state:
-    st.session_state["gemini_api_key"] = _saved_settings.get("gemini_api_key", "")
+    st.session_state["gemini_api_key"] = (
+        _secrets_loaded.get("gemini_api_key") or _saved_settings.get("gemini_api_key", "")
+    )
 if "groq_api_key" not in st.session_state:
-    st.session_state["groq_api_key"] = _saved_settings.get("groq_api_key", "")
+    st.session_state["groq_api_key"] = (
+        _secrets_loaded.get("groq_api_key") or _saved_settings.get("groq_api_key", "")
+    )
 if "dart_api_key" not in st.session_state:
-    st.session_state["dart_api_key"] = _saved_settings.get("dart_api_key", "")
+    st.session_state["dart_api_key"] = (
+        _secrets_loaded.get("dart_api_key") or _saved_settings.get("dart_api_key", "")
+    )
 
 # KRX 로그인 자격증명을 환경변수로 자동 설정 (pykrx 인증용)
 if _saved_settings.get("krx_id") and not os.environ.get("KRX_ID"):
