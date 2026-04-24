@@ -37,9 +37,13 @@ try:
         get_full_market_movers, get_investor_trading_naver,
         get_advanced_analysis, calculate_vpvr, detect_divergence,
         get_investment_recommendation,
-        check_volume_anomaly,
         KOSPI_STOCKS, US_STOCKS, INDICES,
     )
+    try:
+        from stock_ai import check_volume_anomaly
+    except ImportError:
+        def check_volume_anomaly(data, low_ratio=0.05):
+            return {"is_halted": False, "ratio": 1.0, "recent_vol": 0, "avg_vol": 0.0}
 except Exception as _import_err:
     import traceback as _tb
     st.error(
