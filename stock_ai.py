@@ -2779,9 +2779,9 @@ def analyze_news_sentiment_llm(
             "summary":          summary,
         }
 
-    except Exception:
+    except Exception as _exc:
         result = kw_result.copy()
-        result["summary"] = "(AI 분석 실패 — 키워드+섹터 분석으로 대체)"
+        result["summary"] = f"(AI 분석 실패: {type(_exc).__name__}: {str(_exc)[:200]} — 키워드+섹터 분석으로 대체)"
         return result
 
 
