@@ -145,6 +145,9 @@ if "_dart_key_input" not in st.session_state:
 # Gemini API 키 복원
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = _saved_settings.get("gemini_api_key", "")
+# Groq API 키 복원
+if "groq_api_key" not in st.session_state:
+    st.session_state["groq_api_key"] = _saved_settings.get("groq_api_key", "")
 
 # KRX 로그인 자격증명을 환경변수로 자동 설정 (pykrx 인증용)
 if _saved_settings.get("krx_id") and not os.environ.get("KRX_ID"):
@@ -242,9 +245,9 @@ def _news_sentiment_kw(ticker: str) -> dict:
             news = []
     return analyze_news_sentiment_keywords(news, ticker)
 
-def _news_sentiment_llm_cached(ticker: str, api_key: str) -> dict:
+def _news_sentiment_llm_cached(ticker: str, api_key: str, groq_api_key: str = "") -> dict:
     """LLM 분석은 API 키가 세션마다 다를 수 있어 session_state 캐시 사용"""
-    cache_key = f"llm_news|{ticker}|{api_key[:8] if api_key else ''}"
+    cache_key = f"llm_news|{ticker}|{api_key[:8] if api_key else ''}|{groq_api_key[:8] if groq_api_key else ''}"
     cached = st.session_state.get(cache_key)
     if cached and (datetime.now() - cached["ts"]).seconds < 3600:
         return cached["data"]
@@ -264,7 +267,7 @@ def _news_sentiment_llm_cached(ticker: str, api_key: str) -> dict:
             news = items
         except Exception:
             news = []
-    result = analyze_news_sentiment_llm(news, ticker, api_key)
+    result = analyze_news_sentiment_llm(news, ticker, api_key, groq_api_key)
     st.session_state[cache_key] = {"data": result, "ts": datetime.now()}
     return result
 
@@ -461,6 +464,38 @@ with st.sidebar:
         st.caption("🟢 AI 분석 활성 (저장됨)" if gemini_api_key else "⚪ 키워드 분석 모드 (API 키 없음)")
 
     use_llm = bool(gemini_api_key)
+
+    # ── Groq API 키 (Gemini 쿼터 초과 시 자동 폴백) ────────────────────────
+    st.divider()
+    st.markdown("### 🦙 Groq 폴백 (선택)")
+    try:
+        _groq_secret = st.secrets.get("GROQ_API_KEY", "")
+    except Exception:
+        _groq_secret = ""
+    if _groq_secret:
+        groq_api_key = _groq_secret
+        st.caption("🟢 Groq 폴백 활성 (secrets 자동 적용)")
+    else:
+        def _on_groq_key_change():
+            k = st.session_state.get("_groq_key_input", "")
+            st.session_state["groq_api_key"] = k
+            save_settings({**load_settings(), "groq_api_key": k})
+        if "_groq_key_input" not in st.session_state:
+            st.session_state["_groq_key_input"] = st.session_state.get("groq_api_key", "")
+        st.text_input(
+            "Groq API Key",
+            key="_groq_key_input",
+            type="password",
+            placeholder="gsk_...",
+            on_change=_on_groq_key_change,
+            help=(
+                "console.groq.com에서 무료 발급.\n\n"
+                "• Gemini 쿼터 초과(429) 시 llama-3.1-8b-instant 모델로 자동 전환\n"
+                "• 미입력 시: 쿼터 초과 → 키워드 분석으로 폴백"
+            ),
+        )
+        groq_api_key = st.session_state.get("groq_api_key", "")
+        st.caption("🟢 Groq 폴백 대기 중" if groq_api_key else "⚪ Groq 미설정")
 
     # ── DART API 키 ────────────────────────────────────────────────────────
     st.divider()
@@ -1147,7 +1182,7 @@ with tab_news:
     if raw_news:
         with st.spinner("AI 감성 분석 중..."):
             if use_llm:
-                sent = _news_sentiment_llm_cached(ticker, gemini_api_key)
+                sent = _news_sentiment_llm_cached(ticker, gemini_api_key, groq_api_key)
             else:
                 sent = _news_sentiment_kw(ticker)
 
@@ -2065,7 +2100,7 @@ with tab_chart:
         # 뉴스 감성 점수 계산
         with st.spinner("뉴스 감성 분석 중..."):
             if use_llm:
-                news_result = _news_sentiment_llm_cached(ticker, gemini_api_key)
+                news_result = _news_sentiment_llm_cached(ticker, gemini_api_key, groq_api_key)
             else:
                 news_result = _news_sentiment_kw(ticker)
         news_score = news_result.get("score", 0.0)

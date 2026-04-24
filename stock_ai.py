@@ -2666,38 +2666,25 @@ def analyze_news_sentiment_llm(
     news_items: list[dict],
     ticker: str,
     api_key: str,
+    groq_api_key: str = "",
 ) -> dict:
     """
-    LangChain + Gemini API를 이용한 뉴스 감성 분석.
+    뉴스 감성 분석: 1순위 Gemini → 2순위 Groq(쿼터 초과 시) → 3순위 키워드 분석.
     - 상위 3개 핵심 뉴스(A/B등급 우선)만 AI에 전달해 응답 품질 향상
-    - PydanticOutputParser로 구조화된 응답 강제
-    - 실패 시 키워드+섹터 분석으로 폴백
-
-    반환: {"score": float(-5~+5), "label": str, "detail": list[dict],
-            "summary": str, "individual_score": float, "sector_score": float}
+    - 반환: {"score": float(-5~+5), "label": str, "detail": list[dict],
+              "summary": str, "individual_score": float, "sector_score": float}
     """
     if not api_key or not news_items:
         return analyze_news_sentiment_keywords(news_items, ticker)
 
-    # 섹터 점수는 키워드 분석에서 항상 계산 (AI 실패와 무관하게 사용)
     kw_result    = analyze_news_sentiment_keywords(news_items, ticker)
     sector_score = kw_result.get("sector_score", 0.0)
 
     try:
         import json as _json
         import re as _re
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_core.messages import HumanMessage
 
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
-            google_api_key=api_key,
-            temperature=0.0,
-        )
-
-        # 상위 3개 핵심 뉴스 선택 (A등급 → B등급 → 최신순)
         top3 = _select_top_news(news_items, n=3)
-
         ticker_display = ticker.replace(".KS", "").replace(".KQ", "")
         headlines = "\n".join(
             f"{i+1}. {it.get('title', '')} ({it.get('pub_date', '날짜미상')})"
@@ -2726,29 +2713,60 @@ def analyze_news_sentiment_llm(
   ]
 }}"""
 
-        response = llm.invoke([HumanMessage(content=prompt)])
-        raw = response.content.strip()
+        # ── 1순위: Gemini ──────────────────────────────────────────────────────
+        raw = None
+        _provider = "Gemini"
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            from langchain_core.messages import HumanMessage
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.0-flash",
+                google_api_key=api_key,
+                temperature=0.0,
+            )
+            raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+        except Exception as _gemini_exc:
+            _msg = str(_gemini_exc)
+            _is_quota = (
+                "429" in _msg
+                or "quota" in _msg.lower()
+                or "ResourceExhausted" in type(_gemini_exc).__name__
+            )
+            # ── 2순위: Groq (쿼터 초과이고 Groq 키가 있을 때만) ────────────
+            if _is_quota and groq_api_key:
+                try:
+                    from groq import Groq as _Groq
+                    _client = _Groq(api_key=groq_api_key)
+                    _resp = _client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.0,
+                        max_tokens=512,
+                    )
+                    raw = _resp.choices[0].message.content.strip()
+                    _provider = "Groq"
+                except Exception:
+                    raise _gemini_exc  # Groq도 실패하면 원래 Gemini 에러로 폴백
+            else:
+                raise
 
-        # JSON 블록 추출 (```json ... ``` 또는 { ... } 형태 모두 처리)
+        # ── JSON 파싱 (Gemini/Groq 공통) ──────────────────────────────────────
         json_match = _re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})', raw)
         if not json_match:
             raise ValueError("JSON not found in response")
         json_str = json_match.group(1) or json_match.group(2)
         parsed = _json.loads(json_str)
 
-        # 필수 필드 검증
         if "overall_score" not in parsed or "items" not in parsed:
             raise ValueError("Missing required fields in response")
 
         overall_score = float(parsed["overall_score"])
         overall_score = max(-5.0, min(5.0, overall_score))
         summary       = parsed.get("overall_summary", "")
+        if _provider != "Gemini":
+            summary = f"[{_provider}] {summary}"
 
-        # top3 기사에 AI 점수/근거 반영, 나머지는 키워드 결과 유지
-        detail    = kw_result["detail"]
-        top3_titles = {it.get("title", ""): i for i, it in enumerate(top3)}
-        detail_by_title = {d["title"]: d for d in detail}
-
+        detail_by_title = {d["title"]: d for d in kw_result["detail"]}
         for item_res in parsed.get("items", []):
             idx = item_res.get("index", 0) - 1
             if 0 <= idx < len(top3):
@@ -2758,7 +2776,6 @@ def analyze_news_sentiment_llm(
                     detail_by_title[t]["score"]  = round(max(-2.0, min(2.0, raw_score)), 2)
                     detail_by_title[t]["reason"] = item_res.get("reason", "")
 
-        # 섹터 블렌딩 반영
         if sector_score != 0.0:
             blended = round(max(-5.0, min(5.0, 0.7 * overall_score + 0.3 * sector_score)), 2)
         else:
@@ -2781,7 +2798,16 @@ def analyze_news_sentiment_llm(
 
     except Exception as _exc:
         result = kw_result.copy()
-        result["summary"] = f"(AI 분석 실패: {type(_exc).__name__}: {str(_exc)[:200]} — 키워드+섹터 분석으로 대체)"
+        _msg = str(_exc)
+        if "429" in _msg or "quota" in _msg.lower() or "ResourceExhausted" in type(_exc).__name__:
+            if groq_api_key:
+                result["summary"] = "(Gemini 쿼터 초과 + Groq 실패 — 키워드+섹터 분석으로 대체)"
+            else:
+                result["summary"] = "(Gemini API 일일 쿼터 초과 — 키워드+섹터 분석으로 대체)"
+        elif "rate" in _msg.lower() or "limit" in _msg.lower():
+            result["summary"] = "(Gemini API 요청 한도 초과 — 키워드+섹터 분석으로 대체)"
+        else:
+            result["summary"] = f"(AI 분석 실패: {type(_exc).__name__}: {_msg[:120]} — 키워드+섹터 분석으로 대체)"
         return result
 
 
