@@ -139,17 +139,12 @@ if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist()
 
 _saved_settings = load_settings()
-if "dart_api_key" not in st.session_state:
-    st.session_state["dart_api_key"] = _saved_settings.get("dart_api_key", "")
-# DART key 위젯 초기값 (key= 방식 지원용)
-if "_dart_key_input" not in st.session_state:
-    st.session_state["_dart_key_input"] = _saved_settings.get("dart_api_key", "")
-# Gemini API 키 복원
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = _saved_settings.get("gemini_api_key", "")
-# Groq API 키 복원
 if "groq_api_key" not in st.session_state:
     st.session_state["groq_api_key"] = _saved_settings.get("groq_api_key", "")
+if "dart_api_key" not in st.session_state:
+    st.session_state["dart_api_key"] = _saved_settings.get("dart_api_key", "")
 
 # KRX 로그인 자격증명을 환경변수로 자동 설정 (pykrx 인증용)
 if _saved_settings.get("krx_id") and not os.environ.get("KRX_ID"):
@@ -426,105 +421,32 @@ with st.sidebar:
         st.session_state["_pending_period"]  = period
         st.rerun()
 
-    # ── Gemini API 키 ──────────────────────────────────────────────────────
+    # ── API 키 상태 표시 (키는 DB에서 자동 로드) ───────────────────────────
     st.divider()
-    st.markdown("### 🤖 AI 뉴스 분석 (Gemini)")
+    st.markdown("### 🔑 API 연동 상태")
 
-    # Streamlit Cloud secrets → 세션 → 직접 입력 순서로 우선순위 적용
     try:
-        _secret_key = st.secrets.get("GEMINI_API_KEY", "")
+        _gem_secret = st.secrets.get("GEMINI_API_KEY", "")
     except Exception:
-        _secret_key = ""
-    _default_key = _secret_key or st.session_state.get("gemini_api_key", "")
+        _gem_secret = ""
+    gemini_api_key = _gem_secret or st.session_state.get("gemini_api_key", "")
+    st.caption("🤖 Gemini: " + ("🟢 활성" if gemini_api_key else "⚪ 미설정 (키워드 분석)"))
 
-    if _secret_key:
-        # secrets.toml / Cloud 대시보드에 키가 있으면 UI 노출 없이 자동 적용
-        gemini_api_key = _secret_key
-        st.caption("🟢 AI 분석 활성 (secrets 자동 적용)")
-    else:
-        def _on_gemini_key_change():
-            k = st.session_state.get("_gemini_key_input", "")
-            st.session_state["gemini_api_key"] = k
-            save_settings({**load_settings(), "gemini_api_key": k})
-        if "_gemini_key_input" not in st.session_state:
-            st.session_state["_gemini_key_input"] = _default_key
-        st.text_input(
-            "Gemini API Key",
-            key="_gemini_key_input",
-            type="password",
-            placeholder="AIza...",
-            on_change=_on_gemini_key_change,
-            help=(
-                "Google AI Studio (aistudio.google.com)에서 발급받은 Gemini API 키.\n\n"
-                "• 입력 시: LangChain + Gemini로 뉴스 감성 AI 분석\n"
-                "• 미입력 시: 키워드 기반 감성 분석(무료)으로 자동 전환\n"
-                "• 배포 시에는 .streamlit/secrets.toml 또는 Streamlit Cloud\n"
-                "  대시보드 Secrets에 GEMINI_API_KEY 를 등록하면 UI 없이 자동 적용됩니다."
-            ),
-        )
-        gemini_api_key = st.session_state.get("gemini_api_key", "")
-        st.caption("🟢 AI 분석 활성 (저장됨)" if gemini_api_key else "⚪ 키워드 분석 모드 (API 키 없음)")
-
-    use_llm = bool(gemini_api_key)
-
-    # ── Groq API 키 (Gemini 쿼터 초과 시 자동 폴백) ────────────────────────
-    st.divider()
-    st.markdown("### 🦙 Groq 폴백 (선택)")
     try:
         _groq_secret = st.secrets.get("GROQ_API_KEY", "")
     except Exception:
         _groq_secret = ""
-    if _groq_secret:
-        groq_api_key = _groq_secret
-        st.caption("🟢 Groq 폴백 활성 (secrets 자동 적용)")
-    else:
-        def _on_groq_key_change():
-            k = st.session_state.get("_groq_key_input", "")
-            st.session_state["groq_api_key"] = k
-            save_settings({**load_settings(), "groq_api_key": k})
-        if "_groq_key_input" not in st.session_state:
-            st.session_state["_groq_key_input"] = st.session_state.get("groq_api_key", "")
-        st.text_input(
-            "Groq API Key",
-            key="_groq_key_input",
-            type="password",
-            placeholder="gsk_...",
-            on_change=_on_groq_key_change,
-            help=(
-                "console.groq.com에서 무료 발급.\n\n"
-                "• Gemini 쿼터 초과(429) 시 llama-3.1-8b-instant 모델로 자동 전환\n"
-                "• 미입력 시: 쿼터 초과 → 키워드 분석으로 폴백"
-            ),
-        )
-        groq_api_key = st.session_state.get("groq_api_key", "")
-        st.caption("🟢 Groq 폴백 대기 중" if groq_api_key else "⚪ Groq 미설정")
+    groq_api_key = _groq_secret or st.session_state.get("groq_api_key", "")
+    st.caption("🦙 Groq:   " + ("🟢 활성 (Gemini 폴백)" if groq_api_key else "⚪ 미설정"))
 
-    # ── DART API 키 ────────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("### 📑 DART 재무정보 (선택)")
     try:
         _dart_secret = st.secrets.get("DART_API_KEY", "")
     except Exception:
         _dart_secret = ""
-    if _dart_secret:
-        dart_api_key = _dart_secret
-        st.caption("🟢 DART 연동 활성 (secrets 자동 적용)")
-    else:
-        def _on_dart_key_change():
-            k = st.session_state.get("_dart_key_input", "")
-            if k:
-                st.session_state["dart_api_key"] = k
-                save_settings({**load_settings(), "dart_api_key": k})
-        st.text_input(
-            "DART API Key",
-            key="_dart_key_input",
-            type="password",
-            placeholder="발급키 입력...",
-            on_change=_on_dart_key_change,
-            help="opendart.fss.or.kr 에서 무료 발급. 입력 시 매출액·영업이익·순이익 등 KRX 재무제표 조회.",
-        )
-        dart_api_key = st.session_state.get("_dart_key_input") or st.session_state.get("dart_api_key", "")
-        st.caption("🟢 DART 활성" if dart_api_key else "⚪ DART 미연동 (yfinance 데이터 사용)")
+    dart_api_key = _dart_secret or st.session_state.get("dart_api_key", "")
+    st.caption("📑 DART:  " + ("🟢 활성" if dart_api_key else "⚪ 미설정 (yfinance 사용)"))
+
+    use_llm = bool(gemini_api_key)
 
     # ── KRX API 키 ─────────────────────────────────────────────────────────
     st.divider()
