@@ -1187,18 +1187,21 @@ with tab_news:
                     f'<span style="font-size:0.82rem;color:#bdbdbd;margin-left:4px;">'
                     f'(종목 {s_indiv:+.1f})</span>'
                 )
+            llm_badge = "&nbsp;|&nbsp; 🤖 Gemini AI 분석" if use_llm else "&nbsp;|&nbsp; 🔑 키워드 분석"
+            summary_html = f'<div style="font-size:0.88rem;color:#ccc;margin-top:6px;">{s_summary}</div>' if s_summary else ""
 
-            st.markdown(f"""
-            <div style="background:{banner_color};border-radius:10px;padding:12px 18px;margin-bottom:14px;">
-                <div style="font-size:1.05rem;font-weight:bold;color:{text_color};">
-                    뉴스 감성: {s_label} &nbsp;
-                    <span style="font-size:0.95rem;font-weight:normal;">({s_score:+.1f}점 / ±5)</span>
-                    {sector_html}{indiv_html}
-                    {"&nbsp;|&nbsp; 🤖 Gemini AI 분석" if use_llm else "&nbsp;|&nbsp; 🔑 키워드 분석"}
-                </div>
-                {f'<div style="font-size:0.88rem;color:#ccc;margin-top:6px;">{s_summary}</div>' if s_summary else ""}
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:{banner_color};border-radius:10px;padding:12px 18px;margin-bottom:14px;">'
+                f'<div style="font-size:1.05rem;font-weight:bold;color:{text_color};">'
+                f'뉴스 감성: {s_label} &nbsp;'
+                f'<span style="font-size:0.95rem;font-weight:normal;">({s_score:+.1f}점 / ±5)</span>'
+                f'{sector_html}{indiv_html}'
+                f'{llm_badge}'
+                f'</div>'
+                f'{summary_html}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
             # 기사별 표시
             detail_map = {d["title"]: d for d in sent.get("detail", [])}
