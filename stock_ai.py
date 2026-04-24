@@ -1809,7 +1809,9 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
 
     # PEG (±2.0) — EPS 3년 CAGR 직접 계산값 우선 사용
     peg = None
-    if per and effective_growth and per > 0 and effective_growth > 0:
+    _per_ok    = per is not None and not (isinstance(per, float) and per != per) and per > 0
+    _growth_ok = effective_growth is not None and effective_growth > 0
+    if _per_ok and _growth_ok:
         peg = per / (effective_growth * 100)
         growth_src = eps_cagr_note if eps_cagr_3yr is not None else f"성장률={earnings_growth*100:.1f}%(yf)"
         if peg < 0.5:
@@ -1823,7 +1825,10 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
         else:
             reasons.append(f"[린치] PEG={peg:.2f}  ({growth_src})")
     elif eps_cagr_note:
-        reasons.append(f"[린치] {eps_cagr_note} (PER 없어 PEG 계산 불가)")
+        if not _per_ok:
+            reasons.append(f"[린치] {eps_cagr_note} (PER 없어 PEG 계산 불가)")
+        else:
+            reasons.append(f"[린치] {eps_cagr_note} (EPS 감소세 → PEG 계산 불가)")
 
     # 매출 성장 (±1.5)
     if revenue_growth is not None:
@@ -2076,9 +2081,13 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
                 "comment": f"PEG={peg:.2f}. 성장성 대비 적정 밸류에이션 구간입니다. ({_growth_basis})"
             }
     elif eps_cagr_note:
+        if not _per_ok:
+            _lynch_comment = f"PER 없어 PEG 계산 불가. {eps_cagr_note}"
+        else:
+            _lynch_comment = f"EPS 감소세로 PEG 계산 불가. {eps_cagr_note}"
         master_verdicts["린치"] = {
             "icon": "—", "판정": "데이터 부족",
-            "comment": f"PER 없어 PEG 계산 불가. {eps_cagr_note}"
+            "comment": _lynch_comment
         }
     else:
         master_verdicts["린치"] = {
