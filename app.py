@@ -461,53 +461,67 @@ with st.sidebar:
     use_llm = bool(gemini_api_key)
 
     # ── API 키 설정 폼 (미설정 키 있으면 자동 펼침) ────────────────────────
+    _cur_gemini = st.session_state.get("gemini_api_key", "")
+    _cur_groq   = st.session_state.get("groq_api_key", "")
+    _cur_dart   = st.session_state.get("dart_api_key", "")
+    _cur_krx_id = _saved_settings.get("krx_id", "")
+    _cur_krx_pw = _saved_settings.get("krx_pw", "")
+
+    def _key_hint(v: str) -> str:
+        """저장된 키의 앞 4자 + 마스킹 힌트 반환"""
+        if not v:
+            return ""
+        return f"{v[:4]}{'*' * (len(v) - 4)}" if len(v) > 4 else "****"
+
     _any_missing = not (gemini_api_key and groq_api_key and dart_api_key and _krx_ok)
     with st.expander("🔧 API 키 설정", expanded=_any_missing):
         with st.form("api_key_form"):
+            st.caption("저장된 키는 자동 로드됩니다. 변경할 키만 입력하세요.")
             _new_gemini = st.text_input(
-                "🤖 Gemini API 키",
-                value=st.session_state.get("gemini_api_key", ""),
+                "🤖 Gemini API 키" + (" ✅" if _cur_gemini else " ⚠️"),
+                placeholder="저장됨 — 변경하려면 입력" if _cur_gemini else "AIza...",
                 type="password",
-                placeholder="AIza...",
+                help=f"현재: {_key_hint(_cur_gemini)}" if _cur_gemini else "미설정",
             )
             _new_groq = st.text_input(
-                "🦙 Groq API 키",
-                value=st.session_state.get("groq_api_key", ""),
+                "🦙 Groq API 키" + (" ✅" if _cur_groq else " ⚠️"),
+                placeholder="저장됨 — 변경하려면 입력" if _cur_groq else "gsk_...",
                 type="password",
-                placeholder="gsk_...",
+                help=f"현재: {_key_hint(_cur_groq)}" if _cur_groq else "미설정",
             )
             _new_dart = st.text_input(
-                "📑 DART API 키",
-                value=st.session_state.get("dart_api_key", ""),
+                "📑 DART API 키" + (" ✅" if _cur_dart else " ⚠️"),
+                placeholder="저장됨 — 변경하려면 입력" if _cur_dart else "DART OpenAPI 키",
                 type="password",
-                placeholder="DART OpenAPI 키",
+                help=f"현재: {_key_hint(_cur_dart)}" if _cur_dart else "미설정",
             )
             _new_krx_id = st.text_input(
-                "📊 KRX 아이디",
-                value=_saved_settings.get("krx_id", ""),
-                placeholder="KRX 로그인 ID",
+                "📊 KRX 아이디" + (" ✅" if _cur_krx_id else " ⚠️"),
+                placeholder="저장됨 — 변경하려면 입력" if _cur_krx_id else "KRX 로그인 ID",
+                help=f"현재: {_key_hint(_cur_krx_id)}" if _cur_krx_id else "미설정",
             )
             _new_krx_pw = st.text_input(
-                "📊 KRX 비밀번호",
-                value=_saved_settings.get("krx_pw", ""),
+                "📊 KRX 비밀번호" + (" ✅" if _cur_krx_pw else " ⚠️"),
+                placeholder="저장됨 — 변경하려면 입력" if _cur_krx_pw else "KRX 로그인 PW",
                 type="password",
-                placeholder="KRX 로그인 PW",
+                help=f"현재: {_key_hint(_cur_krx_pw)}" if _cur_krx_pw else "미설정",
             )
             if st.form_submit_button("💾 저장", use_container_width=True, type="primary"):
                 _to_save = {**load_settings()}
-                _to_save["gemini_api_key"] = _new_gemini
-                _to_save["groq_api_key"]   = _new_groq
-                _to_save["dart_api_key"]   = _new_dart
-                _to_save["krx_id"]         = _new_krx_id
-                _to_save["krx_pw"]         = _new_krx_pw
+                # 빈칸이면 기존 값 유지, 입력이 있으면 새 값으로 덮어쓰기
+                _to_save["gemini_api_key"] = _new_gemini or _cur_gemini
+                _to_save["groq_api_key"]   = _new_groq   or _cur_groq
+                _to_save["dart_api_key"]   = _new_dart   or _cur_dart
+                _to_save["krx_id"]         = _new_krx_id or _cur_krx_id
+                _to_save["krx_pw"]         = _new_krx_pw or _cur_krx_pw
                 save_settings(_to_save)
-                st.session_state["gemini_api_key"] = _new_gemini
-                st.session_state["groq_api_key"]   = _new_groq
-                st.session_state["dart_api_key"]   = _new_dart
-                if _new_krx_id:
-                    os.environ["KRX_ID"] = _new_krx_id
-                if _new_krx_pw:
-                    os.environ["KRX_PW"] = _new_krx_pw
+                st.session_state["gemini_api_key"] = _to_save["gemini_api_key"]
+                st.session_state["groq_api_key"]   = _to_save["groq_api_key"]
+                st.session_state["dart_api_key"]   = _to_save["dart_api_key"]
+                if _to_save["krx_id"]:
+                    os.environ["KRX_ID"] = _to_save["krx_id"]
+                if _to_save["krx_pw"]:
+                    os.environ["KRX_PW"] = _to_save["krx_pw"]
                 st.success("저장되었습니다!")
                 st.rerun()
 
