@@ -37,6 +37,7 @@ try:
         get_full_market_movers, get_investor_trading_naver,
         get_advanced_analysis, calculate_vpvr, detect_divergence,
         get_investment_recommendation,
+        check_volume_anomaly,
         KOSPI_STOCKS, US_STOCKS, INDICES,
     )
 except Exception as _import_err:
@@ -222,10 +223,9 @@ def _bench_returns(ticker: str) -> "pd.Series":
         return pd.Series(dtype=float)
 
 @st.cache_data(ttl=3600)
-def _news_sentiment_kw(ticker: str) -> dict:
+def _news_sentiment_kw(ticker: str, company_name: str = "") -> dict:
     news = _naver_news(ticker)
     if not news:
-        # US 주식이거나 네이버 실패 시 yfinance 뉴스로 키워드 분석
         try:
             raw = yf.Ticker(ticker).news or []
             items = []
@@ -240,11 +240,16 @@ def _news_sentiment_kw(ticker: str) -> dict:
             news = items
         except Exception:
             news = []
-    return analyze_news_sentiment_keywords(news, ticker)
+    return analyze_news_sentiment_keywords(news, ticker, company_name)
 
-def _news_sentiment_llm_cached(ticker: str, api_key: str, groq_api_key: str = "") -> dict:
+def _news_sentiment_llm_cached(
+    ticker: str, api_key: str, groq_api_key: str = "", company_name: str = ""
+) -> dict:
     """LLM 분석은 API 키가 세션마다 다를 수 있어 session_state 캐시 사용"""
-    cache_key = f"llm_news|{ticker}|{api_key[:8] if api_key else ''}|{groq_api_key[:8] if groq_api_key else ''}"
+    cache_key = (
+        f"llm_news|{ticker}|{api_key[:8] if api_key else ''}"
+        f"|{groq_api_key[:8] if groq_api_key else ''}|{company_name}"
+    )
     cached = st.session_state.get(cache_key)
     if cached and (datetime.now() - cached["ts"]).seconds < 3600:
         return cached["data"]
@@ -264,7 +269,7 @@ def _news_sentiment_llm_cached(ticker: str, api_key: str, groq_api_key: str = ""
             news = items
         except Exception:
             news = []
-    result = analyze_news_sentiment_llm(news, ticker, api_key, groq_api_key)
+    result = analyze_news_sentiment_llm(news, ticker, api_key, groq_api_key, company_name)
     st.session_state[cache_key] = {"data": result, "ts": datetime.now()}
     return result
 
@@ -618,8 +623,20 @@ if _data_ready:
         st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
         st.stop()
 
-    close    = data["Close"]
-    signals  = generate_signals(data)
+    close       = data["Close"]
+    vol_anomaly = check_volume_anomaly(data)
+    signals     = generate_signals(data)
+
+    # ── 거래 정지/주의: 거래량 이상 감지 시 점수 합산 중단 ─────────────────────
+    if vol_anomaly.get("is_halted"):
+        signals = {
+            "score":   0,
+            "label":   "거래 정지/주의",
+            "badge":   "⛔",
+            "reasons": [vol_anomaly.get("reason", "")],
+            "_halted": True,
+        }
+
     advanced = get_advanced_analysis(data)
     expected = calculate_expected_return(
         data, signals,
@@ -631,6 +648,7 @@ if _data_ready:
 else:
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분석을 시작하세요.")
     data            = pd.DataFrame()
+    vol_anomaly     = {"is_halted": False}
     signals         = {"score": 0, "label": "분석 대기", "badge": "—"}
     expected        = None
     advanced        = {"trend_score": 50.0, "momentum_score": 50.0, "volume_score": 50.0,
@@ -1102,13 +1120,14 @@ with tab_news:
             st.warning(f"뉴스 로드 실패: {e}")
 
     # ── AI 감성 분석 (컬럼 바깥 — 두 섹션 공유) ──────────────────────────────
+    _cname = sname if sname != ticker else ""   # 종목명을 관련성 판단에 활용
     sent: dict = {}
     if raw_news:
         with st.spinner("AI 감성 분석 중..."):
             if use_llm:
-                sent = _news_sentiment_llm_cached(ticker, gemini_api_key, groq_api_key)
+                sent = _news_sentiment_llm_cached(ticker, gemini_api_key, groq_api_key, _cname)
             else:
-                sent = _news_sentiment_kw(ticker)
+                sent = _news_sentiment_kw(ticker, _cname)
 
     col_news, col_rel = st.columns([3, 2])
 
@@ -1120,6 +1139,24 @@ with tab_news:
         if not raw_news:
             st.info("뉴스 데이터가 없습니다.")
         else:
+            # ── 이벤트 대기 배너 ─────────────────────────────────────────────
+            event_flags = sent.get("event_flags", [])
+            if event_flags:
+                _ev_labels = "·".join(
+                    "·".join(e.get("event_kw", [])[:2]) for e in event_flags[:3]
+                )
+                st.markdown(
+                    f'<div style="background:#4a148c;border:1px solid #ce93d8;border-radius:8px;'
+                    f'padding:10px 16px;margin-bottom:12px;">'
+                    f'<span style="font-size:1rem;font-weight:bold;color:#e040fb;">🔔 이벤트 대기</span>'
+                    f'<span style="color:#ce93d8;margin-left:10px;font-size:0.9rem;">{_ev_labels}</span>'
+                    f'<div style="color:#ba68c8;font-size:0.82rem;margin-top:4px;">'
+                    f'해당 이벤트 뉴스는 기술적 분석 점수에 반영되지 않습니다. 이벤트 결과 확인 후 재분석하세요.'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
             # 전체 감성 요약 배너
             s_score        = sent.get("score", 0.0)
             s_label        = sent.get("label", "중립")
@@ -1174,8 +1211,11 @@ with tab_news:
                 art_reason = d.get("reason", "")
                 art_tier   = d.get("tier", "")
                 art_decay  = d.get("decay", 1.0)
+                is_skipped = d.get("skipped", False)
 
-                if art_score >= 0.3:
+                if is_skipped:
+                    dot_color, dot = "#9e9e9e", "⚫"
+                elif art_score >= 0.3:
                     dot_color, dot = "#66bb6a", "🟢"
                 elif art_score <= -0.3:
                     dot_color, dot = "#ef5350", "🔴"
@@ -1183,9 +1223,11 @@ with tab_news:
                     dot_color, dot = "#9e9e9e", "⚪"
 
                 tier_badge = {
-                    "A": '<span style="background:#e65100;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">A급</span>',
-                    "B": '<span style="background:#1565c0;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">B급</span>',
-                    "C": '<span style="background:#37474f;color:#ccc;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">C급</span>',
+                    "A":     '<span style="background:#e65100;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">A급</span>',
+                    "B":     '<span style="background:#1565c0;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">B급</span>',
+                    "C":     '<span style="background:#37474f;color:#ccc;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">C급</span>',
+                    "EVENT": '<span style="background:#6a1b9a;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">이벤트</span>',
+                    "SKIP":  '<span style="background:#424242;color:#bdbdbd;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">제외</span>',
                 }.get(art_tier, "")
 
                 col_article, col_btn = st.columns([8, 1])
@@ -1779,6 +1821,25 @@ with tab_chart:
 
     if data.empty:
         st.stop()  # 시장 현황 탭은 이미 렌더링됨, 이후 탭은 독립 컨테이너
+
+    # ── 거래 정지/주의 경고 배너 ─────────────────────────────────────────────
+    if vol_anomaly.get("is_halted"):
+        st.markdown(
+            f'<div style="background:#4a1010;border:2px solid #ef5350;border-radius:10px;'
+            f'padding:14px 20px;margin-bottom:16px;">'
+            f'<span style="font-size:1.2rem;font-weight:bold;color:#ef5350;">⛔ 거래 정지/주의</span>'
+            f'<div style="color:#ffcdd2;margin-top:6px;">{vol_anomaly.get("reason", "")}</div>'
+            f'<div style="color:#ef9a9a;font-size:0.85rem;margin-top:4px;">'
+            f'최근 거래량: {vol_anomaly.get("recent_vol", 0):,} &nbsp;|&nbsp; '
+            f'20일 평균: {int(vol_anomaly.get("avg_vol", 0)):,} &nbsp;|&nbsp; '
+            f'비율: {vol_anomaly.get("ratio", 0) * 100:.1f}%'
+            f'</div>'
+            f'<div style="color:#ff8a80;font-size:0.82rem;margin-top:4px;">'
+            f'기술적 분석 점수 합산이 중단되었습니다. 거래 재개 후 분석을 다시 실행하세요.'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     col_chart, col_sig = st.columns([3, 1])
 

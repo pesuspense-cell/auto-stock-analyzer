@@ -538,6 +538,60 @@ def generate_signals(data: pd.DataFrame) -> dict:
     }
 
 
+# ─── 거래량 이상 감지 ─────────────────────────────────────────────────────────
+
+def check_volume_anomaly(data: pd.DataFrame, low_ratio: float = 0.05) -> dict:
+    """
+    최근 1~2 거래일 거래량이 0이거나 20일 평균 대비 low_ratio 미만이면
+    거래 정지/주의 신호를 반환한다.
+
+    Returns:
+        is_halted (bool): True → 거래 정지/주의 상태
+        reason   (str):  표시할 경고 메시지
+        recent_vol (int): 최근 2일 평균 거래량
+        avg_vol  (float): 20일 평균 거래량
+        ratio    (float): recent_vol / avg_vol
+    """
+    if data.empty or len(data) < 5:
+        return {"is_halted": False, "ratio": 1.0, "recent_vol": 0, "avg_vol": 0.0}
+
+    volume = data["Volume"].fillna(0)
+    recent_vols = volume.iloc[-2:].tolist()
+    recent_avg  = sum(recent_vols) / max(len(recent_vols), 1)
+
+    hist   = volume.iloc[:-2]
+    window = min(20, len(hist))
+    avg_vol = float(hist.iloc[-window:].mean()) if window > 0 else 0.0
+
+    if avg_vol <= 0:
+        return {"is_halted": False, "ratio": 1.0,
+                "recent_vol": int(recent_avg), "avg_vol": avg_vol}
+
+    ratio = recent_avg / avg_vol
+
+    if recent_avg == 0:
+        return {
+            "is_halted": True,
+            "reason": "최근 1~2일 거래량 0 — 거래 정지 의심",
+            "recent_vol": 0,
+            "avg_vol": avg_vol,
+            "ratio": 0.0,
+        }
+    if ratio < low_ratio:
+        return {
+            "is_halted": True,
+            "reason": (
+                f"최근 거래량이 20일 평균 대비 {ratio * 100:.1f}% 수준"
+                f" ({int(recent_avg):,} vs 평균 {int(avg_vol):,}) — 거래 정지/주의 필요"
+            ),
+            "recent_vol": int(recent_avg),
+            "avg_vol": avg_vol,
+            "ratio": ratio,
+        }
+    return {"is_halted": False, "ratio": ratio,
+            "recent_vol": int(recent_avg), "avg_vol": avg_vol}
+
+
 # ─── 예상 수익률 & 리스크 분석 ────────────────────────────────────────────────
 
 def calculate_expected_return(
@@ -2317,6 +2371,24 @@ _KW_C_NEG = [
     "중동 위기", "지정학 리스크", "전쟁",
 ]
 
+# ── 이벤트성 뉴스 키워드 (합병·분할·거래정지) — 기술 분석 점수에서 제외 ──────────
+_KW_EVENT_HALT = [
+    "거래 정지", "거래정지", "매매 정지", "매매정지",
+    "상장폐지", "상장 폐지", "관리종목", "관리 종목",
+    "투자주의", "투자 주의", "투자경고", "투자 경고",
+    "투자위험", "투자 위험", "불성실공시", "불성실 공시",
+    "trading halt", "trading suspension",
+]
+_KW_EVENT_CORP = [
+    "주식 병합", "주식병합", "역주식분할", "역 주식분할",
+    "주식 분할", "주식분할", "액면분할", "액면 분할",
+    "액면병합", "액면 병합",
+    "합병", "흡수합병", "분할합병", "인적분할", "물적분할",
+    "기업분할", "기업 분할",
+    "stock split", "reverse split", "stock merger",
+]
+_KW_EVENT_ALL = _KW_EVENT_HALT + _KW_EVENT_CORP
+
 # 하위호환 (get_advanced_sentiment 등 기존 코드에서 참조)
 _POS_KEYWORDS = _KW_B_POS
 _NEG_KEYWORDS = _KW_B_NEG
@@ -2453,12 +2525,39 @@ def _news_time_decay(pub_date_str: str) -> float:
     return 0.5
 
 
+def _check_news_relevance(text: str, company_name: str) -> tuple[bool, str]:
+    """뉴스가 해당 종목에 직접 관련됐는지 판단.
+    다른 회사가 주인공이고 company_name이 비교군으로만 언급된 경우 False 반환.
+    """
+    if not company_name or company_name not in text:
+        return True, ""
+    comparison_kws = [
+        " vs ", " VS ", " 대비 ", " 보다 ", "에 비해", "와 비교", "과 비교",
+        "와 달리", "과 달리", "보다 더 ", "보다 덜 ",
+        " versus ", " compared to ", " relative to ",
+    ]
+    has_comparison = any(kw in text for kw in comparison_kws)
+    if not has_comparison:
+        return True, ""
+    idx = text.find(company_name)
+    if idx <= 8:
+        return True, ""
+    if has_comparison:
+        return False, "타사 주체·비교군 언급 추정"
+    return True, ""
+
+
 def _classify_news_tier(text: str) -> tuple[float, str, list[str]]:
-    """뉴스 텍스트의 A/B/C 등급 분류 및 기본 점수 반환.
+    """뉴스 텍스트의 등급 분류 및 기본 점수 반환.
 
     Returns: (raw_score[-1~+1], tier, matched_keywords)
-    A급 먼저 검사 → 매칭 없으면 B급 → C급
+    EVENT 먼저 → A급 → B급 → C급
     """
+    # EVENT: 합병·분할·거래정지 — 이벤트 대기 처리, 점수 제외
+    event_kw = [kw for kw in _KW_EVENT_ALL if kw in text]
+    if event_kw:
+        return 0.0, "EVENT", event_kw
+
     # A급: 직접 실적·판매량·M&A (가중치 2.0)
     a_pos = [kw for kw in _KW_A_POS if kw in text]
     a_neg = [kw for kw in _KW_A_NEG if kw in text]
@@ -2605,61 +2704,99 @@ def get_naver_news(ticker_code: str, max_items: int = 10) -> list[dict]:
         return []
 
 
-def analyze_news_sentiment_keywords(news_items: list[dict], ticker: str = "") -> dict:
+def analyze_news_sentiment_keywords(
+    news_items: list[dict],
+    ticker: str = "",
+    company_name: str = "",
+) -> dict:
     """
     A/B/C 등급 가중치 + 시간 감쇠 + 섹터 블렌딩 키워드 감성 분석.
+
+    특수 처리:
+      EVENT — 합병·분할·거래정지 뉴스는 점수 제외, event_flags 목록에 기록
+      SKIP  — company_name이 비교군으로만 언급된 뉴스는 점수 제외
 
     등급별 집계 가중치:
       A급 (실적·판매량·M&A):  2.0
       B급 (업황·ETF·목표가):  1.0
       C급 (거시·시황):        0.5
 
-    시간 감쇠: 1h→1.0 / 4h→0.7 / 12h→0.5 / 이후→0.3
-
-    섹터 블렌딩: ticker가 있고 섹터 매핑이 있으면 개별 70% + 섹터 30%
-
     반환: {
-      "score": float(-5~+5),          # 최종 점수 (섹터 블렌딩 포함)
-      "individual_score": float,       # 개별 종목 점수
-      "sector_score": float,           # 섹터 업황 점수
+      "score": float(-5~+5),
+      "individual_score": float,
+      "sector_score": float,
       "label": str,
       "detail": list[dict],
+      "event_flags": list[dict],   # 이벤트 대기 항목
     }
     """
     if not news_items:
         return {
             "score": 0.0, "individual_score": 0.0,
-            "sector_score": 0.0, "label": "중립", "detail": [],
+            "sector_score": 0.0, "label": "중립",
+            "detail": [], "event_flags": [],
         }
 
     _TIER_AGG_WEIGHT = {"A": 2.0, "B": 1.0, "C": 0.5}
 
     detail        = []
+    event_flags   = []
     weighted_sum  = 0.0
     total_weight  = 0.0
 
     for item in news_items:
-        text  = item.get("title", "") + " " + item.get("summary", "")
+        title = item.get("title", "")
+        text  = title + " " + item.get("summary", "")
         decay = _news_time_decay(item.get("pub_date", ""))
 
         base_score, tier, matched_kw = _classify_news_tier(text)
 
-        item_score  = round(base_score * decay, 2)
-        agg_weight  = _TIER_AGG_WEIGHT.get(tier, 1.0)
+        base_detail = {
+            "title":      title,
+            "link":       item.get("link", "#"),
+            "publisher":  item.get("publisher", ""),
+            "pub_date":   item.get("pub_date", ""),
+            "matched_kw": matched_kw[:4],
+            "decay":      round(decay, 2),
+        }
+
+        # ── EVENT: 이벤트 대기 처리 (점수 합산 제외) ───────────────────────────
+        if tier == "EVENT":
+            event_flags.append({"title": title, "event_kw": matched_kw})
+            detail.append({
+                **base_detail,
+                "score":  0.0,
+                "tier":   "EVENT",
+                "skipped": True,
+                "reason": f"[이벤트 대기] {'·'.join(matched_kw[:3])} — 기술 분석 제외",
+            })
+            continue
+
+        # ── SKIP: 비교군 언급 — 직접 관련 뉴스 아님 ────────────────────────────
+        if company_name:
+            is_relevant, skip_reason = _check_news_relevance(text, company_name)
+            if not is_relevant:
+                detail.append({
+                    **base_detail,
+                    "score":  0.0,
+                    "tier":   "SKIP",
+                    "skipped": True,
+                    "reason": f"[제외] {skip_reason} — 직접 관련 뉴스 아님",
+                })
+                continue
+
+        item_score = round(base_score * decay, 2)
+        agg_weight = _TIER_AGG_WEIGHT.get(tier, 1.0)
 
         weighted_sum += item_score * agg_weight
         total_weight += agg_weight
 
         detail.append({
-            "title":      item.get("title", ""),
-            "link":       item.get("link", "#"),
-            "publisher":  item.get("publisher", ""),
-            "pub_date":   item.get("pub_date", ""),
-            "score":      item_score,
-            "tier":       tier,
-            "matched_kw": matched_kw[:4],
-            "decay":      round(decay, 2),
-            "reason":     (
+            **base_detail,
+            "score":  item_score,
+            "tier":   tier,
+            "skipped": False,
+            "reason": (
                 f"[{tier}급] {'·'.join(matched_kw[:3]) or '키워드 없음'}"
                 f"  시간감쇠×{decay:.1f}"
             ),
@@ -2668,10 +2805,8 @@ def analyze_news_sentiment_keywords(news_items: list[dict], ticker: str = "") ->
     avg              = weighted_sum / max(total_weight, 1.0)
     individual_score = round(max(-5.0, min(5.0, avg * 5.0)), 2)
 
-    # 섹터 업황 점수 계산
     sector_score = _calc_sector_score(ticker, news_items) if ticker else 0.0
 
-    # 섹터 데이터가 있으면 70:30 블렌딩
     if sector_score != 0.0:
         score = round(max(-5.0, min(5.0, 0.7 * individual_score + 0.3 * sector_score)), 2)
     else:
@@ -2689,6 +2824,7 @@ def analyze_news_sentiment_keywords(news_items: list[dict], ticker: str = "") ->
         "sector_score":     sector_score,
         "label":            label,
         "detail":           detail,
+        "event_flags":      event_flags,
     }
 
 
@@ -2697,17 +2833,20 @@ def analyze_news_sentiment_llm(
     ticker: str,
     api_key: str,
     groq_api_key: str = "",
+    company_name: str = "",
 ) -> dict:
     """
     뉴스 감성 분석: 1순위 Gemini → 2순위 Groq(쿼터 초과 시) → 3순위 키워드 분석.
     - 중복 제거 → 상위 10개 배치 처리 → API 1회 호출로 0~100 투자 심리 지수 도출
+    - 이벤트 뉴스(합병·분할·거래정지) 및 비관련 뉴스(비교군 언급) 자동 제외
     - 반환: {"score": float(-5~+5), "label": str, "detail": list[dict],
-              "summary": str, "individual_score": float, "sector_score": float}
+              "summary": str, "individual_score": float, "sector_score": float,
+              "event_flags": list[dict]}
     """
     if not api_key or not news_items:
-        return analyze_news_sentiment_keywords(news_items, ticker)
+        return analyze_news_sentiment_keywords(news_items, ticker, company_name)
 
-    kw_result    = analyze_news_sentiment_keywords(news_items, ticker)
+    kw_result    = analyze_news_sentiment_keywords(news_items, ticker, company_name)
     sector_score = kw_result.get("sector_score", 0.0)
 
     try:
@@ -2717,12 +2856,13 @@ def analyze_news_sentiment_llm(
         deduped   = _deduplicate_news(news_items)
         top_news  = _select_top_news(deduped, n=10)
         ticker_display = ticker.replace(".KS", "").replace(".KQ", "")
+        display_name   = company_name or ticker_display
         headlines = "\n".join(
             f"{i+1}. {_extract_news_snippet(it)} ({it.get('pub_date', '날짜미상')})"
             for i, it in enumerate(top_news)
         )
 
-        prompt = f"""당신은 주식 애널리스트입니다. 아래 {len(top_news)}개 뉴스가 종목 '{ticker_display}'의 향후 7일 주가에 미칠 투자 심리를 종합 평가하세요.
+        prompt = f"""당신은 주식 애널리스트입니다. 아래 {len(top_news)}개 뉴스가 종목 '{display_name}'의 향후 7일 주가에 미칠 투자 심리를 종합 평가하세요.
 
 [뉴스 목록]
 {headlines}
@@ -2731,11 +2871,15 @@ def analyze_news_sentiment_llm(
 - 뉴스 전체를 종합한 투자 심리 지수를 0~100 사이 정수로 평가하세요. (0=매우 부정, 50=중립, 100=매우 긍정)
 - 실적/수주/판매량 등 직접 재무 영향 뉴스는 가중치를 높게 부여하세요.
 - 업황/ETF/시황 뉴스는 간접 영향이므로 보수적으로 반영하세요.
+- 주식 병합·분할·거래 정지·관리종목·상장폐지 등 이벤트성 뉴스가 있다면 "event_type" 필드에 기재하고 sentiment_index 산정에서 제외하세요.
+- 각 뉴스가 '{display_name}'에 직접적인 소식인지 판단하세요. 다른 회사가 주인공이고 '{display_name}'은 단순 비교군으로만 언급된 경우 해당 뉴스는 제외하고 "skipped_irrelevant" 필드에 제외 수를 기재하세요.
 
 [출력 형식] JSON만 출력하고 다른 설명은 절대 포함하지 마세요:
 {{
   "sentiment_index": <0~100 정수>,
-  "summary": "<종목에 미치는 핵심 영향 2~3문장 한국어>"
+  "summary": "<종목에 미치는 핵심 영향 2~3문장 한국어>",
+  "event_type": <이벤트 유형 문자열(합병/분할/거래정지 등) 또는 null>,
+  "skipped_irrelevant": <비관련 뉴스로 제외한 수(기본값 0)>
 }}"""
 
         # ── 1순위: Gemini ──────────────────────────────────────────────────────
@@ -2785,13 +2929,27 @@ def analyze_news_sentiment_llm(
         if "sentiment_index" not in parsed:
             raise ValueError("Missing required fields in response")
 
-        sentiment_index = max(0.0, min(100.0, float(parsed["sentiment_index"])))
-        overall_score   = round((sentiment_index - 50.0) / 10.0, 2)
-        summary         = parsed.get("summary", "")
+        sentiment_index     = max(0.0, min(100.0, float(parsed["sentiment_index"])))
+        overall_score       = round((sentiment_index - 50.0) / 10.0, 2)
+        summary             = parsed.get("summary", "")
+        llm_event_type      = parsed.get("event_type") or None
+        llm_skipped_cnt     = int(parsed.get("skipped_irrelevant", 0) or 0)
         if _provider != "Gemini":
             summary = f"[{_provider}] {summary}"
 
+        # LLM 이벤트 감지 → summary 에 이벤트 메시지 추가
+        if llm_event_type:
+            summary = f"[이벤트 대기: {llm_event_type}] {summary}".strip()
+        if llm_skipped_cnt > 0:
+            summary = f"{summary}  (비관련 뉴스 {llm_skipped_cnt}건 제외)".strip()
+
+        # 키워드 분석의 event_flags + detail 병합
+        event_flags     = kw_result.get("event_flags", [])
         detail_by_title = {d["title"]: d for d in kw_result["detail"]}
+
+        # LLM이 감지한 이벤트가 있고 키워드 분석에서 못 잡은 경우 summary로만 표시
+        if llm_event_type and not event_flags:
+            event_flags = [{"title": llm_event_type, "event_kw": [llm_event_type]}]
 
         if sector_score != 0.0:
             blended = round(max(-5.0, min(5.0, 0.7 * overall_score + 0.3 * sector_score)), 2)
@@ -2811,6 +2969,7 @@ def analyze_news_sentiment_llm(
             "label":            label,
             "detail":           list(detail_by_title.values()),
             "summary":          summary,
+            "event_flags":      event_flags,
         }
 
     except Exception as _exc:
