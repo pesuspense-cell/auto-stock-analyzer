@@ -2480,7 +2480,7 @@ def _classify_news_tier(text: str) -> tuple[float, str, list[str]]:
     return max(-1.0, min(1.0, raw)), "C", c_pos + c_neg
 
 
-def _select_top_news(news_items: list[dict], n: int = 3) -> list[dict]:
+def _select_top_news(news_items: list[dict], n: int = 10) -> list[dict]:
     """A/B/C 등급 순 → 같은 등급 내 최신순으로 상위 n개 선택."""
     _TIER_ORDER = {"A": 0, "B": 1, "C": 2}
 
@@ -2491,6 +2491,36 @@ def _select_top_news(news_items: list[dict], n: int = 3) -> list[dict]:
         return (_TIER_ORDER.get(tier, 2), -decay)
 
     return sorted(news_items, key=_key)[:n]
+
+
+def _deduplicate_news(news_items: list[dict]) -> list[dict]:
+    """제목 자카드 유사도 50% 이상인 중복 뉴스 제거."""
+    seen: list[set] = []
+    unique: list[dict] = []
+    for item in news_items:
+        words = set(item.get("title", "").split())
+        if not words:
+            continue
+        is_dup = any(
+            len(words & s) / max(len(words | s), 1) >= 0.5
+            for s in seen
+        )
+        if not is_dup:
+            seen.append(words)
+            unique.append(item)
+    return unique
+
+
+def _extract_news_snippet(item: dict) -> str:
+    """제목 + 요약 핵심 문장 3개 추출 (요약 없으면 제목만)."""
+    import re as _re
+    title = item.get("title", "")
+    summary = item.get("summary", "").strip()
+    if not summary:
+        return title
+    sentences = [s.strip() for s in _re.split(r"[.!?。]\s*", summary) if s.strip()]
+    snippet = " ".join(sentences[:3])
+    return f"{title} / {snippet}" if snippet else title
 
 
 def _calc_sector_score(ticker: str, news_items: list[dict]) -> float:
@@ -2670,7 +2700,7 @@ def analyze_news_sentiment_llm(
 ) -> dict:
     """
     뉴스 감성 분석: 1순위 Gemini → 2순위 Groq(쿼터 초과 시) → 3순위 키워드 분석.
-    - 상위 3개 핵심 뉴스(A/B등급 우선)만 AI에 전달해 응답 품질 향상
+    - 중복 제거 → 상위 10개 배치 처리 → API 1회 호출로 0~100 투자 심리 지수 도출
     - 반환: {"score": float(-5~+5), "label": str, "detail": list[dict],
               "summary": str, "individual_score": float, "sector_score": float}
     """
@@ -2684,33 +2714,28 @@ def analyze_news_sentiment_llm(
         import json as _json
         import re as _re
 
-        top3 = _select_top_news(news_items, n=3)
+        deduped   = _deduplicate_news(news_items)
+        top_news  = _select_top_news(deduped, n=10)
         ticker_display = ticker.replace(".KS", "").replace(".KQ", "")
         headlines = "\n".join(
-            f"{i+1}. {it.get('title', '')} ({it.get('pub_date', '날짜미상')})"
-            for i, it in enumerate(top3)
+            f"{i+1}. {_extract_news_snippet(it)} ({it.get('pub_date', '날짜미상')})"
+            for i, it in enumerate(top_news)
         )
 
-        prompt = f"""당신은 주식 애널리스트입니다. 아래 {len(top3)}개 뉴스 헤드라인이 종목 '{ticker_display}'의 향후 7일 주가에 미칠 영향을 분석하세요.
+        prompt = f"""당신은 주식 애널리스트입니다. 아래 {len(top_news)}개 뉴스가 종목 '{ticker_display}'의 향후 7일 주가에 미칠 투자 심리를 종합 평가하세요.
 
-[뉴스 헤드라인]
+[뉴스 목록]
 {headlines}
 
 [분석 지침]
-- 각 기사가 해당 종목의 7일 이내 주가에 미칠 영향을 -2~+2점으로 수치화하세요.
-- 실적/수주/판매량 등 직접 재무 영향 기사는 점수 영향이 큽니다.
-- 업황/ETF/시황 기사는 간접 영향이므로 점수를 보수적으로 주세요.
-- 전체 종합 점수는 -5(매우 부정)~+5(매우 긍정)입니다.
+- 뉴스 전체를 종합한 투자 심리 지수를 0~100 사이 정수로 평가하세요. (0=매우 부정, 50=중립, 100=매우 긍정)
+- 실적/수주/판매량 등 직접 재무 영향 뉴스는 가중치를 높게 부여하세요.
+- 업황/ETF/시황 뉴스는 간접 영향이므로 보수적으로 반영하세요.
 
 [출력 형식] JSON만 출력하고 다른 설명은 절대 포함하지 마세요:
 {{
-  "overall_score": <-5~+5 소수>,
-  "overall_summary": "<종목에 미치는 핵심 영향 2~3문장 한국어>",
-  "items": [
-    {{"index": 1, "score": <-2~+2 소수>, "reason": "<한 줄 근거 한국어>"}},
-    {{"index": 2, "score": <-2~+2 소수>, "reason": "<한 줄 근거 한국어>"}},
-    {{"index": 3, "score": <-2~+2 소수>, "reason": "<한 줄 근거 한국어>"}}
-  ]
+  "sentiment_index": <0~100 정수>,
+  "summary": "<종목에 미치는 핵심 영향 2~3문장 한국어>"
 }}"""
 
         # ── 1순위: Gemini ──────────────────────────────────────────────────────
@@ -2757,24 +2782,16 @@ def analyze_news_sentiment_llm(
         json_str = json_match.group(1) or json_match.group(2)
         parsed = _json.loads(json_str)
 
-        if "overall_score" not in parsed or "items" not in parsed:
+        if "sentiment_index" not in parsed:
             raise ValueError("Missing required fields in response")
 
-        overall_score = float(parsed["overall_score"])
-        overall_score = max(-5.0, min(5.0, overall_score))
-        summary       = parsed.get("overall_summary", "")
+        sentiment_index = max(0.0, min(100.0, float(parsed["sentiment_index"])))
+        overall_score   = round((sentiment_index - 50.0) / 10.0, 2)
+        summary         = parsed.get("summary", "")
         if _provider != "Gemini":
             summary = f"[{_provider}] {summary}"
 
         detail_by_title = {d["title"]: d for d in kw_result["detail"]}
-        for item_res in parsed.get("items", []):
-            idx = item_res.get("index", 0) - 1
-            if 0 <= idx < len(top3):
-                t = top3[idx].get("title", "")
-                if t in detail_by_title:
-                    raw_score = float(item_res.get("score", 0))
-                    detail_by_title[t]["score"]  = round(max(-2.0, min(2.0, raw_score)), 2)
-                    detail_by_title[t]["reason"] = item_res.get("reason", "")
 
         if sector_score != 0.0:
             blended = round(max(-5.0, min(5.0, 0.7 * overall_score + 0.3 * sector_score)), 2)
