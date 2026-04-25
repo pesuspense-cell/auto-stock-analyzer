@@ -1322,13 +1322,11 @@ with tab_news:
             )
 
             # 기사별 표시
-            detail_map = {d["title"]: d for d in sent.get("detail", [])}
-            for art_idx, item in enumerate(raw_news):
+            def _render_article(item, art_idx, d, *, faded=False):
                 title      = item.get("title", "제목 없음")
                 link       = item.get("link", "#")
                 publisher  = item.get("publisher", "")
                 pub_date   = item.get("pub_date", "")
-                d          = detail_map.get(title, {})
                 art_score  = d.get("score", 0.0)
                 art_reason = d.get("reason", "")
                 art_tier   = d.get("tier", "")
@@ -1344,23 +1342,24 @@ with tab_news:
                 else:
                     dot_color, dot = "#9e9e9e", "⚪"
 
-                tier_badge = {
+                _TIER_BADGES = {
                     "A":     '<span style="background:#e65100;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">A급</span>',
                     "B":     '<span style="background:#1565c0;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">B급</span>',
                     "C":     '<span style="background:#37474f;color:#ccc;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">C급</span>',
                     "EVENT": '<span style="background:#6a1b9a;color:#fff;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">이벤트</span>',
                     "SKIP":  '<span style="background:#424242;color:#bdbdbd;font-size:0.7rem;padding:1px 5px;border-radius:4px;margin-left:4px;">제외</span>',
-                }.get(art_tier, "")
+                }
+                tier_badge = _TIER_BADGES.get(art_tier, "")
+                title_color = "#607d8b" if faded else "#90caf9"
 
                 col_article, col_btn = st.columns([8, 1])
-
                 with col_article:
                     st.markdown(
                         f'<div style="margin-bottom:2px;">'
                         f'<span style="color:{dot_color};font-size:0.8rem;">{dot} {art_score:+.1f}</span>'
                         f'{tier_badge}'
                         f' &nbsp;<b><a href="{link}" target="_blank"'
-                        f' style="color:#90caf9;text-decoration:none;">{title}</a></b>'
+                        f' style="color:{title_color};text-decoration:none;">{title}</a></b>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -1372,7 +1371,6 @@ with tab_news:
                         st.caption("  ·  ".join(meta_parts))
                     if art_reason:
                         st.caption(f"💡 {art_reason}")
-
                 with col_btn:
                     if st.button(
                         "🤖 요약",
@@ -1381,8 +1379,25 @@ with tab_news:
                         use_container_width=True,
                     ):
                         _article_dialog(title, link, ticker, gemini_api_key)
-
                 st.divider()
+
+            detail_map  = {d["title"]: d for d in sent.get("detail", [])}
+            main_items  = []
+            other_items = []
+            for item in raw_news:
+                d = detail_map.get(item.get("title", "제목 없음"), {})
+                if d.get("hidden") or d.get("skipped"):
+                    other_items.append((item, d))
+                else:
+                    main_items.append((item, d))
+
+            for art_idx, (item, d) in enumerate(main_items):
+                _render_article(item, art_idx, d)
+
+            if other_items:
+                with st.expander(f"기타 뉴스 ({len(other_items)}건) — C급·제외 항목", expanded=False):
+                    for art_idx, (item, d) in enumerate(other_items):
+                        _render_article(item, len(main_items) + art_idx, d, faded=True)
 
     with col_rel:
         st.markdown("### 🔗 관련 종목 비교")

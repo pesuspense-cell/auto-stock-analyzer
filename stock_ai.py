@@ -2634,33 +2634,56 @@ def _classify_news_tier(text: str) -> tuple[float, str, list[str]]:
 
 
 def _select_top_news(news_items: list[dict], n: int = 10) -> list[dict]:
-    """A/B/C 등급 순 → 같은 등급 내 최신순으로 상위 n개 선택."""
+    """A/B 등급 우선, C급은 A/B가 부족할 때만 보충. 최대 n개."""
     _TIER_ORDER = {"A": 0, "B": 1, "C": 2}
 
-    def _key(item: dict) -> tuple:
+    scored = []
+    for item in news_items:
         text = item.get("title", "") + " " + item.get("summary", "")
         _, tier, _ = _classify_news_tier(text)
         decay = _news_time_decay(item.get("pub_date", ""))
-        return (_TIER_ORDER.get(tier, 2), -decay)
+        scored.append((tier, decay, item))
 
-    return sorted(news_items, key=_key)[:n]
+    ab = sorted(
+        [(t, d, it) for t, d, it in scored if t in ("A", "B", "EVENT")],
+        key=lambda x: (_TIER_ORDER.get(x[0], 1), -x[1]),
+    )
+    c = sorted(
+        [(t, d, it) for t, d, it in scored if t == "C"],
+        key=lambda x: -x[1],
+    )
+    combined = ab + (c if len(ab) < n else [])
+    return [it for _, _, it in combined[:n]]
 
 
 def _deduplicate_news(news_items: list[dict]) -> list[dict]:
-    """제목 자카드 유사도 50% 이상인 중복 뉴스 제거."""
-    seen: list[set] = []
-    unique: list[dict] = []
+    """중복 뉴스 제거: 제목 앞 15자(공백 제거) 일치 또는 자카드 유사도 50% 이상."""
+    seen_prefixes: set[str] = set()
+    seen_words:    list[set] = []
+    unique:        list[dict] = []
+
     for item in news_items:
-        words = set(item.get("title", "").split())
-        if not words:
+        title  = item.get("title", "")
+        prefix = title.replace(" ", "")[:15]
+
+        # 1. 제목 앞 15자 중복
+        if prefix and prefix in seen_prefixes:
             continue
-        is_dup = any(
+
+        # 2. 자카드 유사도 50% 이상 중복
+        words = set(title.split())
+        if words and any(
             len(words & s) / max(len(words | s), 1) >= 0.5
-            for s in seen
-        )
-        if not is_dup:
-            seen.append(words)
-            unique.append(item)
+            for s in seen_words
+        ):
+            continue
+
+        if prefix:
+            seen_prefixes.add(prefix)
+        if words:
+            seen_words.append(words)
+        unique.append(item)
+
     return unique
 
 
@@ -2695,10 +2718,11 @@ def _prefilter_news(
     noise_ratio_threshold: float = 3.0,
 ) -> list[dict]:
     """
-    AI 전달 전 로컬 선 필터링 3단계:
-    1. 종목명 미포함 항목 즉시 폐기 (company_name이 없으면 전체 통과)
-    2. 노이즈 회사명이 종목명보다 noise_ratio_threshold배 초과하면 하순위로
-    3. summary 없는 항목은 종목명 주변 문장을 snippet으로 보강
+    AI 전달 전 로컬 선 필터링 4단계:
+    1. 제목+요약 모두에 종목명 없으면 즉시 폐기 (하드 필터)
+    2. 제목에 없고 요약에만 있으면 하순위 (펀드·간접 언급)
+    3. 노이즈 회사명이 종목명보다 noise_ratio_threshold배 초과하면 하순위
+    4. summary 없는 항목은 종목명 주변 문장을 snippet으로 보강
     """
     if not company_name or not news_items:
         return news_items
@@ -2707,21 +2731,31 @@ def _prefilter_news(
     low: list[dict] = []
 
     for item in news_items:
-        text = item.get("title", "") + " " + item.get("summary", "")
+        title   = item.get("title", "")
+        summary = item.get("summary", "")
+        text    = title + " " + summary
 
-        # 1. 종목명 존재 여부
-        if company_name not in text:
+        title_hit   = company_name in title
+        summary_hit = company_name in summary
+
+        # 1. 하드 필터: 제목·요약 모두에 종목명 없음 → 즉시 폐기
+        if not title_hit and not summary_hit:
             continue
 
-        # 2. 노이즈 비율
+        # 2. 제목에 없고 요약에만 있음 → 하순위 (펀드·간접 언급)
+        if not title_hit:
+            low.append(item)
+            continue
+
+        # 3. 노이즈 비율
         company_count = max(text.count(company_name), 1)
-        noise_count = sum(text.count(firm) for firm in _NOISE_FIRMS)
+        noise_count   = sum(text.count(firm) for firm in _NOISE_FIRMS)
         if noise_count > company_count * noise_ratio_threshold:
             low.append(item)
             continue
 
-        # 3. summary 보강
-        if not item.get("summary"):
+        # 4. summary 보강
+        if not summary:
             snippet = _extract_sentences_near(text, company_name, max_sentences=3)
             if snippet:
                 item = dict(item)
@@ -2903,10 +2937,11 @@ def analyze_news_sentiment_keywords(
 
         detail.append({
             **base_detail,
-            "score":  item_score,
-            "tier":   tier,
+            "score":   item_score,
+            "tier":    tier,
             "skipped": False,
-            "reason": (
+            "hidden":  tier == "C" and not matched_kw,
+            "reason":  (
                 f"[{tier}급] {'·'.join(matched_kw[:3]) or '키워드 없음'}"
                 f"  시간감쇠×{decay:.1f}"
             ),
