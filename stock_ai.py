@@ -1,6 +1,17 @@
 """
 stock_ai.py - 주식 분석 핵심 알고리즘 엔진
 매수/매도 신호, 추천 종목, 예상 수익률 분석
+
+아키텍처:
+  이 파일이 모든 비즈니스 로직의 단일 구현 소스입니다.
+  src/ 하위 모듈(indicators.py, fundamental.py, news_logic.py, utils.py)은
+  이 파일의 함수를 re-export하는 얇은 래퍼입니다.
+  app.py는 src/ 모듈을 통해서만 import합니다.
+
+  src/indicators.py  — 기술적 지표·매매 신호
+  src/fundamental.py — 펀더멘털 가치평가
+  src/news_logic.py  — 뉴스 수집·필터링·감성 분석 (비동기 배치, 캐싱)
+  src/utils.py       — 종목 사전·지수 상수·시장 데이터
 """
 import requests
 import xml.etree.ElementTree as ET
@@ -9,6 +20,10 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import warnings
+import hashlib
+import time
+import re as _re_global
+from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings('ignore')
 
 try:
@@ -2319,6 +2334,45 @@ def get_insider_trades_sec(ticker: str, days: int = 90) -> pd.DataFrame:
 
 # ─── 뉴스 감성 분석 ───────────────────────────────────────────────────────────
 
+# ── 선 필터링용 노이즈 회사명 (분석 대상이 아닌 증권사/금융사) ────────────────────
+_NOISE_FIRMS: list[str] = [
+    "NH투자", "미래에셋", "키움증권", "삼성증권", "한국투자증권", "신한투자",
+    "KB증권", "하나증권", "메리츠증권", "이베스트투자", "대신증권", "유안타증권",
+    "한화투자증권", "교보증권", "현대차증권", "DB금융투자", "흥국증권", "IBK투자",
+    "Goldman Sachs", "Morgan Stanley", "JPMorgan", "Deutsche Bank",
+    "Citigroup", "UBS", "Barclays", "Nomura", "HSBC",
+]
+
+# ── 뉴스 결과 인메모리 캐시 (제목 해시 기반, 1시간 TTL, 최대 300건) ─────────────
+_news_result_cache: dict[str, tuple[dict, float]] = {}
+_NEWS_CACHE_TTL = 3600  # seconds
+
+
+def _news_cache_key(news_items: list[dict], ticker: str) -> str:
+    """뉴스 제목 집합 + ticker 해시 → 캐시 키."""
+    titles = sorted(item.get("title", "") for item in news_items)
+    raw = ticker + "|" + "|".join(titles)
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _get_cached_news_result(key: str) -> dict | None:
+    entry = _news_result_cache.get(key)
+    if entry and (time.time() - entry[1]) < _NEWS_CACHE_TTL:
+        return entry[0]
+    if entry:
+        del _news_result_cache[key]
+    return None
+
+
+def _set_cached_news_result(key: str, result: dict) -> None:
+    if len(_news_result_cache) >= 300:
+        # 오래된 항목 50개 제거
+        oldest = sorted(_news_result_cache.items(), key=lambda x: x[1][1])[:50]
+        for k, _ in oldest:
+            del _news_result_cache[k]
+    _news_result_cache[key] = (result, time.time())
+
+
 # ── A급 (가중치 2.0): 실적·수주·판매량·M&A — 종목 직접 영향 ─────────────────────
 _KW_A_POS = [
     "어닝서프라이즈", "어닝 서프라이즈", "어닝비트", "실적 서프라이즈",
@@ -2612,14 +2666,70 @@ def _deduplicate_news(news_items: list[dict]) -> list[dict]:
 
 def _extract_news_snippet(item: dict) -> str:
     """제목 + 요약 핵심 문장 3개 추출 (요약 없으면 제목만)."""
-    import re as _re
     title = item.get("title", "")
     summary = item.get("summary", "").strip()
     if not summary:
         return title
-    sentences = [s.strip() for s in _re.split(r"[.!?。]\s*", summary) if s.strip()]
+    sentences = [s.strip() for s in _re_global.split(r"[.!?。]\s*", summary) if s.strip()]
     snippet = " ".join(sentences[:3])
     return f"{title} / {snippet}" if snippet else title
+
+
+def _extract_sentences_near(text: str, keyword: str, max_sentences: int = 3) -> str:
+    """keyword가 포함된 문장 ± 인접 1문장을 최대 max_sentences개 추출."""
+    sentences = [s.strip() for s in _re_global.split(r"[.!?。]\s*", text) if s.strip()]
+    if not sentences:
+        return ""
+    result: list[str] = []
+    for i, sent in enumerate(sentences):
+        if keyword in sent:
+            for s in sentences[max(0, i - 1):min(len(sentences), i + 2)]:
+                if s not in result:
+                    result.append(s)
+    return ". ".join(result[:max_sentences])
+
+
+def _prefilter_news(
+    news_items: list[dict],
+    company_name: str,
+    noise_ratio_threshold: float = 3.0,
+) -> list[dict]:
+    """
+    AI 전달 전 로컬 선 필터링 3단계:
+    1. 종목명 미포함 항목 즉시 폐기 (company_name이 없으면 전체 통과)
+    2. 노이즈 회사명이 종목명보다 noise_ratio_threshold배 초과하면 하순위로
+    3. summary 없는 항목은 종목명 주변 문장을 snippet으로 보강
+    """
+    if not company_name or not news_items:
+        return news_items
+
+    high: list[dict] = []
+    low: list[dict] = []
+
+    for item in news_items:
+        text = item.get("title", "") + " " + item.get("summary", "")
+
+        # 1. 종목명 존재 여부
+        if company_name not in text:
+            continue
+
+        # 2. 노이즈 비율
+        company_count = max(text.count(company_name), 1)
+        noise_count = sum(text.count(firm) for firm in _NOISE_FIRMS)
+        if noise_count > company_count * noise_ratio_threshold:
+            low.append(item)
+            continue
+
+        # 3. summary 보강
+        if not item.get("summary"):
+            snippet = _extract_sentences_near(text, company_name, max_sentences=3)
+            if snippet:
+                item = dict(item)
+                item["summary"] = snippet
+
+        high.append(item)
+
+    return high + low
 
 
 def _calc_sector_score(ticker: str, news_items: list[dict]) -> float:
@@ -2837,6 +2947,8 @@ def analyze_news_sentiment_llm(
 ) -> dict:
     """
     뉴스 감성 분석: 1순위 Gemini → 2순위 Groq(쿼터 초과 시) → 3순위 키워드 분석.
+    - [선 필터링] 종목명 미포함·노이즈 과다 뉴스 사전 제거
+    - [캐싱] 제목 해시 기반 1시간 인메모리 캐시 (중복 API 호출 제거)
     - 중복 제거 → 상위 10개 배치 처리 → API 1회 호출로 0~100 투자 심리 지수 도출
     - 이벤트 뉴스(합병·분할·거래정지) 및 비관련 뉴스(비교군 언급) 자동 제외
     - 반환: {"score": float(-5~+5), "label": str, "detail": list[dict],
@@ -2846,14 +2958,24 @@ def analyze_news_sentiment_llm(
     if not api_key or not news_items:
         return analyze_news_sentiment_keywords(news_items, ticker, company_name)
 
-    kw_result    = analyze_news_sentiment_keywords(news_items, ticker, company_name)
+    # ── 캐시 확인 ────────────────────────────────────────────────────────────
+    _cache_key = _news_cache_key(news_items, ticker)
+    _cached = _get_cached_news_result(_cache_key)
+    if _cached is not None:
+        return _cached
+
+    # ── 선 필터링 (로컬, 즉시) ───────────────────────────────────────────────
+    filtered_items = _prefilter_news(news_items, company_name)
+    # 필터링 후 뉴스가 없으면 원본으로 폴백 (company_name 미제공 등)
+    effective_items = filtered_items if filtered_items else news_items
+
+    kw_result    = analyze_news_sentiment_keywords(effective_items, ticker, company_name)
     sector_score = kw_result.get("sector_score", 0.0)
 
     try:
         import json as _json
-        import re as _re
 
-        deduped   = _deduplicate_news(news_items)
+        deduped   = _deduplicate_news(effective_items)
         top_news  = _select_top_news(deduped, n=10)
         ticker_display = ticker.replace(".KS", "").replace(".KQ", "")
         display_name   = company_name or ticker_display
@@ -2920,7 +3042,7 @@ def analyze_news_sentiment_llm(
                 raise
 
         # ── JSON 파싱 (Gemini/Groq 공통) ──────────────────────────────────────
-        json_match = _re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})', raw)
+        json_match = _re_global.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})', raw)
         if not json_match:
             raise ValueError("JSON not found in response")
         json_str = json_match.group(1) or json_match.group(2)
@@ -2962,7 +3084,7 @@ def analyze_news_sentiment_llm(
         elif blended >= -3: label = "부정"
         else:               label = "매우 부정"
 
-        return {
+        _result = {
             "score":            blended,
             "individual_score": round(overall_score, 2),
             "sector_score":     sector_score,
@@ -2971,6 +3093,8 @@ def analyze_news_sentiment_llm(
             "summary":          summary,
             "event_flags":      event_flags,
         }
+        _set_cached_news_result(_cache_key, _result)
+        return _result
 
     except Exception as _exc:
         result = kw_result.copy()
@@ -3022,6 +3146,52 @@ def fetch_article_content(url: str) -> str:
         return "\n".join(paras[:30])[:2000]
     except Exception:
         return ""
+
+
+def analyze_news_batch(
+    ticker_configs: list[dict],
+    api_key: str,
+    groq_api_key: str = "",
+    max_workers: int = 5,
+) -> dict[str, dict]:
+    """
+    여러 종목 뉴스를 ThreadPoolExecutor로 병렬 분석.
+
+    ticker_configs: [
+        {"ticker": str, "news": list[dict], "company_name": str},
+        ...
+    ]
+    반환: {ticker: analyze_news_sentiment_llm 결과, ...}
+
+    - 각 종목은 독립적으로 비동기 처리 (I/O 대기 동시 실행)
+    - 캐시 히트 시 즉시 반환, 미스 시에만 API 호출
+    - API 호출 실패한 종목은 키워드 분석 결과로 자동 대체
+    """
+    if not ticker_configs:
+        return {}
+
+    def _analyze_one(cfg: dict) -> tuple[str, dict]:
+        t = cfg["ticker"]
+        news = cfg.get("news", [])
+        cname = cfg.get("company_name", "")
+        try:
+            result = analyze_news_sentiment_llm(news, t, api_key, groq_api_key, cname)
+        except Exception:
+            result = analyze_news_sentiment_keywords(news, t, cname)
+        return t, result
+
+    results: dict[str, dict] = {}
+    n = min(max_workers, len(ticker_configs))
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        futures = {pool.submit(_analyze_one, cfg): cfg["ticker"] for cfg in ticker_configs}
+        for future in as_completed(futures):
+            try:
+                ticker, result = future.result()
+                results[ticker] = result
+            except Exception:
+                t = futures[future]
+                results[t] = {"score": 0.0, "label": "중립", "detail": [], "event_flags": []}
+    return results
 
 
 def summarize_article_llm(
