@@ -1482,25 +1482,12 @@ def _etf_fallback_list() -> dict:
 
 def is_etf_ticker(ticker: str) -> bool:
     """
-    ETF 여부 판별.
-    _ETF_PORTFOLIO_MAP 등록 여부 우선, 없으면 FDR 목록 대조.
+    ETF 여부 판별 (FDR 네트워크 호출 없이 빠르게 판별).
+    _ETF_PORTFOLIO_MAP에 등록된 주요 ETF만 True 반환.
+    전체 ETF 목록 대조가 필요할 때는 get_krx_etf_list()를 별도로 사용.
     """
     code = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
-    if code in _ETF_PORTFOLIO_MAP:
-        return True
-    # 코드가 6자리 숫자이고 .KS/.KQ 형태여야 국내 ETF 가능
-    if not (ticker.endswith(".KS") or ticker.endswith(".KQ")):
-        return False
-    try:
-        import FinanceDataReader as fdr
-        df = fdr.StockListing("ETF/KR")
-        if df.empty:
-            return False
-        code_col = "Symbol" if "Symbol" in df.columns else "Code"
-        codes = set(df[code_col].astype(str).str.strip().str.zfill(6))
-        return code in codes
-    except Exception:
-        return False
+    return code in _ETF_PORTFOLIO_MAP
 
 
 # ─── 펀더멘털 데이터 ──────────────────────────────────────────────────────────

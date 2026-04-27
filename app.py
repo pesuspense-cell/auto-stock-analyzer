@@ -359,6 +359,21 @@ def _us_stocks():
 def _etf_stocks():
     return get_krx_etf_list()
 
+@st.cache_data(ttl=86400)
+def _check_is_etf(ticker: str) -> bool:
+    """ETF 여부 — 포트폴리오 맵 우선, FDR 전체 목록은 24h 캐시로 한 번만 호출."""
+    if is_etf_ticker(ticker):  # 포트폴리오 맵 빠른 확인 (네트워크 없음)
+        return True
+    # 포트폴리오 맵에 없는 ETF(소형 ETF 등): ETF 전체 목록에서 확인 (24h 캐시)
+    if not (ticker.endswith(".KS") or ticker.endswith(".KQ")):
+        return False
+    try:
+        etf_list = get_krx_etf_list()
+        code = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
+        return f"{code}.KS" in etf_list.values() or f"{code}.KQ" in etf_list.values()
+    except Exception:
+        return False
+
 @st.cache_data(ttl=300)
 def _etf_fundamental(ticker: str) -> dict:
     return get_etf_fundamental_data(ticker)
@@ -1249,7 +1264,7 @@ with tab_rec:
 # TAB 4  뉴스 & 관련 종목
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_news:
-    _news_is_etf = _data_ready and is_etf_ticker(ticker)
+    _news_is_etf = _data_ready and _check_is_etf(ticker)
 
     if _news_is_etf:
         st.subheader(f"📊 {_asname or sname} 섹터 뉴스 — 돈이 몰리는 섹터 파악")
@@ -1656,7 +1671,7 @@ with tab_news:
 # TAB 5  펀더멘털 & 기관
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_fund:
-    _is_etf = _data_ready and is_etf_ticker(ticker)
+    _is_etf = _data_ready and _check_is_etf(ticker)
 
     if _is_etf:
         # ══ ETF 전용 분석 UI ═════════════════════════════════════════════════
