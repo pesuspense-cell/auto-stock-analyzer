@@ -89,6 +89,18 @@ st.markdown("""
         animation: loading-sweep 1.8s ease-in-out infinite;
     }
     .loading-icon { animation: loading-pulse 1.4s ease-in-out infinite; display: inline-block; }
+
+    /* 모바일: 차트분석탭 — 신호 패널을 위로, 차트를 아래로 */
+    @media (max-width: 768px) {
+        div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+            flex-direction: column-reverse !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div[data-testid="column"] {
+            width: 100% !important;
+            flex: 0 0 100% !important;
+            max-width: 100% !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
