@@ -70,6 +70,25 @@ st.markdown("""
     .signal-box { padding:12px 8px; border-radius:12px; text-align:center; margin-bottom:12px; word-break:keep-all; }
     .wl-item { background:#1e2130; border-radius:8px; padding:8px 12px; margin:4px 0;
                display:flex; justify-content:space-between; align-items:center; }
+    @keyframes loading-sweep {
+        0%   { transform: translateX(-100%); }
+        50%  { transform: translateX(0%); }
+        100% { transform: translateX(100%); }
+    }
+    @keyframes loading-pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.5; }
+    }
+    .loading-bar-track {
+        background: #1e2444; border-radius: 8px; height: 6px;
+        overflow: hidden; margin-top: 16px;
+    }
+    .loading-bar-fill {
+        background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6);
+        height: 100%; width: 100%;
+        animation: loading-sweep 1.8s ease-in-out infinite;
+    }
+    .loading-icon { animation: loading-pulse 1.4s ease-in-out infinite; display: inline-block; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -718,6 +737,9 @@ with st.sidebar:
 # ─── 헤더 ────────────────────────────────────────────────────────────────────
 st.markdown("# 📈 AI 주식 분석 대시보드")
 
+# 탭 위에 항상 표시되는 로딩 배너 플레이스홀더
+_loading_ph = st.empty()
+
 # ─── 탭 레이아웃 (데이터 로딩 전 정의 — 탭 내 로딩 상태 표시용) ─────────────────
 tab_market, tab_chart, tab_rec, tab_news, tab_fund = st.tabs([
     "🌐 시장 현황",
@@ -752,21 +774,22 @@ _data_ready = bool(_aticker)
 
 # ── Rerun B: pending 처리 → 로딩 UI 표시 후 analyzed로 전환 ──────────────────
 if _pending and not _aticker:
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 중: **{st.session_state.get('_pending_sname', _pending)}** (`{_pending}`)")
-    with tab_chart:
-        st.markdown("### 📊 AI가 차트를 분석하고 있습니다...")
-        st.markdown("잠시만 기다려주세요 🕐")
-        _lp1 = st.progress(0, "주가 데이터 로딩 중...")
-        for _v in [20, 40, 60, 80]:
-            import time as _time; _time.sleep(0.05)
-            _lp1.progress(_v)
-    with tab_fund:
-        st.markdown("### 🏛️ AI가 펛더멘털을 분석하고 있습니다...")
-        st.markdown("잠시만 기다려주세요 🕐")
-        _lp2 = st.progress(0, "펛더멘털 데이터 로딩 중...")
-        for _v in [20, 40, 60, 80]:
-            import time as _time; _time.sleep(0.05)
-            _lp2.progress(_v)
+    _pname = st.session_state.get('_pending_sname', _pending)
+    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 중: **{_pname}** (`{_pending}`)")
+    _loading_ph.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
+            border:2px solid #3b82f6; border-radius:16px;
+            padding:28px 24px; text-align:center; margin:8px 0 16px;
+            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
+  <div class="loading-icon" style="font-size:40px;">⏳</div>
+  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 분석 준비 중</h3>
+  <p style="color:#94a3b8; margin:0; line-height:1.7;">
+    <span style="color:#e2e8f0; font-weight:bold;">{_pname}</span>
+    데이터를 불러오는 중입니다.<br>잠시만 기다려 주세요.
+  </p>
+  <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+</div>
+""", unsafe_allow_html=True)
     # pending → analyzed 로 전환 후 rerun (탭 이동은 분석 완료 후)
     st.session_state["analyzed_ticker"]  = st.session_state.pop("_pending_ticker")
     st.session_state["analyzed_sname"]   = st.session_state.pop("_pending_sname", _pending)
@@ -782,12 +805,27 @@ if _data_ready:
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
 
     # ── 주가 데이터 + 펀더멘털 병렬 로딩 ────────────────────────────────────
+    _loading_ph.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
+            border:2px solid #3b82f6; border-radius:16px;
+            padding:28px 24px; text-align:center; margin:8px 0 16px;
+            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
+  <div class="loading-icon" style="font-size:40px;">📊</div>
+  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 분석 중</h3>
+  <p style="color:#94a3b8; margin:0; line-height:1.7;">
+    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
+    주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
+  </p>
+  <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+</div>
+""", unsafe_allow_html=True)
     with st.spinner("📊 주가·재무 데이터 병렬 분석 중..."):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
             _f_data = _pool.submit(_stock_data, _aticker, _aperiod)
             _f_fund = _pool.submit(_fundamental, _aticker)
             data      = _f_data.result()
             fund_info = _f_fund.result()
+    _loading_ph.empty()
 
     if data.empty:
         st.session_state.pop("analyzed_ticker", None)
