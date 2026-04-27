@@ -825,7 +825,20 @@ if _data_ready:
             _f_fund = _pool.submit(_fundamental, _aticker)
             data      = _f_data.result()
             fund_info = _f_fund.result()
-    _loading_ph.empty()
+    _loading_ph.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
+            border:2px solid #3b82f6; border-radius:16px;
+            padding:28px 24px; text-align:center; margin:8px 0 16px;
+            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
+  <div class="loading-icon" style="font-size:40px;">🎯</div>
+  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 매매신호 분석 중</h3>
+  <p style="color:#94a3b8; margin:0; line-height:1.7;">
+    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
+    뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
+  </p>
+  <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+</div>
+""", unsafe_allow_html=True)
 
     if data.empty:
         st.session_state.pop("analyzed_ticker", None)
@@ -2503,6 +2516,7 @@ with tab_chart:
 
         # ── 단타 신호 (기술 + 뉴스) ────────────────────────────────────────────
         hybrid  = get_hybrid_signal(tech_score, news_score)
+        _loading_ph.empty()
         h_score = hybrid["hybrid_score"]
         h_label = hybrid["label"]
         h_badge = hybrid["badge"]
