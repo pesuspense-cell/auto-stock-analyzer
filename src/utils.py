@@ -20,11 +20,16 @@ from stock_ai import (
 
     # ── 종목 리스트 로딩 ──────────────────────────────────────────────────────
     get_krx_stock_list,
+    get_krx_etf_list,
     get_us_stock_list,
     get_top_kospi_stocks,
     get_top_kosdaq_stocks,
     get_top_us_stocks,
     get_top_nasdaq_stocks,
+
+    # ── ETF 유틸리티 ─────────────────────────────────────────────────────────
+    is_etf_ticker,
+    _ETF_PORTFOLIO_MAP,
 )
 
 __all__ = [
@@ -38,9 +43,12 @@ __all__ = [
     "get_investor_trading_naver",
     "get_recommendations",
     "get_krx_stock_list",
+    "get_krx_etf_list",
     "get_us_stock_list",
     "get_top_kospi_stocks",
     "get_top_kosdaq_stocks",
     "get_top_us_stocks",
     "get_top_nasdaq_stocks",
+    "is_etf_ticker",
+    "_ETF_PORTFOLIO_MAP",
 ]

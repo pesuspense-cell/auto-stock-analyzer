@@ -7,6 +7,8 @@ from stock_ai import (
     calculate_fundamental_score,
     get_investment_recommendation,
     get_insider_trades_sec,
+    get_etf_fundamental_data,
+    calculate_etf_score,
 )
 
 __all__ = [
@@ -14,4 +16,6 @@ __all__ = [
     "calculate_fundamental_score",
     "get_investment_recommendation",
     "get_insider_trades_sec",
+    "get_etf_fundamental_data",
+    "calculate_etf_score",
 ]

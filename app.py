@@ -30,19 +30,22 @@ try:
     from src.fundamental import (
         get_fundamental_data, calculate_fundamental_score,
         get_investment_recommendation, get_insider_trades_sec,
+        get_etf_fundamental_data, calculate_etf_score,
     )
     from src.news_logic import (
         get_naver_news, analyze_news_sentiment_keywords,
         analyze_news_sentiment_llm, analyze_news_batch, summarize_article_llm,
         get_advanced_sentiment, get_related_sector_performance,
+        get_etf_news_with_holdings, analyze_etf_news_sentiment,
     )
     from src.utils import (
         KOSPI_STOCKS, US_STOCKS, INDICES,
         get_market_movers, get_full_market_movers, get_exchange_rates,
         get_investor_trading_naver, get_recommendations,
-        get_krx_stock_list, get_us_stock_list,
+        get_krx_stock_list, get_krx_etf_list, get_us_stock_list,
         get_top_kospi_stocks, get_top_kosdaq_stocks,
         get_top_us_stocks, get_top_nasdaq_stocks,
+        is_etf_ticker, _ETF_PORTFOLIO_MAP,
     )
 except Exception as _import_err:
     import traceback as _tb
@@ -352,6 +355,14 @@ def _top_nasdaq(n: int = 500):
 def _us_stocks():
     return get_us_stock_list()
 
+@st.cache_data(ttl=86400)
+def _etf_stocks():
+    return get_krx_etf_list()
+
+@st.cache_data(ttl=300)
+def _etf_fundamental(ticker: str) -> dict:
+    return get_etf_fundamental_data(ticker)
+
 # ─── 관심종목 알림 체크 ───────────────────────────────────────────────────────
 def _get_wl_alerts() -> list:
     """
@@ -414,7 +425,7 @@ with st.sidebar:
     st.markdown("## ⚙️ 종목 설정")
     market_sel = st.selectbox(
         "시장",
-        ["국내 주식 (검색)", "미국 주식 (검색)", "직접 입력"],
+        ["국내 주식 (검색)", "국내 ETF (검색)", "미국 주식 (검색)", "직접 입력"],
         key="_market_sel",
         on_change=_clear_analysis,
     )
@@ -438,6 +449,29 @@ with st.sidebar:
             sname  = st.selectbox("종목", list(KOSPI_STOCKS.keys()),
                                   key="_krx_fallback")
             ticker = KOSPI_STOCKS[sname]
+
+    elif market_sel == "국내 ETF (검색)":
+        with st.spinner("ETF 목록 로딩 중..."):
+            etf_list = _etf_stocks()
+
+        if etf_list:
+            etf_options = list(etf_list.keys())
+            etf_selected = st.selectbox(
+                "ETF 검색 (이름·코드 입력)",
+                etf_options,
+                key="_etf_selected",
+                help="ETF 이름이나 6자리 코드를 입력하면 자동 필터링됩니다. 예) KODEX 200, 069500",
+            )
+            ticker = etf_list[etf_selected]
+            sname  = etf_selected.split(" (")[0]
+        else:
+            st.warning("ETF 목록 로드 실패 — 기본 목록 사용")
+            _etf_fb = {f"{v['name']} ({k})": f"{k}.KS" for k, v in _ETF_PORTFOLIO_MAP.items()}
+            sname   = st.selectbox("ETF", list(_etf_fb.keys()), key="_etf_fallback")
+            ticker  = _etf_fb[sname]
+            sname   = sname.split(" (")[0]
+
+        st.info("ETF는 기술적 분석 + ETF 전용 지표(괴리율·운용보수)로 분석됩니다.", icon="📊")
 
     elif market_sel == "미국 주식 (검색)":
         with st.spinner("미국 종목 목록 로딩 중... (S&P500 + 나스닥)"):
@@ -1215,13 +1249,39 @@ with tab_rec:
 # TAB 4  뉴스 & 관련 종목
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_news:
-    st.subheader(f"📰 {_asname or sname} 뉴스 & 관련 정보")
+    _news_is_etf = _data_ready and is_etf_ticker(ticker)
+
+    if _news_is_etf:
+        st.subheader(f"📊 {_asname or sname} 섹터 뉴스 — 돈이 몰리는 섹터 파악")
+        st.caption("ETF는 종목 필터를 느슨하게 적용하고 상위 구성종목 뉴스를 함께 수집합니다.")
+    else:
+        st.subheader(f"📰 {_asname or sname} 뉴스 & 관련 정보")
 
     is_kr_stock = ticker.endswith(".KS") or ticker.endswith(".KQ")
 
-    # ── 뉴스 수집 (컬럼 바깥 — 심층 분석에서도 재사용) ──────────────────────
+    # ── 뉴스 수집 ────────────────────────────────────────────────────────────
     raw_news: list = []
-    if is_kr_stock:
+    if _news_is_etf:
+        # ETF: 자체 뉴스 + 상위 구성종목 뉴스 통합 수집
+        with st.spinner("ETF 섹터 뉴스 수집 중 (ETF + 구성종목)..."):
+            _etf_fund_data = _etf_fundamental(ticker)
+            raw_news = get_etf_news_with_holdings(ticker, _etf_fund_data, max_items=15)
+        # ETF 섹터 배지 표시
+        _etf_sector = _etf_fund_data.get("sector", "")
+        _etf_holdings_display = [
+            h.get("name", h.get("ticker", "")) for h in _etf_fund_data.get("top_holdings", [])[:5]
+        ]
+        if _etf_sector or _etf_holdings_display:
+            st.markdown(
+                f'<div style="background:#1a2f3a;border-radius:8px;padding:10px 16px;margin-bottom:10px;">'
+                f'<span style="color:#80cbc4;font-weight:bold;">섹터: {_etf_sector or "N/A"}</span>'
+                + (f'&nbsp;&nbsp;|&nbsp;&nbsp;<span style="color:#aaa;font-size:0.85rem;">'
+                   f'구성종목 뉴스 포함: {", ".join(_etf_holdings_display)}</span>'
+                   if _etf_holdings_display else "") +
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    elif is_kr_stock:
         with st.spinner("네이버 금융에서 뉴스 수집 중..."):
             raw_news = _naver_news(ticker)
     else:
@@ -1242,11 +1302,14 @@ with tab_news:
             st.warning(f"뉴스 로드 실패: {e}")
 
     # ── AI 감성 분석 (컬럼 바깥 — 두 섹션 공유) ──────────────────────────────
-    _cname = sname if sname != ticker else ""   # 종목명을 관련성 판단에 활용
+    _cname = sname if sname != ticker else ""
     sent: dict = {}
     if raw_news:
         with st.spinner("AI 감성 분석 중..."):
-            if use_llm:
+            if _news_is_etf:
+                # ETF 전용 섹터 키워드 기반 감성 분석 (_etf_fund_data는 위 수집 단계에서 이미 로드됨)
+                sent = analyze_etf_news_sentiment(ticker, _etf_fund_data, raw_news)
+            elif use_llm:
                 sent = _news_sentiment_llm_cached(ticker, gemini_api_key, groq_api_key, _cname)
             else:
                 sent = _news_sentiment_kw(ticker, _cname)
@@ -1254,9 +1317,12 @@ with tab_news:
     col_news, col_rel = st.columns([3, 2])
 
     with col_news:
-        st.markdown(
-            "### 최신 뉴스 (네이버 금융)" if is_kr_stock else "### 최신 뉴스"
-        )
+        if _news_is_etf:
+            st.markdown("### 📊 ETF 섹터 뉴스 (ETF 자체 + 구성종목)")
+        elif is_kr_stock:
+            st.markdown("### 최신 뉴스 (네이버 금융)")
+        else:
+            st.markdown("### 최신 뉴스")
 
         if not raw_news:
             st.info("뉴스 데이터가 없습니다.")
@@ -1450,16 +1516,20 @@ with tab_news:
     # ══ 심층 분석 섹션 (전체 너비) ══════════════════════════════════════════════
     if raw_news:
         st.markdown("---")
-        st.markdown("### 🔍 심층 분석 — 키워드 강도 · 섹터 동조화")
+        if _news_is_etf:
+            st.markdown("### 🔍 섹터 자금 흐름 분석 — ETF 구성종목 동조화")
+        else:
+            st.markdown("### 🔍 심층 분석 — 키워드 강도 · 섹터 동조화")
 
         # 확장 키워드 감성
         adv = get_advanced_sentiment(raw_news)
         adv_score = adv.get("score", 0.0)
 
-        # 섹터 동조화
+        # 섹터 동조화 (ETF: 구성종목 기준, 일반: 섹터맵 + ETF 역조회)
         with st.spinner("섹터 동조화 분석 중..."):
             sec = _sector_perf(ticker)
         sector_avg = sec.get("avg_chg", 0.0)
+        _sec_label = sec.get("sector", "")
         _daily_chg = (float(close.iloc[-1]) - float(close.iloc[-2])) / float(close.iloc[-2]) * 100 if len(close) >= 2 else 0.0
         stock_diff = _daily_chg - sector_avg
 
@@ -1476,13 +1546,15 @@ with tab_news:
                 "• 0 근처: 중립 또는 뉴스 없음"
             ),
         )
+        _sec_label_str = f"[{_sec_label}] " if _sec_label else ""
         c2.metric(
-            "🏭 섹터 평균 등락",
+            "🏭 섹터 평균 등락" if not _news_is_etf else "📦 구성종목 평균 등락",
             f"{sector_avg:+.2f}%",
-            f"{'섹터 데이터 있음' if sec['has_data'] else '섹터 매핑 없음'}",
+            f"{_sec_label_str}{'데이터 있음' if sec['has_data'] else '매핑 없음'}",
             help=(
                 "동일 업종 연관 종목들의 당일 평균 등락률.\n\n"
-                "• 섹터 전체가 오르는 날 이 종목도 오르면 동조화\n"
+                + ("ETF: 구성종목 기준 섹터 평균입니다.\n\n" if _news_is_etf else "")
+                + "• 섹터 전체가 오르는 날 이 종목도 오르면 동조화\n"
                 "• 섹터는 빠지는데 이 종목만 오르면 개별 주도주"
             ),
         )
@@ -1584,359 +1656,508 @@ with tab_news:
 # TAB 5  펀더멘털 & 기관
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_fund:
-    st.subheader(f"🏛️ {_asname or sname} 펀더멘털 & 기관 분석")
+    _is_etf = _data_ready and is_etf_ticker(ticker)
 
-    # ── KRX DB 갱신 상태 표시 ─────────────────────────────────────────────────
-    _is_krx = ticker.endswith(".KS") or ticker.endswith(".KQ")
-    if _is_krx:
-        _fund_db_ok = False
-        try:
-            from fundamental_db import get_last_update, needs_update, update_market
-            _fund_db_ok = True
-        except Exception:
-            pass
-        if _fund_db_ok:
-            _krx_market = "KOSPI" if ticker.endswith(".KS") else "KOSDAQ"
-            _last_upd = get_last_update(_krx_market)
-            _needs = needs_update(_krx_market)
+    if _is_etf:
+        # ══ ETF 전용 분석 UI ═════════════════════════════════════════════════
+        st.subheader(f"📊 {_asname or sname} ETF 분석")
+        st.caption("ETF는 괴리율·운용보수·추적오차 중심으로 평가합니다. '현재 어느 섹터에 돈이 몰리는가'를 파악하는 용도로 활용하세요.")
 
-            _db_col1, _db_col2 = st.columns([3, 1])
-            with _db_col1:
-                if _last_upd:
-                    _upd_dt = _last_upd[:10]
-                    if _needs:
-                        st.warning(f"📅 펀더멘털 DB 마지막 갱신: {_upd_dt} — 분기 업데이트가 필요합니다.")
-                    else:
-                        st.success(f"✅ 펀더멘털 DB 마지막 갱신: {_upd_dt} (pykrx 기준)")
+        with st.spinner("ETF 지표 로딩 중..."):
+            _etf_data   = _etf_fundamental(ticker)
+            _etf_score  = calculate_etf_score(_etf_data)
+
+        # ── ETF 핵심 지표 메트릭 행 ──────────────────────────────────────────
+        _em1, _em2, _em3, _em4, _em5 = st.columns(5)
+        _price     = _etf_data.get("price")
+        _nav       = _etf_data.get("nav")
+        _premium   = _etf_data.get("nav_premium")
+        _er        = _etf_data.get("expense_ratio")
+        _te        = _etf_data.get("tracking_error")
+        _div       = _etf_data.get("dividend_yield")
+        _aum       = _etf_data.get("aum")
+        _sector    = _etf_data.get("sector", "")
+
+        _em1.metric("현재가", f"{_price:,.0f}원" if _price else "N/A")
+        _em2.metric("NAV",    f"{_nav:,.0f}원"  if _nav   else "N/A",
+                    delta=f"괴리율 {_premium:+.2f}%" if _premium is not None else None)
+        _em3.metric("운용보수(ER)", f"{_er:.3f}%" if _er is not None else "N/A",
+                    help="연간 운용보수. 낮을수록 장기 복리 수익 유리")
+        _em4.metric("추적오차",    f"{_te:.2f}%" if _te is not None else "N/A",
+                    help="기초지수 대비 추종 오차. 낮을수록 지수를 정밀하게 추종")
+        _em5.metric("배당수익률",  f"{_div:.2f}%" if _div is not None else "N/A")
+
+        if _aum:
+            st.caption(f"순자산(AUM): **{_aum:,.0f}억원**  |  섹터: **{_sector}**  |  출처: {_etf_data.get('source','')}")
+
+        st.markdown("---")
+
+        # ── ETF 점수 & 판정 ──────────────────────────────────────────────────
+        _es_col, _er_col = st.columns([1, 2])
+        with _es_col:
+            _etf_s    = _etf_score.get("etf_score", 0.0)
+            _etf_lbl  = _etf_score.get("etf_label", "N/A")
+            if _etf_s >= 1.5:
+                _ebg, _efc = "#1a2f3a", "#80cbc4"
+            elif _etf_s <= -0.5:
+                _ebg, _efc = "#3a2a1a", "#ffcc80"
+            else:
+                _ebg, _efc = "#1e2130", "#bdbdbd"
+            st.markdown(f"""
+            <div class="signal-box" style="background:{_ebg};">
+                <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">📊 ETF 투자 판정</div>
+                <div style="font-size:1.3rem;font-weight:bold;color:{_efc};">{_etf_lbl}</div>
+                <div style="font-size:0.9rem;color:#aaa;margin-top:4px;">점수: <b style="color:{_efc};">{_etf_s:+.1f}</b> / ±6.5</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # 항목별 점수 바
+            st.markdown("**항목별 점수**")
+            _bd = _etf_score.get("score_breakdown", {})
+            _score_meta = [
+                ("괴리율",   "±3", "#80cbc4"),
+                ("운용보수", "±2", "#a5d6a7"),
+                ("추적오차", "±1.5", "#ce93d8"),
+                ("배당수익률","±0.5","#ffcc80"),
+            ]
+            for _lbl, _rng, _clr in _score_meta:
+                _sv = _bd.get(_lbl, 0.0)
+                # 0~100 변환: 3 → 100%, -3 → 0%
+                _max = float(_rng.replace("±",""))
+                _pct = int((_sv + _max) / (_max * 2) * 100)
+                st.markdown(
+                    f'<div style="margin-bottom:5px;">'
+                    f'<div style="display:flex;justify-content:space-between;font-size:0.75rem;">'
+                    f'<span style="color:#ccc;">{_lbl} <span style="color:#555;">({_rng})</span></span>'
+                    f'<b style="color:{_clr};">{_sv:+.1f}</b></div>'
+                    f'<div style="background:#2a2d3e;border-radius:3px;height:5px;">'
+                    f'<div style="background:{_clr};width:{_pct}%;height:5px;border-radius:3px;"></div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+        with _er_col:
+            st.markdown("**📋 ETF 투자 근거**")
+            _pos_etf_kw = ["매수", "유리", "양호", "낮음", "정밀", "할인", "최저"]
+            _neg_etf_kw = ["주의", "높음", "과열", "프리미엄", "불량", "잠식", "위험"]
+            for _r in _etf_score.get("etf_reasons", []):
+                if any(k in _r for k in _pos_etf_kw):
+                    st.success(_r, icon="✅")
+                elif any(k in _r for k in _neg_etf_kw):
+                    st.warning(_r, icon="⚠️")
                 else:
-                    st.warning("⚠️ 펀더멘털 DB가 비어 있습니다. 전체 업데이트를 실행하세요.")
-            with _db_col2:
-                if st.button("🔄 전체 업데이트", key="btn_fund_update"):
-                    with st.spinner(f"{_krx_market} 전체 종목 업데이트 중 (수 분 소요)..."):
-                        _cnt = update_market(_krx_market)
-                    st.success(f"{_cnt}개 종목 업데이트 완료!")
-                    st.rerun()
+                    st.info(_r, icon="ℹ️")
 
-    # fund_info / fund_score_data 는 상단에서 이미 계산됨
-    col_f1, col_f2 = st.columns([1, 1])
+            if not _etf_score.get("etf_reasons"):
+                st.info("ETF 지표 데이터를 불러올 수 없습니다. (pykrx / Naver Finance 접근 필요)")
 
-    # ── 장투 신호 근거 ────────────────────────────────────────────────────────
-    with col_f1:
-        st.markdown("### 🏛️ 장투 신호 근거 (투자법칙)")
+        st.markdown("---")
 
-        fs   = fund_score_data.get("fund_score", 0)
-        flbl = fund_score_data.get("fund_label", "N/A")
-
-        if fs >= 3:
-            fbg, ffc = "#1a2f3a", "#80cbc4"
-        elif fs <= -2:
-            fbg, ffc = "#3a2a1a", "#ffcc80"
-        else:
-            fbg, ffc = "#1e2130", "#bdbdbd"
-
-        st.markdown(f"""
-        <div class="signal-box" style="background:{fbg};">
-            <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">🏛️ 장투 신호</div>
-            <div style="font-size:1.25rem;font-weight:bold;color:{ffc};">🏛️ {flbl}</div>
-            <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">장투 점수: <b style="color:{ffc};">{fs:+.1f}</b></div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ── 4분류 서브 점수 바 ────────────────────────────────────────────────
-        def _fund_bar(label, score, weight):
-            c = "#a5d6a7" if score >= 65 else ("#ef9a9a" if score <= 35 else "#fff176")
+        # ── NAV 괴리율 설명 ──────────────────────────────────────────────────
+        if _premium is not None:
+            _prem_color = "#ef5350" if _premium > 1 else ("#42a5f5" if _premium < -0.5 else "#bdbdbd")
             st.markdown(
-                f'<div style="margin-bottom:5px;">'
-                f'<div style="display:flex;justify-content:space-between;font-size:0.75rem;">'
-                f'<span style="color:#ccc;">{label} <span style="color:#555;">({weight})</span></span>'
-                f'<b style="color:{c};">{score:.0f}</b></div>'
-                f'<div style="background:#2a2d3e;border-radius:3px;height:5px;">'
-                f'<div style="background:{c};width:{int(score)}%;height:5px;border-radius:3px;"></div>'
+                f'<div style="background:#12141f;border-radius:10px;padding:14px 18px;">'
+                f'<div style="font-size:0.85rem;color:#aaa;">📐 NAV 괴리율이란?</div>'
+                f'<div style="font-size:1rem;margin-top:4px;">현재가(<b>{_price:,.0f}원</b>) vs NAV(<b>{_nav:,.0f}원</b>)</div>'
+                f'<div style="font-size:1.1rem;font-weight:bold;color:{_prem_color};margin-top:4px;">'
+                f'{"🔴 프리미엄" if _premium > 0 else "🔵 할인"} {_premium:+.2f}%</div>'
+                f'<div style="font-size:0.8rem;color:#888;margin-top:6px;">'
+                f'{"시장가가 NAV보다 높음 → 고평가. 매수 시 주의 필요" if _premium > 0.5 else "시장가가 NAV보다 낮음 → 저평가. 잠재적 매수 기회"}'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
-        _fund_bar("성장성 (PEG·매출)",        fund_score_data.get("sub_growth", 50), "40%")
-        _fund_bar("수익성 (ROE·FCF·OCF)",     fund_score_data.get("sub_profit", 50), "30%")
-        _fund_bar("안정성 (그레이엄·부채)",   fund_score_data.get("sub_stable", 50), "20%")
-        _fund_bar("모멘텀 (52주·주주환원)",   fund_score_data.get("sub_moment", 50), "10%")
 
-        st.markdown("**📋 투자법칙 신호 근거**")
-        _pos_kw = ["저평가", "우량", "충족", "탁월", "양호", "성장", "모멘텀", "지속성", "환원", "높음", "품질"]
-        _neg_kw = ["경고", "위험", "부진", "고평가", "감소", "소진", "낮음", "이슈", "미흡", "단발성"]
-        for r in fund_score_data.get("fund_reasons", []):
-            if any(k in r for k in _pos_kw):
-                st.success(r, icon="🔺")
-            elif any(k in r for k in _neg_kw):
-                st.error(r, icon="🔻")
-            else:
-                st.info(r, icon="🔷")
-
-        if not fund_score_data.get("fund_reasons"):
-            st.info("펀더멘털 데이터를 불러올 수 없습니다. (한국 주식은 일부 지표 미지원)")
-
-    # ── 펀더멘털 지표 테이블 ──────────────────────────────────────────────────
-    with col_f2:
-        st.markdown("### 📈 시장 가치 지표")
-
-        def _fund_row(label, key, fmt_fn, law_ref=""):
-            val = fund_info.get(key)
-            if val is not None and pd.notna(val):
-                try:
-                    return {"지표": label, "값": fmt_fn(val), "참고 법칙": law_ref}
-                except Exception:
-                    pass
-            return {"지표": label, "값": "N/A", "참고 법칙": law_ref}
-
-        def _fmt_money(v):
-            if abs(v) >= 1e12: return f"{v/1e12:.2f}조"
-            if abs(v) >= 1e8:  return f"{v/1e8:.0f}억"
-            return f"{v:,.0f}"
-
-        mc  = fund_info.get("market_cap")
-        fcf = fund_info.get("free_cashflow")
-
-        mkt_rows = [
-            _fund_row("시가총액",           "market_cap",   _fmt_money, ""),
-            _fund_row("PER (주가수익비율)", "per",          lambda v: f"{v:.2f}x", "그레이엄: PBR×PER < 22.5"),
-            _fund_row("PBR (주가순자산비율)","pbr",         lambda v: f"{v:.2f}x", "그레이엄: PBR < 1.0 선호"),
-            _fund_row("PSR (주가매출비율)", "psr",          lambda v: f"{v:.2f}x", "1.0 이하 저평가 기준"),
-            _fund_row("Forward PER",        "forward_pe",   lambda v: f"{v:.2f}x", "성장 기대치 반영"),
-            _fund_row("EPS (TTM)",          "eps_ttm",      lambda v: f"{v:,.2f}", ""),
-            _fund_row("ROE (자기자본수익률)","roe",         lambda v: f"{v*100:.1f}%", "버핏: 15% 이상"),
-            _fund_row("영업이익률",         "operating_margins", lambda v: f"{v*100:.1f}%", ""),
-            _fund_row("부채비율",           "debt_equity",  lambda v: f"{v:.0f}%", "버핏: 50% 이하"),
-            _fund_row("매출 성장률 (YoY)",  "revenue_growth",  lambda v: f"{v*100:+.1f}%", "린치: 20%+"),
-            _fund_row("순이익 성장률 (YoY)","earnings_growth", lambda v: f"{v*100:+.1f}%", "CANSLIM: 25%+"),
-        ]
-        if fcf and mc and mc > 0:
-            mkt_rows.insert(4, {"지표": "FCF Yield", "값": f"{fcf/mc*100:.1f}%", "참고 법칙": "버핏: 5% 이상"})
-
-        # 새 보조 지표 행 추가
-        _roe_mean = fund_score_data.get("roe_mean")
-        _roe_std  = fund_score_data.get("roe_std")
-        if _roe_mean is not None:
-            _roe_consist = f"평균 {_roe_mean:.1f}% / 편차 {_roe_std:.1f}%p" if _roe_std is not None else f"평균 {_roe_mean:.1f}%"
-            mkt_rows.append({"지표": "ROE 지속성 (다년)", "값": _roe_consist, "참고 법칙": "버핏: 평균≥15% & 편차≤5%"})
-        _ocf_ni = fund_score_data.get("ocf_ni_ratio")
-        if _ocf_ni is not None:
-            mkt_rows.append({"지표": "OCF/순이익 (현금질)", "값": f"{_ocf_ni:.2f}x", "참고 법칙": "> 1.0 = 이익 신뢰성 높음"})
-        _sh = fund_score_data.get("shareholder_yield")
-        if _sh is not None:
-            mkt_rows.append({"지표": "주주환원율", "값": f"{_sh:.1f}%", "참고 법칙": "배당+자사주 / 시총 (≥3% 양호)"})
-
-        st.dataframe(pd.DataFrame(mkt_rows), use_container_width=True, hide_index=True)
-
-        # ── 재무제표 (DART 우선 → yfinance fallback) ──────────────────────
-        st.markdown("### 💰 재무 핵심 지표")
-
-        _is_krx_f = ticker.endswith(".KS") or ticker.endswith(".KQ")
-        dart_fin  = {}
-        if _is_krx_f and dart_api_key:
-            with st.spinner("DART 재무제표 조회 중..."):
-                try:
-                    from fundamental_db import get_dart_financials
-                    dart_fin = get_dart_financials(ticker, dart_api_key)
-                except Exception:
-                    pass
-
-        def _fin_val(dart_key, yf_key, unit_label="억원"):
-            # DART 우선
-            if dart_fin.get(dart_key) is not None:
-                v = dart_fin[dart_key]
-                return f"{v:,.0f} {unit_label}"
-            # yfinance fallback
-            v = fund_info.get(yf_key)
-            if v is not None and pd.notna(v):
-                return _fmt_money(v)
-            return "N/A"
-
-        fin_src = f"DART {dart_fin.get('year','')}" if dart_fin else "yfinance"
-        fin_rows = [
-            {"지표": "매출액",    "값": _fin_val("revenue",          "total_revenue")},
-            {"지표": "영업이익",  "값": _fin_val("operating_income",  "operating_income")},
-            {"지표": "당기순이익","값": _fin_val("net_income",        "net_income")},
-            {"지표": "잉여현금흐름(FCF)", "값": _fmt_money(fcf) if fcf else "N/A"},
-        ]
-        st.dataframe(pd.DataFrame(fin_rows), use_container_width=True, hide_index=True)
-
-        _src = fund_info.get("source", "yfinance")
-        st.caption(f"시장 지표: **{_src}** | 재무 지표: **{fin_src}**")
-
-    # ── 거장의 한 줄 평 ──────────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🎖️ 투자 거장의 한 줄 평")
-
-    _verdicts = fund_score_data.get("master_verdicts", {})
-    _master_meta = [
-        ("그레이엄", "📖 벤저민 그레이엄", "#80cbc4",  "안전마진·가치투자의 아버지"),
-        ("버핏",    "🏛️ 워렌 버핏",       "#a5d6a7",  "ROE 지속성·경제적 해자"),
-        ("린치",    "🚀 피터 린치",        "#ce93d8",  "PEG·성장주 발굴"),
-        ("오닐",    "🔥 윌리엄 오닐",      "#ffcc80",  "신고가·CANSLIM"),
-    ]
-    _vcols = st.columns(4)
-    for _vcol, (_key, _name, _clr, _sub) in zip(_vcols, _master_meta):
-        _v = _verdicts.get(_key, {})
-        _icon    = _v.get("icon", "—")
-        _verdict = _v.get("판정", "N/A")
-        _comment = _v.get("comment", "데이터 부족")
-        _vcol.markdown(
-            f'<div style="background:#12141f;border-radius:10px;padding:12px;'
-            f'border-left:3px solid {_clr};min-height:140px;">'
-            f'<div style="font-size:0.72rem;color:#888;margin-bottom:4px;">{_sub}</div>'
-            f'<div style="font-size:0.9rem;font-weight:bold;color:{_clr};margin-bottom:4px;">'
-            f'{_name}</div>'
-            f'<div style="font-size:1.1rem;margin-bottom:6px;">'
-            f'{_icon} <b style="color:#e0e0e0;">{_verdict}</b></div>'
-            f'<div style="font-size:0.75rem;color:#aaa;line-height:1.5;">{_comment}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-    # ── 전날 매매 동향 (Naver Finance) ───────────────────────────────────────
-    if _is_krx_f:
         st.markdown("---")
-        st.markdown("### 📊 전날 투자자별 매매 동향")
-        with st.spinner("투자자 데이터 조회 중..."):
-            _inv_f = get_investor_trading_naver(ticker)
-        if _inv_f:
-            _inv_date_f = _inv_f.get("date", "")
-            if len(_inv_date_f) == 8:
-                _inv_date_f = f"{_inv_date_f[:4]}.{_inv_date_f[4:6]}.{_inv_date_f[6:]}"
-            st.caption(f"기준일: {_inv_date_f}  |  단위: 주(株)  |  출처: Naver Finance")
-            _inv_f_cols = st.columns(3)
-            for col, key, label in zip(
-                _inv_f_cols,
-                ["외국인", "기관합계", "개인"],
-                ["🌐 외국인", "🏦 기관", "👤 개인"],
-            ):
-                val = _inv_f.get(key)
-                if val is not None:
-                    _sign = "+" if val > 0 else ""
-                    _color = "#ef5350" if val > 0 else ("#42a5f5" if val < 0 else "#bdbdbd")
-                    col.markdown(
-                        f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
-                        f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
-                        f'<div style="font-size:1.1rem;font-weight:bold;color:{_color};">{_sign}{val:,}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    col.markdown(
-                        f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
-                        f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
-                        f'<div style="font-size:1.1rem;color:#555;">N/A</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
+
+        # ── 구성종목 (PDF) 상위 보유 현황 ────────────────────────────────────
+        st.markdown("### 🗂️ 상위 구성종목 (PDF)")
+        _holdings = _etf_data.get("top_holdings", [])
+        if _holdings:
+            _h_rows = []
+            for _h in _holdings[:10]:
+                _h_rows.append({
+                    "종목 티커":  _h.get("ticker", ""),
+                    "종목명":     _h.get("name", ""),
+                    "비중(%)":    f'{_h["weight"]:.2f}' if _h.get("weight") is not None else "N/A",
+                })
+            st.dataframe(pd.DataFrame(_h_rows), use_container_width=True, hide_index=True)
+            st.caption("상위 구성종목이 해당 섹터의 시장 흐름을 직접 반영합니다.")
         else:
-            st.caption("투자자 매매 동향 데이터를 불러올 수 없습니다.")
+            st.info("구성종목 데이터를 불러올 수 없습니다. (pykrx PDF 미수집)")
 
-    # ── 손절·익절 상세 ────────────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🛡️ 손절·익절 레벨 상세 (오닐·ATR 기반)")
-
-    sl = get_stop_loss_targets(data)
-    if sl:
-        s1, s2, s3, s4, s5 = st.columns(5)
-        s1.metric("현재가", f"{sl['current']:,.2f}",
-                  help="최근 거래일 종가 기준 현재가입니다.")
-        s2.metric("손절 (오닐 8%)", f"{sl['stop_8pct']:,.2f}",
-                  f"{(sl['stop_8pct']/sl['current']-1)*100:.1f}%",
-                  help=(
-                      "윌리엄 오닐 CANSLIM 원칙: 매수가 대비 -8% 도달 시 무조건 손절.\n\n"
-                      "작은 손실을 빠르게 잘라내어 큰 손실을 방지하는 핵심 원칙입니다.\n"
-                      "출처: 《최고의 주식 최적의 타이밍》(윌리엄 오닐)"
-                  ))
-        s3.metric("손절 (ATR×2.5)", f"{sl['stop_atr']:,.2f}",
-                  f"{(sl['stop_atr']/sl['current']-1)*100:.1f}%",
-                  help=(
-                      f"ATR(평균실질변동폭, 14일) × 2.5를 현재가에서 뺀 손절선.\n\n"
-                      f"• 현재 ATR: {sl['atr']:,.2f} (일일 변동폭 {sl['atr_ratio']:.2f}%)\n"
-                      f"• 종목의 정상 변동 범위를 벗어날 때 손절하는 방식\n"
-                      f"• 변동성이 클수록 손절선이 넓어집니다."
-                  ))
-        s4.metric("목표 2R", f"{sl['target_2r']:,.2f}",
-                  f"{(sl['target_2r']/sl['current']-1)*100:+.1f}%",
-                  help=(
-                      "리스크(현재가 - 손절가)의 2배를 현재가에 더한 1차 목표가.\n\n"
-                      "• 손실 1에 이익 2를 추구하는 비율 (2:1 R/R)\n"
-                      "• 최소 권장 비율. 이 가격에서 일부 분할 익절 고려."
-                  ))
-        s5.metric("목표 3R", f"{sl['target_3r']:,.2f}",
-                  f"{(sl['target_3r']/sl['current']-1)*100:+.1f}%",
-                  help=(
-                      "리스크(현재가 - 손절가)의 3배를 더한 최종 목표가.\n\n"
-                      "• 손실 1에 이익 3을 추구 (3:1 R/R)\n"
-                      "• 트레이딩 표준 권장 비율. 오닐·린치 등 대부분의 투자법칙이 권장.\n"
-                      "• 이 비율이면 승률 25%만 돼도 장기적으로 수익 가능."
-                  ))
-
-        st.markdown(f"""
-        > **ATR (14일):** {sl['atr']:,.2f} ({sl['atr_ratio']:.2f}%)
-        > **52주 고가:** {sl['high_52w']:,.2f}
-        > **BB 상단:** {f"{sl['bb_upper']:,.2f}" if sl['bb_upper'] else 'N/A'}
-        >
-        > 📌 오닐 원칙: 매수가 대비 -7~8% 도달 시 무조건 손절 | 목표 3R = 리스크의 3배 수익
-        """)
-
-    # ── SEC 내부자 거래 (미국 주식 전용) ──────────────────────────────────────
-    st.markdown("---")
-    is_us = "." not in ticker
-    if is_us:
-        st.markdown("### 🏦 SEC 내부자 거래 (Form 4, 최근 90일)")
-        st.caption("데이터 소스: SEC EDGAR (edgar.sec.gov) — 완전 무료 공식 API")
-
-        with st.spinner("SEC EDGAR에서 내부자 거래 조회 중..."):
-            insider_df = _insider_trades(ticker)
-
-        if insider_df is not None and not insider_df.empty:
-            st.dataframe(
-                insider_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "링크": st.column_config.LinkColumn("SEC 공시 링크", display_text="바로가기"),
-                },
+        # ── 기술적 분석 점수 요약 (ETF도 동일 적용) ─────────────────────────
+        if _data_ready:
+            st.markdown("### 📈 기술적 분석 (ETF 동일 적용)")
+            _etf_sig = signals
+            _sig_score = _etf_sig.get("score", 0)
+            _sig_label = _etf_sig.get("label", "N/A")
+            _sig_clr = "#a5d6a7" if _sig_score >= 3 else ("#ef9a9a" if _sig_score <= -3 else "#bdbdbd")
+            st.markdown(
+                f'<div style="background:#1e2130;border-radius:10px;padding:12px 18px;">'
+                f'<span style="font-size:0.9rem;color:#aaa;">기술적 신호: </span>'
+                f'<b style="color:{_sig_clr};font-size:1.1rem;">{_sig_label} ({_sig_score:+.1f}점)</b>'
+                f'</div>',
+                unsafe_allow_html=True,
             )
-            st.caption(f"총 {len(insider_df)}건의 Form 4 공시 발견")
-        else:
-            st.info("최근 90일 내 Form 4 공시가 없거나 데이터를 불러올 수 없습니다.")
+            for _reason in (_etf_sig.get("reasons") or [])[:5]:
+                st.caption(f"• {_reason}")
 
-        st.markdown("""
-        #### 📌 내부자 거래 해석 가이드
-        | 신호 | 의미 | 투자 판단 |
-        |------|------|-----------|
-        | 임원 다수 동시 매수 | 내부자 확신 → 강한 매수 신호 | ★★★ |
-        | 임원 대량 매도 ($1M+) | 주가 고점 가능성 | 주의 |
-        | 소량 분산 매도 | 세금·다각화 목적, 무의미 | 참고만 |
-
-        > 출처: Form 4 (거래 후 2영업일 이내 의무 공시, SEC EDGAR)
-        """)
     else:
-        st.markdown("### 🏦 기관/내부자 데이터")
-        st.info(
-            "SEC EDGAR Form 4 내부자 거래는 **미국 주식 전용** 기능입니다.  \n"
-            "한국 주식의 경우 [DART 전자공시](https://dart.fss.or.kr)에서 조회 가능합니다."
-        )
+        pass
 
-    # ── 투자 법칙 요약 ────────────────────────────────────────────────────────
-    st.markdown("---")
-    with st.expander("📚 적용 투자 법칙 레퍼런스"):
-        st.markdown("""
-        | 투자자 | 법칙 | 기준값 | 적용 |
-        |--------|------|--------|------|
-        | 벤저민 그레이엄 | PBR×PER | < 22.5 | 저평가 판단 |
-        | 워렌 버핏 | ROE 지속성 | ≥ 15% 연속 | 우량 기업 선별 |
-        | 워렌 버핏 | 부채비율 | < 50% | 재무 안정성 |
-        | 워렌 버핏 | FCF Yield | > 5% | 현금창출 능력 |
-        | 피터 린치 | PEG 비율 | < 1.0 매수, > 2.0 매도 | 성장 대비 가격 |
-        | 피터 린치 | 매출 성장 | YoY ≥ 20% | 텐배거 후보 |
-        | 윌리엄 오닐 | CANSLIM-N | 52주 신고가 근접 | 모멘텀 돌파 |
-        | 윌리엄 오닐 | 손절 원칙 | 매수가 -7~8% | 손실 제한 |
-        | 윌리엄 오닐 | 3:1 R/R | 목표 = 리스크×3 | 익절 목표 |
+    if not _is_etf:
+        # ── KRX DB 갱신 상태 표시 ─────────────────────────────────────────────────
+        _is_krx = ticker.endswith(".KS") or ticker.endswith(".KQ")
+        if _is_krx:
+            _fund_db_ok = False
+            try:
+                from fundamental_db import get_last_update, needs_update, update_market
+                _fund_db_ok = True
+            except Exception:
+                pass
+            if _fund_db_ok:
+                _krx_market = "KOSPI" if ticker.endswith(".KS") else "KOSDAQ"
+                _last_upd = get_last_update(_krx_market)
+                _needs = needs_update(_krx_market)
 
-        > 📘 참고: 《현명한 투자자》(그레이엄) · 《전설로 떠나는 월가의 영웅》(린치) · 《최고의 주식 최적의 타이밍》(오닐)
-        """)
+                _db_col1, _db_col2 = st.columns([3, 1])
+                with _db_col1:
+                    if _last_upd:
+                        _upd_dt = _last_upd[:10]
+                        if _needs:
+                            st.warning(f"📅 펀더멘털 DB 마지막 갱신: {_upd_dt} — 분기 업데이트가 필요합니다.")
+                        else:
+                            st.success(f"✅ 펀더멘털 DB 마지막 갱신: {_upd_dt} (pykrx 기준)")
+                    else:
+                        st.warning("⚠️ 펀더멘털 DB가 비어 있습니다. 전체 업데이트를 실행하세요.")
+                with _db_col2:
+                    if st.button("🔄 전체 업데이트", key="btn_fund_update"):
+                        with st.spinner(f"{_krx_market} 전체 종목 업데이트 중 (수 분 소요)..."):
+                            _cnt = update_market(_krx_market)
+                        st.success(f"{_cnt}개 종목 업데이트 완료!")
+                        st.rerun()
+
+        # fund_info / fund_score_data 는 상단에서 이미 계산됨
+        col_f1, col_f2 = st.columns([1, 1])
+
+        # ── 장투 신호 근거 ────────────────────────────────────────────────────────
+        with col_f1:
+            st.markdown("### 🏛️ 장투 신호 근거 (투자법칙)")
+
+            fs   = fund_score_data.get("fund_score", 0)
+            flbl = fund_score_data.get("fund_label", "N/A")
+
+            if fs >= 3:
+                fbg, ffc = "#1a2f3a", "#80cbc4"
+            elif fs <= -2:
+                fbg, ffc = "#3a2a1a", "#ffcc80"
+            else:
+                fbg, ffc = "#1e2130", "#bdbdbd"
+
+            st.markdown(f"""
+            <div class="signal-box" style="background:{fbg};">
+                <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">🏛️ 장투 신호</div>
+                <div style="font-size:1.25rem;font-weight:bold;color:{ffc};">🏛️ {flbl}</div>
+                <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">장투 점수: <b style="color:{ffc};">{fs:+.1f}</b></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── 4분류 서브 점수 바 ────────────────────────────────────────────────
+            def _fund_bar(label, score, weight):
+                c = "#a5d6a7" if score >= 65 else ("#ef9a9a" if score <= 35 else "#fff176")
+                st.markdown(
+                    f'<div style="margin-bottom:5px;">'
+                    f'<div style="display:flex;justify-content:space-between;font-size:0.75rem;">'
+                    f'<span style="color:#ccc;">{label} <span style="color:#555;">({weight})</span></span>'
+                    f'<b style="color:{c};">{score:.0f}</b></div>'
+                    f'<div style="background:#2a2d3e;border-radius:3px;height:5px;">'
+                    f'<div style="background:{c};width:{int(score)}%;height:5px;border-radius:3px;"></div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+            _fund_bar("성장성 (PEG·매출)",        fund_score_data.get("sub_growth", 50), "40%")
+            _fund_bar("수익성 (ROE·FCF·OCF)",     fund_score_data.get("sub_profit", 50), "30%")
+            _fund_bar("안정성 (그레이엄·부채)",   fund_score_data.get("sub_stable", 50), "20%")
+            _fund_bar("모멘텀 (52주·주주환원)",   fund_score_data.get("sub_moment", 50), "10%")
+
+            st.markdown("**📋 투자법칙 신호 근거**")
+            _pos_kw = ["저평가", "우량", "충족", "탁월", "양호", "성장", "모멘텀", "지속성", "환원", "높음", "품질"]
+            _neg_kw = ["경고", "위험", "부진", "고평가", "감소", "소진", "낮음", "이슈", "미흡", "단발성"]
+            for r in fund_score_data.get("fund_reasons", []):
+                if any(k in r for k in _pos_kw):
+                    st.success(r, icon="🔺")
+                elif any(k in r for k in _neg_kw):
+                    st.error(r, icon="🔻")
+                else:
+                    st.info(r, icon="🔷")
+
+            if not fund_score_data.get("fund_reasons"):
+                st.info("펀더멘털 데이터를 불러올 수 없습니다. (한국 주식은 일부 지표 미지원)")
+
+        # ── 펀더멘털 지표 테이블 ──────────────────────────────────────────────────
+        with col_f2:
+            st.markdown("### 📈 시장 가치 지표")
+
+            def _fund_row(label, key, fmt_fn, law_ref=""):
+                val = fund_info.get(key)
+                if val is not None and pd.notna(val):
+                    try:
+                        return {"지표": label, "값": fmt_fn(val), "참고 법칙": law_ref}
+                    except Exception:
+                        pass
+                return {"지표": label, "값": "N/A", "참고 법칙": law_ref}
+
+            def _fmt_money(v):
+                if abs(v) >= 1e12: return f"{v/1e12:.2f}조"
+                if abs(v) >= 1e8:  return f"{v/1e8:.0f}억"
+                return f"{v:,.0f}"
+
+            mc  = fund_info.get("market_cap")
+            fcf = fund_info.get("free_cashflow")
+
+            mkt_rows = [
+                _fund_row("시가총액",           "market_cap",   _fmt_money, ""),
+                _fund_row("PER (주가수익비율)", "per",          lambda v: f"{v:.2f}x", "그레이엄: PBR×PER < 22.5"),
+                _fund_row("PBR (주가순자산비율)","pbr",         lambda v: f"{v:.2f}x", "그레이엄: PBR < 1.0 선호"),
+                _fund_row("PSR (주가매출비율)", "psr",          lambda v: f"{v:.2f}x", "1.0 이하 저평가 기준"),
+                _fund_row("Forward PER",        "forward_pe",   lambda v: f"{v:.2f}x", "성장 기대치 반영"),
+                _fund_row("EPS (TTM)",          "eps_ttm",      lambda v: f"{v:,.2f}", ""),
+                _fund_row("ROE (자기자본수익률)","roe",         lambda v: f"{v*100:.1f}%", "버핏: 15% 이상"),
+                _fund_row("영업이익률",         "operating_margins", lambda v: f"{v*100:.1f}%", ""),
+                _fund_row("부채비율",           "debt_equity",  lambda v: f"{v:.0f}%", "버핏: 50% 이하"),
+                _fund_row("매출 성장률 (YoY)",  "revenue_growth",  lambda v: f"{v*100:+.1f}%", "린치: 20%+"),
+                _fund_row("순이익 성장률 (YoY)","earnings_growth", lambda v: f"{v*100:+.1f}%", "CANSLIM: 25%+"),
+            ]
+            if fcf and mc and mc > 0:
+                mkt_rows.insert(4, {"지표": "FCF Yield", "값": f"{fcf/mc*100:.1f}%", "참고 법칙": "버핏: 5% 이상"})
+
+            # 새 보조 지표 행 추가
+            _roe_mean = fund_score_data.get("roe_mean")
+            _roe_std  = fund_score_data.get("roe_std")
+            if _roe_mean is not None:
+                _roe_consist = f"평균 {_roe_mean:.1f}% / 편차 {_roe_std:.1f}%p" if _roe_std is not None else f"평균 {_roe_mean:.1f}%"
+                mkt_rows.append({"지표": "ROE 지속성 (다년)", "값": _roe_consist, "참고 법칙": "버핏: 평균≥15% & 편차≤5%"})
+            _ocf_ni = fund_score_data.get("ocf_ni_ratio")
+            if _ocf_ni is not None:
+                mkt_rows.append({"지표": "OCF/순이익 (현금질)", "값": f"{_ocf_ni:.2f}x", "참고 법칙": "> 1.0 = 이익 신뢰성 높음"})
+            _sh = fund_score_data.get("shareholder_yield")
+            if _sh is not None:
+                mkt_rows.append({"지표": "주주환원율", "값": f"{_sh:.1f}%", "참고 법칙": "배당+자사주 / 시총 (≥3% 양호)"})
+
+            st.dataframe(pd.DataFrame(mkt_rows), use_container_width=True, hide_index=True)
+
+            # ── 재무제표 (DART 우선 → yfinance fallback) ──────────────────────
+            st.markdown("### 💰 재무 핵심 지표")
+
+            _is_krx_f = ticker.endswith(".KS") or ticker.endswith(".KQ")
+            dart_fin  = {}
+            if _is_krx_f and dart_api_key:
+                with st.spinner("DART 재무제표 조회 중..."):
+                    try:
+                        from fundamental_db import get_dart_financials
+                        dart_fin = get_dart_financials(ticker, dart_api_key)
+                    except Exception:
+                        pass
+
+            def _fin_val(dart_key, yf_key, unit_label="억원"):
+                # DART 우선
+                if dart_fin.get(dart_key) is not None:
+                    v = dart_fin[dart_key]
+                    return f"{v:,.0f} {unit_label}"
+                # yfinance fallback
+                v = fund_info.get(yf_key)
+                if v is not None and pd.notna(v):
+                    return _fmt_money(v)
+                return "N/A"
+
+            fin_src = f"DART {dart_fin.get('year','')}" if dart_fin else "yfinance"
+            fin_rows = [
+                {"지표": "매출액",    "값": _fin_val("revenue",          "total_revenue")},
+                {"지표": "영업이익",  "값": _fin_val("operating_income",  "operating_income")},
+                {"지표": "당기순이익","값": _fin_val("net_income",        "net_income")},
+                {"지표": "잉여현금흐름(FCF)", "값": _fmt_money(fcf) if fcf else "N/A"},
+            ]
+            st.dataframe(pd.DataFrame(fin_rows), use_container_width=True, hide_index=True)
+
+            _src = fund_info.get("source", "yfinance")
+            st.caption(f"시장 지표: **{_src}** | 재무 지표: **{fin_src}**")
+
+        # ── 거장의 한 줄 평 ──────────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### 🎖️ 투자 거장의 한 줄 평")
+
+        _verdicts = fund_score_data.get("master_verdicts", {})
+        _master_meta = [
+            ("그레이엄", "📖 벤저민 그레이엄", "#80cbc4",  "안전마진·가치투자의 아버지"),
+            ("버핏",    "🏛️ 워렌 버핏",       "#a5d6a7",  "ROE 지속성·경제적 해자"),
+            ("린치",    "🚀 피터 린치",        "#ce93d8",  "PEG·성장주 발굴"),
+            ("오닐",    "🔥 윌리엄 오닐",      "#ffcc80",  "신고가·CANSLIM"),
+        ]
+        _vcols = st.columns(4)
+        for _vcol, (_key, _name, _clr, _sub) in zip(_vcols, _master_meta):
+            _v = _verdicts.get(_key, {})
+            _icon    = _v.get("icon", "—")
+            _verdict = _v.get("판정", "N/A")
+            _comment = _v.get("comment", "데이터 부족")
+            _vcol.markdown(
+                f'<div style="background:#12141f;border-radius:10px;padding:12px;'
+                f'border-left:3px solid {_clr};min-height:140px;">'
+                f'<div style="font-size:0.72rem;color:#888;margin-bottom:4px;">{_sub}</div>'
+                f'<div style="font-size:0.9rem;font-weight:bold;color:{_clr};margin-bottom:4px;">'
+                f'{_name}</div>'
+                f'<div style="font-size:1.1rem;margin-bottom:6px;">'
+                f'{_icon} <b style="color:#e0e0e0;">{_verdict}</b></div>'
+                f'<div style="font-size:0.75rem;color:#aaa;line-height:1.5;">{_comment}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── 전날 매매 동향 (Naver Finance) ───────────────────────────────────────
+        if _is_krx_f:
+            st.markdown("---")
+            st.markdown("### 📊 전날 투자자별 매매 동향")
+            with st.spinner("투자자 데이터 조회 중..."):
+                _inv_f = get_investor_trading_naver(ticker)
+            if _inv_f:
+                _inv_date_f = _inv_f.get("date", "")
+                if len(_inv_date_f) == 8:
+                    _inv_date_f = f"{_inv_date_f[:4]}.{_inv_date_f[4:6]}.{_inv_date_f[6:]}"
+                st.caption(f"기준일: {_inv_date_f}  |  단위: 주(株)  |  출처: Naver Finance")
+                _inv_f_cols = st.columns(3)
+                for col, key, label in zip(
+                    _inv_f_cols,
+                    ["외국인", "기관합계", "개인"],
+                    ["🌐 외국인", "🏦 기관", "👤 개인"],
+                ):
+                    val = _inv_f.get(key)
+                    if val is not None:
+                        _sign = "+" if val > 0 else ""
+                        _color = "#ef5350" if val > 0 else ("#42a5f5" if val < 0 else "#bdbdbd")
+                        col.markdown(
+                            f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
+                            f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
+                            f'<div style="font-size:1.1rem;font-weight:bold;color:{_color};">{_sign}{val:,}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        col.markdown(
+                            f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
+                            f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
+                            f'<div style="font-size:1.1rem;color:#555;">N/A</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+            else:
+                st.caption("투자자 매매 동향 데이터를 불러올 수 없습니다.")
+
+        # ── 손절·익절 상세 ────────────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### 🛡️ 손절·익절 레벨 상세 (오닐·ATR 기반)")
+
+        sl = get_stop_loss_targets(data)
+        if sl:
+            s1, s2, s3, s4, s5 = st.columns(5)
+            s1.metric("현재가", f"{sl['current']:,.2f}",
+                      help="최근 거래일 종가 기준 현재가입니다.")
+            s2.metric("손절 (오닐 8%)", f"{sl['stop_8pct']:,.2f}",
+                      f"{(sl['stop_8pct']/sl['current']-1)*100:.1f}%",
+                      help=(
+                          "윌리엄 오닐 CANSLIM 원칙: 매수가 대비 -8% 도달 시 무조건 손절.\n\n"
+                          "작은 손실을 빠르게 잘라내어 큰 손실을 방지하는 핵심 원칙입니다.\n"
+                          "출처: 《최고의 주식 최적의 타이밍》(윌리엄 오닐)"
+                      ))
+            s3.metric("손절 (ATR×2.5)", f"{sl['stop_atr']:,.2f}",
+                      f"{(sl['stop_atr']/sl['current']-1)*100:.1f}%",
+                      help=(
+                          f"ATR(평균실질변동폭, 14일) × 2.5를 현재가에서 뺀 손절선.\n\n"
+                          f"• 현재 ATR: {sl['atr']:,.2f} (일일 변동폭 {sl['atr_ratio']:.2f}%)\n"
+                          f"• 종목의 정상 변동 범위를 벗어날 때 손절하는 방식\n"
+                          f"• 변동성이 클수록 손절선이 넓어집니다."
+                      ))
+            s4.metric("목표 2R", f"{sl['target_2r']:,.2f}",
+                      f"{(sl['target_2r']/sl['current']-1)*100:+.1f}%",
+                      help=(
+                          "리스크(현재가 - 손절가)의 2배를 현재가에 더한 1차 목표가.\n\n"
+                          "• 손실 1에 이익 2를 추구하는 비율 (2:1 R/R)\n"
+                          "• 최소 권장 비율. 이 가격에서 일부 분할 익절 고려."
+                      ))
+            s5.metric("목표 3R", f"{sl['target_3r']:,.2f}",
+                      f"{(sl['target_3r']/sl['current']-1)*100:+.1f}%",
+                      help=(
+                          "리스크(현재가 - 손절가)의 3배를 더한 최종 목표가.\n\n"
+                          "• 손실 1에 이익 3을 추구 (3:1 R/R)\n"
+                          "• 트레이딩 표준 권장 비율. 오닐·린치 등 대부분의 투자법칙이 권장.\n"
+                          "• 이 비율이면 승률 25%만 돼도 장기적으로 수익 가능."
+                      ))
+
+            st.markdown(f"""
+            > **ATR (14일):** {sl['atr']:,.2f} ({sl['atr_ratio']:.2f}%)
+            > **52주 고가:** {sl['high_52w']:,.2f}
+            > **BB 상단:** {f"{sl['bb_upper']:,.2f}" if sl['bb_upper'] else 'N/A'}
+            >
+            > 📌 오닐 원칙: 매수가 대비 -7~8% 도달 시 무조건 손절 | 목표 3R = 리스크의 3배 수익
+            """)
+
+        # ── SEC 내부자 거래 (미국 주식 전용) ──────────────────────────────────────
+        st.markdown("---")
+        is_us = "." not in ticker
+        if is_us:
+            st.markdown("### 🏦 SEC 내부자 거래 (Form 4, 최근 90일)")
+            st.caption("데이터 소스: SEC EDGAR (edgar.sec.gov) — 완전 무료 공식 API")
+
+            with st.spinner("SEC EDGAR에서 내부자 거래 조회 중..."):
+                insider_df = _insider_trades(ticker)
+
+            if insider_df is not None and not insider_df.empty:
+                st.dataframe(
+                    insider_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "링크": st.column_config.LinkColumn("SEC 공시 링크", display_text="바로가기"),
+                    },
+                )
+                st.caption(f"총 {len(insider_df)}건의 Form 4 공시 발견")
+            else:
+                st.info("최근 90일 내 Form 4 공시가 없거나 데이터를 불러올 수 없습니다.")
+
+            st.markdown("""
+            #### 📌 내부자 거래 해석 가이드
+            | 신호 | 의미 | 투자 판단 |
+            |------|------|-----------|
+            | 임원 다수 동시 매수 | 내부자 확신 → 강한 매수 신호 | ★★★ |
+            | 임원 대량 매도 ($1M+) | 주가 고점 가능성 | 주의 |
+            | 소량 분산 매도 | 세금·다각화 목적, 무의미 | 참고만 |
+
+            > 출처: Form 4 (거래 후 2영업일 이내 의무 공시, SEC EDGAR)
+            """)
+        else:
+            st.markdown("### 🏦 기관/내부자 데이터")
+            st.info(
+                "SEC EDGAR Form 4 내부자 거래는 **미국 주식 전용** 기능입니다.  \n"
+                "한국 주식의 경우 [DART 전자공시](https://dart.fss.or.kr)에서 조회 가능합니다."
+            )
+
+        # ── 투자 법칙 요약 ────────────────────────────────────────────────────────
+        st.markdown("---")
+        with st.expander("📚 적용 투자 법칙 레퍼런스"):
+            st.markdown("""
+            | 투자자 | 법칙 | 기준값 | 적용 |
+            |--------|------|--------|------|
+            | 벤저민 그레이엄 | PBR×PER | < 22.5 | 저평가 판단 |
+            | 워렌 버핏 | ROE 지속성 | ≥ 15% 연속 | 우량 기업 선별 |
+            | 워렌 버핏 | 부채비율 | < 50% | 재무 안정성 |
+            | 워렌 버핏 | FCF Yield | > 5% | 현금창출 능력 |
+            | 피터 린치 | PEG 비율 | < 1.0 매수, > 2.0 매도 | 성장 대비 가격 |
+            | 피터 린치 | 매출 성장 | YoY ≥ 20% | 텐배거 후보 |
+            | 윌리엄 오닐 | CANSLIM-N | 52주 신고가 근접 | 모멘텀 돌파 |
+            | 윌리엄 오닐 | 손절 원칙 | 매수가 -7~8% | 손실 제한 |
+            | 윌리엄 오닐 | 3:1 R/R | 목표 = 리스크×3 | 익절 목표 |
+
+            > 📘 참고: 《현명한 투자자》(그레이엄) · 《전설로 떠나는 월가의 영웅》(린치) · 《최고의 주식 최적의 타이밍》(오닐)
+            """)
 with tab_chart:
     if not _data_ready:
         st.info("👈 사이드바에서 종목을 선택하고 **분석 시작** 버튼을 눌러주세요.", icon="📊")

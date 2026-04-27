@@ -1447,6 +1447,62 @@ def get_krx_stock_list() -> dict:
         return {}
 
 
+# ─── KRX ETF 리스트 ──────────────────────────────────────────────────────────
+
+def get_krx_etf_list() -> dict:
+    """
+    국내 ETF 전체 목록 반환 (FinanceDataReader 기반)
+    반환 형태: {"KODEX 200 (069500)": "069500.KS", ...}
+    """
+    try:
+        import FinanceDataReader as fdr
+        df = fdr.StockListing("ETF/KR")
+        if df.empty:
+            raise ValueError("empty")
+        code_col = "Symbol" if "Symbol" in df.columns else "Code"
+        df[code_col] = df[code_col].astype(str).str.strip().str.zfill(6)
+        df["Name"]   = df["Name"].astype(str).str.strip()
+        mask = df["Name"].ne("") & df[code_col].str.len().eq(6) & df[code_col].str.isdigit()
+        df = df[mask]
+        result = {}
+        for _, row in df.iterrows():
+            code    = row[code_col]
+            name    = row["Name"]
+            display = f"{name} ({code})"
+            result[display] = f"{code}.KS"
+        return result if result else _etf_fallback_list()
+    except Exception:
+        return _etf_fallback_list()
+
+
+def _etf_fallback_list() -> dict:
+    """FDR 실패 시 주요 ETF 하드코딩 폴백"""
+    return {f"{v['name']} ({k})": f"{k}.KS" for k, v in _ETF_PORTFOLIO_MAP.items()}
+
+
+def is_etf_ticker(ticker: str) -> bool:
+    """
+    ETF 여부 판별.
+    _ETF_PORTFOLIO_MAP 등록 여부 우선, 없으면 FDR 목록 대조.
+    """
+    code = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
+    if code in _ETF_PORTFOLIO_MAP:
+        return True
+    # 코드가 6자리 숫자이고 .KS/.KQ 형태여야 국내 ETF 가능
+    if not (ticker.endswith(".KS") or ticker.endswith(".KQ")):
+        return False
+    try:
+        import FinanceDataReader as fdr
+        df = fdr.StockListing("ETF/KR")
+        if df.empty:
+            return False
+        code_col = "Symbol" if "Symbol" in df.columns else "Code"
+        codes = set(df[code_col].astype(str).str.strip().str.zfill(6))
+        return code in codes
+    except Exception:
+        return False
+
+
 # ─── 펀더멘털 데이터 ──────────────────────────────────────────────────────────
 
 def _is_krx_ticker(ticker: str) -> bool:
@@ -2447,13 +2503,54 @@ _KW_EVENT_ALL = _KW_EVENT_HALT + _KW_EVENT_CORP
 _POS_KEYWORDS = _KW_B_POS
 _NEG_KEYWORDS = _KW_B_NEG
 
+# ── ETF 포트폴리오 맵 (코드 → 섹터 + 대표 구성종목) ─────────────────────────
+_ETF_PORTFOLIO_MAP: dict[str, dict] = {
+    "069500": {"sector": "코스피200",  "name": "KODEX 200",
+               "holdings": ["005930.KS", "000660.KS", "005380.KS", "373220.KS", "207940.KS"]},
+    "091160": {"sector": "반도체",     "name": "KODEX 반도체",
+               "holdings": ["005930.KS", "000660.KS", "042700.KS", "000990.KS", "066970.KQ"]},
+    "091170": {"sector": "자동차",     "name": "KODEX 자동차",
+               "holdings": ["005380.KS", "000270.KS", "012330.KS", "241560.KS"]},
+    "305720": {"sector": "배터리",     "name": "KODEX 2차전지산업",
+               "holdings": ["373220.KS", "006400.KS", "051910.KS", "247540.KQ"]},
+    "091220": {"sector": "금융",       "name": "TIGER 은행",
+               "holdings": ["105560.KS", "055550.KS", "086790.KS", "138930.KS", "316140.KS"]},
+    "143860": {"sector": "바이오",     "name": "TIGER 헬스케어",
+               "holdings": ["207940.KS", "068270.KS", "128940.KS", "326030.KS"]},
+    "266370": {"sector": "IT플랫폼",   "name": "KODEX IT",
+               "holdings": ["005930.KS", "000660.KS", "035420.KS", "035720.KS"]},
+    "228790": {"sector": "화학소재",   "name": "TIGER 화학",
+               "holdings": ["051910.KS", "011170.KS", "006400.KS", "010950.KS"]},
+    "232080": {"sector": "코스닥150",  "name": "TIGER KOSDAQ150",
+               "holdings": ["247540.KQ", "086900.KQ", "035900.KQ", "041510.KQ"]},
+    "114800": {"sector": "인버스",     "name": "KODEX 인버스",     "holdings": []},
+    "122630": {"sector": "레버리지",   "name": "KODEX 레버리지",
+               "holdings": ["005930.KS", "000660.KS", "005380.KS"]},
+    "360750": {"sector": "미국S&P500", "name": "TIGER 미국S&P500",
+               "holdings": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"]},
+    "133690": {"sector": "미국나스닥", "name": "TIGER 미국나스닥100",
+               "holdings": ["AAPL", "MSFT", "NVDA", "AMZN", "META"]},
+    "395160": {"sector": "미국배당",   "name": "TIGER 미국배당다우존스",
+               "holdings": ["JNJ", "KO", "PG", "MMM", "VZ"]},
+}
+
 # ── 섹터별 업황 지표 키워드 ────────────────────────────────────────────────────
 _TICKER_SECTOR: dict[str, str] = {
+    # 국내 개별 종목
     "005930.KS": "반도체", "000660.KS": "반도체", "042700.KS": "반도체",
     "005380.KS": "자동차", "000270.KS": "자동차", "012330.KS": "자동차",
     "373220.KS": "배터리", "006400.KS": "배터리", "051910.KS": "배터리",
     "035420.KS": "플랫폼", "035720.KS": "플랫폼",
     "207940.KS": "바이오",  "068270.KS": "바이오",  "128940.KS": "바이오",
+    "105560.KS": "금융", "055550.KS": "금융", "086790.KS": "금융",
+    "138930.KS": "금융", "316140.KS": "금융",
+    # 국내 ETF
+    "069500.KS": "코스피200", "091160.KS": "반도체", "091170.KS": "자동차",
+    "305720.KS": "배터리",    "091220.KS": "금융",   "143860.KS": "바이오",
+    "266370.KS": "IT플랫폼",  "228790.KS": "화학소재","232080.KS": "코스닥150",
+    "114800.KS": "인버스",    "122630.KS": "레버리지","360750.KS": "미국S&P500",
+    "133690.KS": "미국나스닥","395160.KS": "미국배당",
+    # 미국 개별 종목
     "NVDA": "semiconductor", "AMD": "semiconductor",
     "INTC": "semiconductor", "AVGO": "semiconductor", "QCOM": "semiconductor",
     "AAPL": "bigtech", "MSFT": "bigtech", "GOOGL": "bigtech",
@@ -2551,6 +2648,61 @@ _SECTOR_KEYWORDS: dict[str, dict[str, list[str]]] = {
     "finance": {
         "pos": ["interest income growth", "loan growth", "trading revenue beat", "rate benefit"],
         "neg": ["credit loss surge", "regulatory fine", "loan default rise", "NIM compression"],
+    },
+    "금융": {
+        "pos": ["금리 인하", "NIM 개선", "이자 수익 증가", "대출 성장", "배당 확대",
+                "은행 실적 호조", "건전성 개선", "연체율 하락"],
+        "neg": ["부실 채권", "충당금 증가", "금융 규제", "연체율 상승",
+                "금리 역전", "예대마진 축소", "부동산 PF 위기"],
+    },
+    "IT플랫폼": {
+        "pos": ["MAU 증가", "광고 매출 증가", "클라우드 성장", "AI 수익화",
+                "구독자 확대", "검색 점유율 상승"],
+        "neg": ["이용자 감소", "플랫폼 규제", "광고 감소", "반독점 조사",
+                "개인정보 규제", "수익성 악화"],
+    },
+    "코스피200": {
+        "pos": ["외국인 순매수", "지수 상승", "증시 반등", "경기 회복",
+                "원화 강세", "반도체 업황 개선", "수출 증가"],
+        "neg": ["외국인 순매도", "지수 하락", "경기 침체 우려", "원화 약세",
+                "환율 급등", "글로벌 증시 급락"],
+    },
+    "코스닥150": {
+        "pos": ["바이오 임상 성공", "2차전지 수주", "플랫폼 성장", "기술주 반등",
+                "외국인 코스닥 매수"],
+        "neg": ["바이오 임상 실패", "코스닥 급락", "성장주 매도", "금리 인상"],
+    },
+    "화학소재": {
+        "pos": ["석유화학 마진 개선", "소재 수요 증가", "배터리 소재 수주",
+                "원료비 하락", "스프레드 확대"],
+        "neg": ["석유화학 공급 과잉", "원료비 급등", "중국 경쟁 심화",
+                "마진 압박", "수요 부진"],
+    },
+    "미국S&P500": {
+        "pos": ["S&P500 상승", "미국 증시 반등", "Fed 금리 인하",
+                "미국 경기 호조", "빅테크 실적 서프라이즈"],
+        "neg": ["S&P500 하락", "미국 경기 침체", "Fed 금리 인상",
+                "인플레이션 재부상", "미국 부채 위기"],
+    },
+    "미국나스닥": {
+        "pos": ["나스닥 상승", "AI 수혜", "기술주 반등", "빅테크 실적 호조",
+                "반도체 AI 수요"],
+        "neg": ["나스닥 급락", "기술주 밸류에이션 부담", "AI 거품 우려",
+                "금리 인상 압박", "반독점 규제"],
+    },
+    "미국배당": {
+        "pos": ["배당 인상", "안정 수익", "금리 인하 수혜", "배당주 선호",
+                "방어주 매수"],
+        "neg": ["배당 삭감", "금리 인상으로 배당주 매도", "실적 부진",
+                "인플레이션 실질 수익률 훼손"],
+    },
+    "인버스": {
+        "pos": ["지수 하락", "증시 급락", "경기 침체", "리스크 오프"],
+        "neg": ["지수 상승", "증시 반등", "리스크 온"],
+    },
+    "레버리지": {
+        "pos": ["지수 상승", "증시 급등", "외국인 대규모 매수", "리스크 온"],
+        "neg": ["지수 하락", "증시 급락", "변동성 확대"],
     },
 }
 
@@ -3649,20 +3801,59 @@ _SECTOR_MAP: dict[str, list[str]] = {
     "JPM":   ["BAC", "GS", "MS", "WFC"],
     "BAC":   ["JPM", "GS", "MS", "C"],
     "GS":    ["JPM", "MS", "BAC"],
+    # 국내 ETF → 구성종목 (섹터 대표성)
+    "069500.KS": ["005930.KS", "000660.KS", "005380.KS", "373220.KS"],
+    "091160.KS": ["005930.KS", "000660.KS", "042700.KS", "000990.KS"],
+    "091170.KS": ["005380.KS", "000270.KS", "012330.KS"],
+    "305720.KS": ["373220.KS", "006400.KS", "051910.KS"],
+    "091220.KS": ["105560.KS", "055550.KS", "086790.KS", "138930.KS"],
+    "143860.KS": ["207940.KS", "068270.KS", "128940.KS"],
+    "266370.KS": ["005930.KS", "035420.KS", "035720.KS"],
+    "228790.KS": ["051910.KS", "011170.KS", "006400.KS"],
+    "232080.KS": ["247540.KQ", "086900.KQ", "035900.KQ"],
+    "122630.KS": ["005930.KS", "000660.KS", "005380.KS"],
+    "360750.KS": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"],
+    "133690.KS": ["AAPL", "MSFT", "NVDA", "AMZN", "META"],
+    # 국내 금융
+    "105560.KS": ["055550.KS", "086790.KS", "138930.KS", "316140.KS"],
+    "055550.KS": ["105560.KS", "086790.KS", "138930.KS"],
+    "086790.KS": ["105560.KS", "055550.KS", "316140.KS"],
 }
 
 
 def get_related_sector_performance(ticker: str) -> dict:
     """
     동일 섹터 연관 종목들의 당일 평균 등락률 계산.
+    ETF 티커: ETF 구성종목이 섹터 피어.
+    일반 주식: 직접 섹터맵 → ETF 포트폴리오 역조회 순으로 피어 탐색.
     반환:
       avg_chg   float    연관 종목 평균 등락률(%)
       tickers   list     [{"name": str, "ticker": str, "chg": float}, ...]
       has_data  bool
+      sector    str      섹터 레이블
     """
-    related = _SECTOR_MAP.get(ticker, [])
+    code = ticker.replace(".KS", "").replace(".KQ", "")
+    sector_label = _TICKER_SECTOR.get(ticker, "")
+
+    # ETF인 경우 → 포트폴리오 구성종목을 피어로 사용
+    if code in _ETF_PORTFOLIO_MAP:
+        portfolio = _ETF_PORTFOLIO_MAP[code]
+        related = portfolio.get("holdings", [])
+        sector_label = portfolio.get("sector", sector_label)
+    else:
+        # 일반 주식: 직접 섹터맵 조회
+        related = _SECTOR_MAP.get(ticker, [])
+        # 없으면 ETF 포트폴리오 역조회 (해당 종목을 담고 있는 ETF의 다른 구성종목)
+        if not related:
+            for etf_code, etf_info in _ETF_PORTFOLIO_MAP.items():
+                if ticker in etf_info.get("holdings", []):
+                    related = [t for t in etf_info["holdings"] if t != ticker]
+                    if not sector_label:
+                        sector_label = etf_info.get("sector", "")
+                    break
+
     if not related:
-        return {"avg_chg": 0.0, "tickers": [], "has_data": False}
+        return {"avg_chg": 0.0, "tickers": [], "has_data": False, "sector": sector_label}
 
     rows: list[dict] = []
     for sym in related:
@@ -3673,13 +3864,375 @@ def get_related_sector_performance(ticker: str) -> dict:
             if len(d) < 2:
                 continue
             chg = float((d["Close"].iloc[-1] - d["Close"].iloc[-2]) / d["Close"].iloc[-2] * 100)
-            # 표시 이름: 섹터맵 역조회하거나 그냥 티커 사용
             rows.append({"name": sym, "ticker": sym, "chg": round(chg, 2)})
         except Exception:
             continue
 
     if not rows:
-        return {"avg_chg": 0.0, "tickers": [], "has_data": False}
+        return {"avg_chg": 0.0, "tickers": [], "has_data": False, "sector": sector_label}
 
     avg = round(sum(r["chg"] for r in rows) / len(rows), 2)
-    return {"avg_chg": avg, "tickers": rows, "has_data": True}
+    return {"avg_chg": avg, "tickers": rows, "has_data": True, "sector": sector_label}
+
+
+# ─── ETF 펀더멘털 분석 ────────────────────────────────────────────────────────
+
+def get_etf_fundamental_data(ticker: str) -> dict:
+    """
+    ETF 핵심 지표 수집:
+      - 운용보수(ER), 추적오차, NAV 괴리율, PDF 상위 구성종목, 배당수익률
+    pykrx → Naver Finance 스크래핑 → yfinance 순으로 시도
+    """
+    code = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
+    portfolio_info = _ETF_PORTFOLIO_MAP.get(code, {})
+
+    result: dict = {
+        "code":           code,
+        "ticker":         ticker,
+        "expense_ratio":  None,   # 운용보수 (%)
+        "tracking_error": None,   # 추적오차 (%)
+        "nav":            None,   # NAV (원)
+        "price":          None,   # 현재가
+        "nav_premium":    None,   # 괴리율 = (price - NAV) / NAV * 100
+        "dividend_yield": None,   # 배당수익률 (%)
+        "aum":            None,   # 순자산 (억원)
+        "top_holdings":   [],     # 상위 구성종목
+        "sector":         portfolio_info.get("sector", ""),
+        "etf_name":       portfolio_info.get("name", ""),
+        "source":         "unknown",
+    }
+
+    # 1) pykrx ETF 기본 지표 (NAV, 괴리율, 추적오차, 순자산)
+    try:
+        from pykrx import stock as pstock
+        for delta in range(5):
+            d_str = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
+            df_fund = pstock.get_etf_fundamental(d_str, code)
+            if df_fund is not None and not df_fund.empty:
+                row = df_fund.iloc[0]
+                nav = float(row.get("NAV", 0) or 0)
+                if nav > 0:
+                    result["nav"]            = nav
+                    result["nav_premium"]    = float(row.get("괴리율", 0) or 0)
+                    result["tracking_error"] = float(row.get("추적오차율", 0) or 0)
+                    aum_raw = float(row.get("순자산총액", 0) or 0)
+                    result["aum"] = round(aum_raw / 1e8, 0) if aum_raw > 0 else None
+                    result["source"] = "pykrx"
+                    break
+    except Exception:
+        pass
+
+    # 2) pykrx PDF로 실제 구성종목 조회
+    try:
+        from pykrx import stock as pstock
+        for delta in range(5):
+            d_str = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
+            df_pdf = pstock.get_etf_portfolio_deposit_file(d_str, code)
+            if df_pdf is not None and not df_pdf.empty:
+                top_h = []
+                for _, r in df_pdf.head(10).iterrows():
+                    t_code = str(r.get("티커", "") or "").strip()
+                    t_name = str(r.get("종목명", "") or "").strip()
+                    t_wgt  = float(r.get("비중", 0) or 0)
+                    if t_code and t_name:
+                        top_h.append({"ticker": f"{t_code}.KS", "name": t_name, "weight": t_wgt})
+                if top_h:
+                    result["top_holdings"] = top_h
+                    break
+    except Exception:
+        pass
+
+    # 3) Naver Finance 스크래핑 (운용보수, 배당수익률, 현재가 보완)
+    if HAS_BS4:
+        try:
+            url  = f"https://finance.naver.com/item/main.naver?code={code}"
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            # 현재가
+            if result["price"] is None:
+                p_tag = soup.select_one(".no_today .blind")
+                if p_tag:
+                    try:
+                        result["price"] = float(p_tag.get_text(strip=True).replace(",", ""))
+                    except ValueError:
+                        pass
+
+            # 테이블에서 운용보수·배당수익률 파싱
+            for dt in soup.select("dt"):
+                label  = dt.get_text(strip=True)
+                dd_tag = dt.find_next_sibling("dd")
+                if not dd_tag:
+                    continue
+                val_str = dd_tag.get_text(strip=True).replace("%", "").replace(",", "").strip()
+                try:
+                    val_f = float(val_str)
+                except ValueError:
+                    continue
+                if any(k in label for k in ("운용보수", "총보수", "수수료")):
+                    if result["expense_ratio"] is None:
+                        result["expense_ratio"] = val_f
+                elif "배당수익률" in label and result["dividend_yield"] is None:
+                    result["dividend_yield"] = val_f
+        except Exception:
+            pass
+
+    # 4) yfinance 보완 (현재가·배당)
+    try:
+        yf_info = yf.Ticker(ticker).info
+        if result["price"] is None:
+            p = yf_info.get("regularMarketPrice") or yf_info.get("currentPrice")
+            if p:
+                result["price"] = float(p)
+        if result["dividend_yield"] is None:
+            dy = yf_info.get("dividendYield")
+            if dy and dy > 0:
+                result["dividend_yield"] = round(float(dy) * 100, 2)
+    except Exception:
+        pass
+
+    # NAV 괴리율 직접 계산 (pykrx 미수집 시)
+    if result["nav_premium"] is None and result["price"] and result["nav"]:
+        result["nav_premium"] = round(
+            (result["price"] - result["nav"]) / result["nav"] * 100, 2
+        )
+
+    # 포트폴리오 맵 폴백 (구성종목 없을 경우)
+    if not result["top_holdings"] and portfolio_info.get("holdings"):
+        result["top_holdings"] = [
+            {"ticker": t, "name": t.split(".")[0], "weight": None}
+            for t in portfolio_info["holdings"]
+        ]
+
+    return result
+
+
+def calculate_etf_score(etf_data: dict) -> dict:
+    """
+    ETF 투자 점수 산출 — 그레이엄 수식 대체.
+
+    평가 항목:
+      괴리율  (NAV Premium/Discount): 할인 → 매수 기회, 프리미엄 → 고평가
+      운용보수 (Expense Ratio)       : 낮을수록 장기 수익률 유리
+      추적오차 (Tracking Error)      : 낮을수록 지수 추종 정밀
+      배당수익률                     : 보너스 가점
+
+    반환: {
+      etf_score     float,   # ±7 범위
+      etf_label     str,     # 강력매수/긍정적/중립/주의/회피
+      etf_reasons   list,    # 근거 목록
+      score_breakdown dict,  # 항목별 세부 점수
+    }
+    """
+    score    = 0.0
+    reasons: list[str] = []
+    breakdown: dict[str, float] = {}
+
+    # ── 괴리율 점수 (±3) ─────────────────────────────────────────────────────
+    premium = etf_data.get("nav_premium")
+    if premium is not None:
+        if premium < -2.0:
+            ps = 3.0;  reasons.append(f"NAV 대비 {premium:.2f}% 할인 — 저평가 매수 기회 (할인 ETF)")
+        elif premium < -0.5:
+            ps = 2.0;  reasons.append(f"NAV 대비 {premium:.2f}% 소폭 할인 — 양호한 진입 시점")
+        elif premium <= 0.5:
+            ps = 1.0;  reasons.append(f"NAV 괴리율 {premium:.2f}% — 공정 가치 수준")
+        elif premium <= 2.0:
+            ps = -0.5; reasons.append(f"NAV 대비 {premium:.2f}% 프리미엄 — 다소 고평가")
+        else:
+            ps = -2.0; reasons.append(f"NAV 대비 {premium:.2f}% 고프리미엄 — 시장가 과열 주의")
+        breakdown["괴리율"] = ps
+        score += ps
+    else:
+        breakdown["괴리율"] = 0.0
+        reasons.append("NAV 괴리율 데이터 없음 (pykrx 미수집)")
+
+    # ── 운용보수 점수 (±2) ────────────────────────────────────────────────────
+    er = etf_data.get("expense_ratio")
+    if er is not None:
+        if er < 0.1:
+            es = 2.0;  reasons.append(f"운용보수 {er:.3f}% — 업계 최저 수준, 장기 보유 유리")
+        elif er < 0.3:
+            es = 1.0;  reasons.append(f"운용보수 {er:.3f}% — 합리적 수준")
+        elif er < 0.5:
+            es = 0.0;  reasons.append(f"운용보수 {er:.3f}% — 업계 평균")
+        elif er < 0.8:
+            es = -1.0; reasons.append(f"운용보수 {er:.3f}% — 다소 높음, 장기 수익률 저하 요인")
+        else:
+            es = -2.0; reasons.append(f"운용보수 {er:.3f}% — 높은 수준, 복리 수익률 잠식 위험")
+        breakdown["운용보수"] = es
+        score += es
+    else:
+        breakdown["운용보수"] = 0.0
+        reasons.append("운용보수 데이터 없음 (Naver Finance 미수집)")
+
+    # ── 추적오차 점수 (±1.5) ─────────────────────────────────────────────────
+    te = etf_data.get("tracking_error")
+    if te is not None:
+        te_abs = abs(te)
+        if te_abs < 0.3:
+            ts = 1.5;  reasons.append(f"추적오차 {te_abs:.2f}% — 기초지수 정밀 추종")
+        elif te_abs < 1.0:
+            ts = 0.5;  reasons.append(f"추적오차 {te_abs:.2f}% — 양호한 추종 품질")
+        elif te_abs < 2.0:
+            ts = -0.5; reasons.append(f"추적오차 {te_abs:.2f}% — 추종 오차 다소 높음")
+        else:
+            ts = -1.5; reasons.append(f"추적오차 {te_abs:.2f}% — 지수 추종 품질 불량")
+        breakdown["추적오차"] = ts
+        score += ts
+    else:
+        breakdown["추적오차"] = 0.0
+
+    # ── 배당수익률 가산점 (±0.5) ─────────────────────────────────────────────
+    div = etf_data.get("dividend_yield")
+    if div is not None:
+        if div >= 3.0:
+            ds = 0.5;  reasons.append(f"배당수익률 {div:.1f}% — 배당형 ETF, 현금흐름 수익 기대")
+        elif div >= 1.0:
+            ds = 0.0
+        else:
+            ds = -0.3; reasons.append(f"배당수익률 {div:.1f}% — 저배당 (성장형 ETF)")
+        breakdown["배당수익률"] = ds
+        score += ds
+
+    # ── 판정 레이블 ──────────────────────────────────────────────────────────
+    score = round(score, 2)
+    if score >= 3.5:
+        label = "강력 매수"
+    elif score >= 1.5:
+        label = "긍정적"
+    elif score >= -0.5:
+        label = "중립"
+    elif score >= -2.0:
+        label = "주의"
+    else:
+        label = "회피"
+
+    return {
+        "etf_score":      score,
+        "etf_label":      label,
+        "etf_reasons":    reasons,
+        "score_breakdown": breakdown,
+    }
+
+
+def get_etf_news_with_holdings(ticker: str, etf_data: dict, max_items: int = 15) -> list[dict]:
+    """
+    ETF 뉴스 수집 (섹터 뉴스 + 상위 구성종목 뉴스 통합).
+    - ETF 자체 뉴스: 종목명 필터 느슨하게 적용
+    - 상위 구성종목 최대 3개의 뉴스도 포함해 정확도 향상
+    """
+    seen_titles: set[str] = set()
+    all_news:   list[dict] = []
+
+    # 1) ETF 자체 뉴스
+    try:
+        etf_news = get_naver_news(ticker, max_items=10)
+        for item in etf_news:
+            t = item.get("title", "").strip()
+            if t and t not in seen_titles:
+                item["_source_type"] = "etf_direct"
+                all_news.append(item)
+                seen_titles.add(t)
+    except Exception:
+        pass
+
+    # 2) 상위 구성종목 뉴스 (최대 3종목 × 4기사)
+    holdings = etf_data.get("top_holdings", [])
+    for holding in holdings[:3]:
+        h_ticker = holding.get("ticker", "")
+        h_name   = holding.get("name", h_ticker)
+        if not h_ticker:
+            continue
+        try:
+            h_news = get_naver_news(h_ticker, max_items=6)
+            for item in h_news[:4]:
+                t = item.get("title", "").strip()
+                if t and t not in seen_titles:
+                    item["_source_type"] = "holding"
+                    item["_holding_name"] = h_name
+                    all_news.append(item)
+                    seen_titles.add(t)
+        except Exception:
+            continue
+
+    return all_news[:max_items]
+
+
+def analyze_etf_news_sentiment(ticker: str, etf_data: dict, news_items: list[dict]) -> dict:
+    """
+    ETF 뉴스 감성 분석.
+    - 섹터 키워드를 중심으로 스코어링
+    - 종목명 일치 필터를 느슨하게 적용 (ETF는 섹터 뉴스가 핵심)
+    """
+    sector = etf_data.get("sector", "")
+    etf_name = etf_data.get("etf_name", "")
+
+    # 섹터 키워드 가져오기
+    sector_kws = _SECTOR_KEYWORDS.get(sector, {})
+    pos_kws = sector_kws.get("pos", [])
+    neg_kws = sector_kws.get("neg", [])
+
+    total_score  = 0.0
+    scored_count = 0
+    detail: list[dict] = []
+
+    for item in news_items:
+        title    = item.get("title", "")
+        pub_date = item.get("pub_date", "")
+        decay    = _news_time_decay(pub_date)
+        text     = title
+
+        # 섹터 키워드 스코어
+        pos_hits = sum(1 for kw in pos_kws if kw in text)
+        neg_hits = sum(1 for kw in neg_kws if kw in text)
+        kw_score = (pos_hits - neg_hits) * 0.6
+
+        # ETF명 / 섹터 직접 언급 보너스
+        if etf_name and etf_name[:4] in text:
+            kw_score += 0.3
+        if sector and sector in text:
+            kw_score += 0.2
+
+        art_score = max(-2.0, min(2.0, kw_score)) * decay
+        total_score += art_score
+        scored_count += 1
+        detail.append({
+            "title":     title,
+            "link":      item.get("link", "#"),
+            "publisher": item.get("publisher", ""),
+            "pub_date":  pub_date,
+            "score":     round(art_score, 2),
+            "reason":    f"섹터({sector}) 키워드: +{pos_hits}/-{neg_hits}",
+            "tier":      "B",
+            "decay":     decay,
+            "skipped":   False,
+            "source_type": item.get("_source_type", ""),
+            "holding_name": item.get("_holding_name", ""),
+        })
+
+    if scored_count == 0:
+        final_score = 0.0
+    else:
+        avg   = total_score / scored_count
+        final_score = round(max(-5.0, min(5.0, avg * 2.5)), 2)
+
+    if final_score >= 3:   label = "매우 긍정"
+    elif final_score >= 1: label = "긍정"
+    elif final_score <= -3: label = "매우 부정"
+    elif final_score <= -1: label = "부정"
+    else:                  label = "중립"
+
+    top3 = [d["title"][:20] for d in sorted(detail, key=lambda x: abs(x["score"]), reverse=True)[:3]]
+    summary = f"섹터({sector}) 뉴스 중심 분석: {', '.join(top3[:2])}" if top3 else f"{sector} 섹터 뉴스 분석 중"
+
+    return {
+        "score":         final_score,
+        "label":         label,
+        "summary":       summary,
+        "individual_score": final_score,
+        "sector_score":  0.0,
+        "detail":        detail,
+        "event_flags":   [],
+        "is_etf":        True,
+    }

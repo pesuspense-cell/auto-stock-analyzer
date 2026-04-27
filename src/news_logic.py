@@ -11,6 +11,8 @@ from stock_ai import (
     fetch_article_content,
     get_advanced_sentiment,
     get_related_sector_performance,
+    get_etf_news_with_holdings,
+    analyze_etf_news_sentiment,
 )
 
 __all__ = [
@@ -22,4 +24,6 @@ __all__ = [
     "fetch_article_content",
     "get_advanced_sentiment",
     "get_related_sector_performance",
+    "get_etf_news_with_holdings",
+    "analyze_etf_news_sentiment",
 ]
