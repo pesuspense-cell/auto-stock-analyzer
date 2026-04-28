@@ -1166,6 +1166,11 @@ with tab_rec:
     rec_df = st.session_state.get("rec_df", None)
 
     if rec_df is not None and not rec_df.empty:
+        # 구버전 세션 캐시 호환 — 새로 추가된 컬럼이 없으면 기본값으로 채움
+        for _col, _default in [("뉴스점수", 0.0), ("기술점수", 0.0)]:
+            if _col not in rec_df.columns:
+                rec_df[_col] = _default
+
         # ── 요약 메트릭 (종합점수 기준) ─────────────────────────────────────
         rec_n     = int((rec_df["종합점수"] >= 1).sum())
         neutral_n = int(((rec_df["종합점수"] > 0) & (rec_df["종합점수"] < 1)).sum())
