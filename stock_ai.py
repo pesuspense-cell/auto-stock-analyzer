@@ -2507,6 +2507,101 @@ def get_stop_loss_targets(data: pd.DataFrame, entry_price: float = None) -> dict
     }
 
 
+# ─── 매도 적정가 계산 ────────────────────────────────────────────────────────
+
+def get_sell_target_price(data: pd.DataFrame) -> dict:
+    """
+    3가지 방법론으로 매도 적정가 산출:
+      1. 볼린저밴드 상단 (2σ) — 통계적 과매수 확률 5% 미만
+      2. 매물대 저항 (VPVR POC 위 최대 거래량 구간) — 본전 매물 압력
+      3. 피보나치 확장 1.618× — 신고가 영역 심리적 저항
+    보수적 목표가: BB상단 vs 매물대 저항 중 낮은 값 (50% 분할매도 기준)
+    공격적 목표가: 피보나치 1.618 확장선 (전량매도 / 트레일링 스탑 기준)
+    """
+    if data.empty or len(data) < 20:
+        return {}
+
+    close   = data["Close"].astype(float)
+    current = float(close.iloc[-1])
+
+    # 1. 볼린저밴드 상단
+    if "BB_Upper" in data.columns and pd.notna(data["BB_Upper"].iloc[-1]):
+        bb_upper = float(data["BB_Upper"].iloc[-1])
+    else:
+        _mid = close.rolling(20).mean().iloc[-1]
+        _std = close.rolling(20).std().iloc[-1]
+        bb_upper = float(_mid + 2 * _std)
+
+    # 2. 매물대 저항 (현재가 위 거래량 최대 구간)
+    vpvr = calculate_vpvr(data)
+    resistance_level = vpvr.get("resistance_level")  # 현재가 위 최대 매물벽
+    poc_price        = vpvr.get("poc_price")          # 거래량 집중가
+
+    # 3. 피보나치 확장 (최근 1년 스윙 저점 → 고점 기준)
+    lookback   = min(len(close), 252)
+    swing_low  = float(close.iloc[-lookback:].min())
+    swing_high = float(close.iloc[-lookback:].max())
+    fib_range  = swing_high - swing_low
+
+    fib_1618 = round(swing_low + fib_range * 1.618, 2) if fib_range > 0 else None
+    fib_2618 = round(swing_low + fib_range * 2.618, 2) if fib_range > 0 else None
+
+    # 52주 신고가 여부 (현재가가 52주 고점의 98% 이상)
+    high_52w    = float(close.rolling(min(252, len(close))).max().iloc[-1])
+    is_new_high = current >= high_52w * 0.98
+
+    # ── 보수적 목표가: BB상단 vs 현재가 위 매물대 저항 중 낮은 값 ─────────
+    candidates_cons = [bb_upper]
+    if resistance_level and resistance_level > current:
+        candidates_cons.append(resistance_level)
+    conservative_target = round(min(candidates_cons), 2)
+
+    # ── 공격적 목표가: 신고가 영역이면 피보 1.618, 아니면 최대 저항 × 1.05 ──
+    if is_new_high and fib_1618 and fib_1618 > current * 1.01:
+        aggressive_target = fib_1618
+    elif resistance_level and resistance_level > current:
+        aggressive_target = round(max(bb_upper, resistance_level) * 1.05, 2)
+    else:
+        aggressive_target = round(bb_upper * 1.05, 2)
+
+    # 현재가 대비 목표가 괴리율
+    cons_gap = (conservative_target - current) / current * 100
+    aggr_gap = (aggressive_target - current) / current * 100
+
+    # 매도 타이밍 신호
+    if current >= bb_upper * 0.995:
+        sell_timing = "🔴 BB상단 돌파 — 즉시 분할매도 고려"
+        sell_color  = "#ef9a9a"
+    elif resistance_level and current >= resistance_level * 0.98:
+        sell_timing = "🟠 매물대 저항 근접 — 부분 익절 고려"
+        sell_color  = "#ffab91"
+    elif cons_gap <= 3.0:
+        sell_timing = "🟡 보수적 목표가 근접 — 매도 준비"
+        sell_color  = "#fff176"
+    else:
+        sell_timing = f"⏳ 목표가까지 {cons_gap:.1f}% 여유"
+        sell_color  = "#aaa"
+
+    return {
+        "current":              round(current, 2),
+        "conservative_target":  conservative_target,
+        "aggressive_target":    round(aggressive_target, 2),
+        "bb_upper":             round(bb_upper, 2),
+        "resistance_level":     round(resistance_level, 2) if resistance_level else None,
+        "poc_price":            round(poc_price, 2) if poc_price else None,
+        "fib_1618":             fib_1618,
+        "fib_2618":             fib_2618,
+        "swing_low":            round(swing_low, 2),
+        "swing_high":           round(swing_high, 2),
+        "high_52w":             round(high_52w, 2),
+        "is_new_high":          is_new_high,
+        "cons_gap":             round(cons_gap, 2),
+        "aggr_gap":             round(aggr_gap, 2),
+        "sell_timing":          sell_timing,
+        "sell_color":           sell_color,
+    }
+
+
 # ─── SEC EDGAR 내부자 거래 (미국 주식 전용) ───────────────────────────────────
 
 def _get_sec_cik(ticker: str) -> str | None:
