@@ -992,7 +992,8 @@ def _composite_label(score: float) -> tuple[str, str]:
 def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
     """
     여러 종목을 분석하여 종합 점수 순으로 추천 목록 생성.
-    종합점수 = 기술점수(50%) + 수익률점수(30%) + 샤프점수(20%)
+    종합점수 = get_hybrid_signal 동일 공식 — 기술점수(70%) + 뉴스감성(30%)
+    범위: -10 ~ +10
     """
     rows = []
     for name, ticker in tickers_dict.items():
@@ -1010,8 +1011,27 @@ def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
             ret_pct = float(exp.get("expected_return_pct", 0))
             sharpe  = float(exp.get("sharpe", 0))
 
-            comp       = _composite_score(tech, ret_pct, sharpe)
-            comp_label, comp_badge = _composite_label(comp)
+            # 뉴스 감성 키워드 분석 (yfinance 뉴스 활용, 실패 시 중립 0.0)
+            try:
+                raw_news = yf.Ticker(ticker).news or []
+                news_items = []
+                for it in raw_news[:10]:
+                    c = it.get("content", it)
+                    news_items.append({
+                        "title":     c.get("title", it.get("title", "")),
+                        "summary":   c.get("description", ""),
+                        "pub_date":  "",
+                        "publisher": (c.get("provider", {}).get("displayName") or it.get("publisher", "")),
+                    })
+                news_result = analyze_news_sentiment_keywords(news_items, ticker, name)
+            except Exception:
+                news_result = {"score": 0.0}
+            news_score = float(news_result.get("score", 0.0))
+
+            hybrid     = get_hybrid_signal(tech, news_score)
+            comp       = hybrid["hybrid_score"]
+            comp_label = hybrid["label"]
+            comp_badge = hybrid["badge"]
 
             rows.append({
                 "종목명":         name,
@@ -1021,6 +1041,7 @@ def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
                 "종합추천":       f"{comp_badge} {comp_label}",
                 "종합점수":       comp,
                 "기술점수":       tech,
+                "뉴스점수":       round(news_score, 2),
                 "예상수익률(%)":  ret_pct,
                 "변동성(%)":      round(float(exp.get("hist_volatility", 0)), 1),
                 "모멘텀(20일)%":  round(float(exp.get("momentum_20d", 0)), 2),
