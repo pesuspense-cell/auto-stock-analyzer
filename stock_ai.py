@@ -204,6 +204,16 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     _z_std  = close.rolling(20).std()
     data["Z_SCORE"] = (close - _z_mean) / _z_std.replace(0, np.nan)
 
+    # ── VWAP 멀티 타임프레임 (Shannon — 롤링 누적합) ──────────────────────────
+    # 수식: (Typical_Price × Volume) 롤링합 / Volume 롤링합
+    # 참고: 라이언 섀넌, 《기술적 분석을 이용한 다중 타임프레임 분석》
+    _tp_vwap = (high + low + close) / 3  # Typical Price
+    _pv      = _tp_vwap * volume
+    for _window, _col in [(5, "VWAP_W"), (20, "VWAP_M"), (60, "VWAP_Q")]:
+        _cum_pv = _pv.rolling(_window).sum()
+        _cum_v  = volume.rolling(_window).sum().replace(0, np.nan)
+        data[_col] = _cum_pv / _cum_v
+
     return data
 
 
@@ -211,7 +221,7 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
 
 def generate_signals(data: pd.DataFrame) -> dict:
     """
-    11개 모듈 복합 채점으로 매매 신호 생성.
+    12개 모듈 복합 채점으로 매매 신호 생성.
     점수 범위: -10 ~ +10  (양수=매수, 음수=매도)
 
     모듈별 최대 기여도:
@@ -227,7 +237,9 @@ def generate_signals(data: pd.DataFrame) -> dict:
       9. 일목균형표 구름 위치            ±1.8  — 중기 추세 국면 (구름 위·아래·내부)
      10. Z-Score 통계적 위치            ±1.0  — 통계적 과매수/과매도 감지
      11. 다이버전스 (RSI·MACD)          ±1.5  — 추세 전환 조기 경보
-    이론적 최대: ±18 → cap ±10
+     12. VWAP 멀티 타임프레임           ±2.0  — 주간·월간·분기 VWAP 위치 및 스택 정렬
+         (참고: 라이언 섀넌, 《기술적 분석을 이용한 다중 타임프레임 분석》)
+    이론적 최대: ±20 → cap ±10
     """
     if data.empty or len(data) < 21:
         return {}
@@ -532,6 +544,56 @@ def generate_signals(data: pd.DataFrame) -> dict:
         score += 1.5; reasons.append("RSI·MACD 이중 상승 다이버전스 → 강한 추세 전환 기대")
     elif div.get("bullish_rsi") or div.get("bullish_macd"):
         score += 0.8; reasons.append("상승 다이버전스 포착 → 추세 전환 기대")
+
+    # ══ 12. VWAP 멀티 타임프레임 (Shannon) — ±2.0 ════════════════════════════
+    # 주간(5봉) / 월간(20봉) / 분기(60봉) VWAP 대비 현재가 위치
+    vwap_w = _f(last, "VWAP_W")
+    vwap_m = _f(last, "VWAP_M")
+    vwap_q = _f(last, "VWAP_Q")
+
+    _vwap_delta = 0.0
+    if vwap_w:
+        if price > vwap_w:
+            _vwap_delta += 0.6
+        else:
+            _vwap_delta -= 0.6
+    if vwap_m:
+        if price > vwap_m:
+            _vwap_delta += 0.7
+        else:
+            _vwap_delta -= 0.7
+    if vwap_q:
+        if price > vwap_q:
+            _vwap_delta += 0.7
+        else:
+            _vwap_delta -= 0.7
+
+    # VWAP 스택 정렬 보너스 (Shannon의 핵심: 단기>중기>장기 = 추세 방향 일치)
+    if vwap_w and vwap_m and vwap_q:
+        if vwap_w > vwap_m > vwap_q:
+            _vwap_delta = min(_vwap_delta + 0.3, 2.0)
+            reasons.append(
+                f"VWAP 상승 스택 (주{vwap_w:,.0f} > 월{vwap_m:,.0f} > 분기{vwap_q:,.0f}) → 다중 타임프레임 강세 정렬"
+            )
+        elif vwap_w < vwap_m < vwap_q:
+            _vwap_delta = max(_vwap_delta - 0.3, -2.0)
+            reasons.append(
+                f"VWAP 하락 스택 (주{vwap_w:,.0f} < 월{vwap_m:,.0f} < 분기{vwap_q:,.0f}) → 다중 타임프레임 약세 정렬"
+            )
+
+    # 월간 VWAP 돌파/이탈 크로스 (Shannon의 핵심 진입 신호)
+    if vwap_m:
+        _prev_vwap_m = _f(prev, "VWAP_M")
+        if _prev_vwap_m:
+            _prev_price = float(data["Close"].iloc[-2])
+            if _prev_price < _prev_vwap_m and price > vwap_m:
+                _vwap_delta = min(_vwap_delta + 0.3, 2.0)
+                reasons.append(f"월간 VWAP 상향 돌파 ({vwap_m:,.0f}) → 수급 균형 회복, 매수 신호")
+            elif _prev_price > _prev_vwap_m and price < vwap_m:
+                _vwap_delta = max(_vwap_delta - 0.3, -2.0)
+                reasons.append(f"월간 VWAP 하향 이탈 ({vwap_m:,.0f}) → 수급 우위 상실, 매도 신호")
+
+    score += max(-2.0, min(2.0, _vwap_delta))
 
     # ══ 최종 판정 ════════════════════════════════════════════════════════════
     score = max(-10.0, min(10.0, score))  # cap ±10
@@ -1670,6 +1732,12 @@ def get_fundamental_data(ticker: str) -> dict:
         net_income       = None
         ocf              = info.get("operatingCashflow")   # yfinance info 직접값 (최신년)
         roe_history: list[float] = []                       # ROE 연도별 리스트
+        # 재무제표 fallback 변수 (info에 없을 때 계산)
+        roe_from_fin         = None
+        revenue_growth_calc  = None
+        earnings_growth_calc = None
+        op_margins_calc      = None
+        fcf_from_cf          = None
 
         try:
             fin = t.financials
@@ -1692,6 +1760,58 @@ def get_fundamental_data(ticker: str) -> dict:
                     for cf_label in ["Operating Cash Flow", "Total Cash From Operating Activities"]:
                         if cf_label in cf.index:
                             ocf = float(cf.loc[cf_label].iloc[0])
+                            break
+
+                # total_rev fallback: info에 없으면 financials에서 추출
+                if total_rev is None:
+                    for label in ["Total Revenue", "Operating Revenue"]:
+                        if label in fin.index:
+                            _v = fin.loc[label].iloc[0]
+                            if pd.notna(_v):
+                                total_rev = float(_v)
+                            break
+
+                # revenue_growth fallback: YoY 매출 변화율
+                for label in ["Total Revenue", "Operating Revenue"]:
+                    if label in fin.index:
+                        _rev_row = fin.loc[label].dropna()
+                        if len(_rev_row) >= 2:
+                            _r0 = float(_rev_row.iloc[0])
+                            _r1 = float(_rev_row.iloc[1])
+                            if _r1 != 0 and not pd.isna(_r0) and not pd.isna(_r1):
+                                revenue_growth_calc = round((_r0 - _r1) / abs(_r1), 6)
+                        break
+
+                # earnings_growth fallback: YoY 순이익 변화율
+                for label in ["Net Income", "Net Income Common Stockholders",
+                               "Net Income From Continuing Operation Net Minority Interest"]:
+                    if label in fin.index:
+                        _ni_row2 = fin.loc[label].dropna()
+                        if len(_ni_row2) >= 2:
+                            _n0 = float(_ni_row2.iloc[0])
+                            _n1 = float(_ni_row2.iloc[1])
+                            if _n1 != 0 and not pd.isna(_n0) and not pd.isna(_n1):
+                                earnings_growth_calc = round((_n0 - _n1) / abs(_n1), 6)
+                        break
+
+                # operating_margins fallback: 영업이익 / 매출
+                if operating_income is not None and total_rev and total_rev > 0:
+                    op_margins_calc = round(operating_income / total_rev, 6)
+
+                # FCF fallback: cashflow에서 직접 추출
+                if cf is not None and not cf.empty and "Free Cash Flow" in cf.index:
+                    _fcf_v = cf.loc["Free Cash Flow"].iloc[0]
+                    if pd.notna(_fcf_v):
+                        fcf_from_cf = float(_fcf_v)
+
+                # ROE fallback: 순이익 / 자기자본 (단년도)
+                if net_income is not None and bs is not None and not bs.empty:
+                    for label in ["Common Stock Equity", "Stockholders Equity",
+                                   "Total Equity Gross Minority Interest"]:
+                        if label in bs.index:
+                            _eq = bs.loc[label].iloc[0]
+                            if pd.notna(_eq) and float(_eq) > 0:
+                                roe_from_fin = round(net_income / float(_eq), 6)
                             break
 
                 # ROE 연도별 계산 (최대 4년)
@@ -1782,24 +1902,34 @@ def get_fundamental_data(ticker: str) -> dict:
         except Exception:
             pass
 
+        def _coalesce(*vals):
+            for v in vals:
+                if v is not None:
+                    return v
+            return None
+
+        # PSR 재계산: total_rev가 fallback으로 채워졌을 수 있음
+        if psr is None and market_cap and total_rev and total_rev > 0:
+            psr = round(market_cap / total_rev, 2)
+
         result = {
             "per":              per,
             "pbr":              pbr,
             "psr":              psr,
-            "roe":              info.get("returnOnEquity"),
+            "roe":              _coalesce(info.get("returnOnEquity"), roe_from_fin),
             "roe_history":      roe_history,           # 연도별 ROE(%) 리스트
             "eps_history":      eps_history,           # 연도별 EPS 리스트 (과거→현재, 린치 CAGR용)
             "debt_equity":      info.get("debtToEquity"),
-            "revenue_growth":   info.get("revenueGrowth"),
-            "earnings_growth":  info.get("earningsGrowth"),
-            "operating_margins":info.get("operatingMargins"),
+            "revenue_growth":   _coalesce(info.get("revenueGrowth"),  revenue_growth_calc),
+            "earnings_growth":  _coalesce(info.get("earningsGrowth"), earnings_growth_calc),
+            "operating_margins":_coalesce(info.get("operatingMargins"), op_margins_calc),
             "w52_high":         w52_high,
             "w52_low":          w52_low,
             "market_cap":       market_cap,
             "total_revenue":    total_rev,
             "operating_income": operating_income,
             "net_income":       net_income,
-            "free_cashflow":    info.get("freeCashflow"),
+            "free_cashflow":    _coalesce(info.get("freeCashflow"), fcf_from_cf),
             "ocf":              ocf,                   # 영업활동현금흐름
             "buyback_amount":   buyback_amount,        # 자사주 매입액
             "div_paid_amount":  div_paid_amount,       # 배당금 지급액
@@ -2250,6 +2380,77 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
         "peg":           round(peg, 2) if peg is not None else None,
         "eps_history":   eps_history,
         "eps_cagr_3yr":  round(eps_cagr_3yr * 100, 1) if eps_cagr_3yr is not None else None,
+    }
+
+
+# ─── 매수 적정가 계산 ────────────────────────────────────────────────────────
+
+def get_buy_target_price(data: pd.DataFrame) -> dict:
+    """
+    기술적 지지선 기반 매수 적정가 산출.
+
+    지지선 가중 평균:
+      BB Lower (50%) — 볼린저밴드 하단: 통계적 과매도 진입선
+      SMA 20  (30%) — 20일 이평: 중기 추세 지지
+      5일 저점 (20%) — 단기 지지
+    타이밍 신호:
+      현재가 ≤ BB Lower × 1.005 → "⚡ 과매도 — 지금이 매수 타이밍"
+      현재가 ≤ SMA20 × 1.01   → "🔵 SMA20 지지 — 분할매수 적합"
+      그 외                   → "⏳ 대기 — {적정가}원 도달 시 매수"
+    """
+    if data.empty or len(data) < 20:
+        return {}
+
+    close   = data["Close"]
+    current = float(close.iloc[-1])
+
+    bb_lower = float(data["BB_Lower"].iloc[-1]) if "BB_Lower" in data.columns else None
+    sma20    = float(data["SMA_20"].iloc[-1])   if "SMA_20"   in data.columns else None
+    atr      = float(data["ATR"].iloc[-1])      if "ATR"      in data.columns else None
+
+    # 5일 저점 (당일 포함 최근 5봉의 Low)
+    low5 = float(data["Low"].iloc[-5:].min()) if "Low" in data.columns and len(data) >= 5 else current
+
+    # BB Lower가 없으면 수동 계산
+    if bb_lower is None:
+        _mid = close.rolling(20).mean().iloc[-1]
+        _std = close.rolling(20).std().iloc[-1]
+        bb_lower = float(_mid - 2 * _std)
+
+    # SMA20 폴백
+    if sma20 is None:
+        sma20 = float(close.rolling(20).mean().iloc[-1])
+
+    # 가중 평균 적정가
+    buy_target = round(bb_lower * 0.50 + sma20 * 0.30 + low5 * 0.20, 2)
+
+    # 적정가 대비 현재가 괴리율
+    gap_pct = (current - buy_target) / buy_target * 100
+
+    # 타이밍 신호
+    if bb_lower and current <= bb_lower * 1.005:
+        timing = "⚡ 과매도 — 지금이 매수 타이밍"
+        timing_color = "#69f0ae"
+    elif sma20 and current <= sma20 * 1.01:
+        timing = "🔵 SMA20 지지 — 분할매수 적합"
+        timing_color = "#82b1ff"
+    elif gap_pct <= 3.0:
+        timing = "🟡 적정가 근접 — 모니터링 권고"
+        timing_color = "#fff176"
+    else:
+        timing = f"⏳ 대기 중 ({gap_pct:+.1f}% 고평가)"
+        timing_color = "#aaa"
+
+    return {
+        "buy_target":    buy_target,
+        "bb_lower":      round(bb_lower, 2),
+        "sma20":         round(sma20, 2),
+        "low5":          round(low5, 2),
+        "gap_pct":       round(gap_pct, 2),
+        "timing":        timing,
+        "timing_color":  timing_color,
+        "current":       round(current, 2),
+        "atr":           round(atr, 2) if atr else None,
     }
 
 
@@ -3250,7 +3451,7 @@ def analyze_news_sentiment_llm(
         if not json_match:
             raise ValueError("JSON not found in response")
         json_str = json_match.group(1) or json_match.group(2)
-        parsed = _json.loads(json_str)
+        parsed, _ = _json.JSONDecoder().raw_decode(json_str.strip())
 
         if "sentiment_index" not in parsed:
             raise ValueError("Missing required fields in response")
@@ -3462,7 +3663,7 @@ def summarize_article_llm(
         match = _re.search(r'\{[\s\S]*\}', raw)
         if not match:
             raise ValueError("JSON not found in response")
-        parsed = _json.loads(match.group())
+        parsed, _ = _json.JSONDecoder().raw_decode(match.group().strip())
 
         return {
             "summary":                parsed.get("summary", "요약 없음"),

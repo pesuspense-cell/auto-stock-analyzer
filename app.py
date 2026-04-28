@@ -24,8 +24,8 @@ except ImportError:
 try:
     from src.indicators import (
         get_stock_data, generate_signals, calculate_expected_return,
-        get_stop_loss_targets, get_advanced_analysis, calculate_vpvr,
-        detect_divergence, get_hybrid_signal, check_volume_anomaly,
+        get_stop_loss_targets, get_buy_target_price, get_advanced_analysis,
+        calculate_vpvr, detect_divergence, get_hybrid_signal, check_volume_anomaly,
     )
     from src.fundamental import (
         get_fundamental_data, calculate_fundamental_score,
@@ -2354,6 +2354,19 @@ with tab_chart:
                 line=dict(color="#42a5f5", width=1.1, dash="dot"),
             ), row=1, col=1)
 
+        # ── VWAP 멀티 타임프레임 (Shannon) ──────────────────────────────────
+        vwap_lines = [
+            ("VWAP_W", "#ff8f00", "VWAP 주간(5일)",   1.4, "solid"),
+            ("VWAP_M", "#ce93d8", "VWAP 월간(20일)",  1.6, "solid"),
+            ("VWAP_Q", "#80deea", "VWAP 분기(60일)",  2.0, "dash"),
+        ]
+        for _vc, _color, _lbl, _w, _dash in vwap_lines:
+            if _vc in data.columns:
+                fig.add_trace(go.Scatter(
+                    x=data.index, y=data[_vc],
+                    name=_lbl, line=dict(color=_color, width=_w, dash=_dash),
+                ), row=1, col=1)
+
         # ── 거래량 (Row 2) ───────────────────────────────────────────────────
         vol_colors = ["#ef5350" if float(c.iloc[i]) >= float(o.iloc[i]) else "#42a5f5"
                       for i in range(len(data))]
@@ -2628,6 +2641,47 @@ with tab_chart:
             st.metric("현재가", f"{last_price:,.0f}", f"{daily_chg:+.2f}%",
                       help="최근 거래일 종가. 아래 숫자(화살표)는 전일 대비 등락률입니다.")
 
+            # ── 매수 적정가 ──────────────────────────────────────────────────
+            _bt = get_buy_target_price(data)
+            if _bt:
+                _t_price = _bt["buy_target"]
+                _gap     = _bt["gap_pct"]
+                _timing  = _bt["timing"]
+                _tc      = _bt["timing_color"]
+                _bb_l    = _bt["bb_lower"]
+                _s20     = _bt["sma20"]
+                _l5      = _bt["low5"]
+                _gap_clr = "#ef9a9a" if _gap > 5 else ("#fff176" if _gap > 0 else "#69f0ae")
+                # 가격 단위: 원화(소수 없음) vs 달러(소수 2자리)
+                _is_krw  = last_price > 500
+                _fmt     = "{:,.0f}" if _is_krw else "{:,.2f}"
+                st.markdown(f"""
+<div style="background:#12161f;border:1px solid #2a2d3e;border-radius:10px;
+            padding:11px 14px;margin-top:4px;margin-bottom:2px;">
+  <div style="font-size:0.68rem;color:#888;letter-spacing:0.5px;margin-bottom:7px;">
+    🎯 매수 적정가
+    <span style="float:right;font-size:0.65rem;color:#555;">BB하단×0.5 + SMA20×0.3 + 5일저점×0.2</span>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <span style="font-size:1.35rem;font-weight:bold;color:#e0e0e0;">
+      {_fmt.format(_t_price)}
+    </span>
+    <span style="font-size:0.8rem;font-weight:bold;color:{_gap_clr};">
+      현재가 {_gap:+.1f}%
+    </span>
+  </div>
+  <div style="font-size:0.78rem;font-weight:bold;color:{_tc};margin-bottom:8px;">
+    {_timing}
+  </div>
+  <div style="border-top:1px solid #2a2d3e;padding-top:7px;display:flex;
+              justify-content:space-between;font-size:0.72rem;color:#777;">
+    <span>BB하단 {_fmt.format(_bb_l)}</span>
+    <span>SMA20 {_fmt.format(_s20)}</span>
+    <span>5일저점 {_fmt.format(_l5)}</span>
+  </div>
+</div>
+                """, unsafe_allow_html=True)
+
         if expected:
             _M    = expected["expected_return_pct"]
             _A    = expected.get("return_low",  _M - 5.0)
@@ -2728,6 +2782,69 @@ with tab_chart:
                 st.metric("샤프 지수", f"{expected['sharpe']:.2f}",
                           help="무위험 수익률(3.5%) 초과 수익 ÷ 변동성 (연환산)")
 
+        # ── VWAP 멀티 타임프레임 카드 (Shannon) ─────────────────────────────
+        if not data.empty and len(data) >= 2:
+            _cur = float(data["Close"].iloc[-1])
+            _is_krw = _cur > 500
+            _pf = "{:,.0f}" if _is_krw else "{:,.2f}"
+            _vw_row  = data.iloc[-1]
+
+            def _vwap_row_html(label, col, color):
+                if col not in data.columns or pd.isna(_vw_row[col]):
+                    return ""
+                _v = float(_vw_row[col])
+                _diff = (_cur - _v) / _v * 100
+                _arrow = "▲" if _diff >= 0 else "▼"
+                _dc = "#69f0ae" if _diff >= 0 else "#ef9a9a"
+                return (
+                    f'<div style="display:flex;justify-content:space-between;'
+                    f'align-items:center;padding:4px 0;border-bottom:1px solid #2a2d3e;">'
+                    f'<span style="font-size:0.72rem;color:{color};">● {label}</span>'
+                    f'<span style="font-size:0.75rem;color:#ddd;">{_pf.format(_v)}</span>'
+                    f'<span style="font-size:0.72rem;color:{_dc};">{_arrow}{abs(_diff):.1f}%</span>'
+                    f'</div>'
+                )
+
+            # VWAP 스택 방향 판별
+            _vw = float(_vw_row["VWAP_W"]) if "VWAP_W" in data.columns and pd.notna(_vw_row["VWAP_W"]) else None
+            _vm = float(_vw_row["VWAP_M"]) if "VWAP_M" in data.columns and pd.notna(_vw_row["VWAP_M"]) else None
+            _vq = float(_vw_row["VWAP_Q"]) if "VWAP_Q" in data.columns and pd.notna(_vw_row["VWAP_Q"]) else None
+
+            if _vw and _vm and _vq:
+                if _vw > _vm > _vq:
+                    _stack_txt = "📶 상승 스택 — 단·중·장기 강세 정렬"
+                    _stack_clr = "#69f0ae"
+                elif _vw < _vm < _vq:
+                    _stack_txt = "📉 하락 스택 — 단·중·장기 약세 정렬"
+                    _stack_clr = "#ef9a9a"
+                else:
+                    _stack_txt = "↔ 혼조 — 타임프레임 간 방향 불일치"
+                    _stack_clr = "#fff176"
+            else:
+                _stack_txt, _stack_clr = "데이터 부족", "#888"
+
+            _vwap_rows = (
+                _vwap_row_html("주간 VWAP (5봉)",  "VWAP_W", "#ff8f00") +
+                _vwap_row_html("월간 VWAP (20봉)", "VWAP_M", "#ce93d8") +
+                _vwap_row_html("분기 VWAP (60봉)", "VWAP_Q", "#80deea")
+            )
+            st.markdown(f"""
+<div style="background:#12161f;border:1px solid #2a2d3e;border-radius:10px;
+            padding:11px 14px;margin-bottom:6px;">
+  <div style="font-size:0.68rem;color:#888;letter-spacing:0.5px;margin-bottom:6px;">
+    📊 VWAP 다중 타임프레임
+    <span style="float:right;font-size:0.6rem;color:#555;">Shannon, 2008</span>
+  </div>
+  {_vwap_rows}
+  <div style="margin-top:7px;font-size:0.74rem;font-weight:bold;color:{_stack_clr};">
+    {_stack_txt}
+  </div>
+  <div style="font-size:0.65rem;color:#555;margin-top:3px;">
+    수식: Σ(Typical Price × Volume) / Σ(Volume) — 롤링 누적합
+  </div>
+</div>
+            """, unsafe_allow_html=True)
+
         st.divider()
         st.markdown("**📋 기술 신호 근거**")
         _BUY_KEYS  = ["매수", "반등", "상승", "골든", "과매도", "매집", "긍정", "유입", "강세"]
@@ -2758,6 +2875,9 @@ with tab_chart:
             ("EMA20",      "EMA_20",     ",.0f"),
             ("EMA50",      "EMA_50",     ",.0f"),
             ("EMA200",     "EMA_200",    ",.0f"),
+            ("VWAP 주간",  "VWAP_W",    ",.0f"),
+            ("VWAP 월간",  "VWAP_M",    ",.0f"),
+            ("VWAP 분기",  "VWAP_Q",    ",.0f"),
         ]
         last_row = data.iloc[-1]
         for lbl, col, fmt in indicator_map:
