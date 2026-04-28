@@ -2580,26 +2580,47 @@ with tab_chart:
 
         f_badge = "🏛️"
 
-        # ── 2개 박스 나란히 ────────────────────────────────────────────────────
-        sig_col1, sig_col2 = st.columns(2)
+        # ── 현재가 사전 계산 ────────────────────────────────────────────────────
+        _has_price = not close.empty and len(close) >= 2
+        if _has_price:
+            last_price = float(close.iloc[-1])
+            prev_price = float(close.iloc[-2])
+            daily_chg  = (last_price - prev_price) / prev_price * 100
+            _is_krw    = last_price > 500
+            _fmt       = "{:,.0f}" if _is_krw else "{:,.2f}"
+            _chg_clr   = "#a5d6a7" if daily_chg >= 0 else "#ef9a9a"
+            _chg_sym   = "▲" if daily_chg >= 0 else "▼"
+            _price_card = f"""<div style="background:{st_bg};border-radius:8px;padding:8px 10px;border:1px solid #2a2d3e;height:100%;">
+  <div style="font-size:0.75rem;color:#888;margin-bottom:5px;letter-spacing:1px;">💰 현재가</div>
+  <div style="font-size:1.2rem;font-weight:bold;color:#e0e0e0;">{_fmt.format(last_price)}</div>
+  <div style="font-size:0.9rem;font-weight:bold;color:{_chg_clr};margin-top:4px;">{_chg_sym} {abs(daily_chg):.2f}%</div>
+</div>"""
+        else:
+            _fmt = "{:,.0f}"
+            _price_card = '<div style="background:#1e2130;border-radius:8px;padding:8px 10px;color:#555;font-size:0.85rem;">가격 데이터 없음</div>'
+
+        # ── 단타/장투 신호 + 현재가 (3열) ──────────────────────────────────────
+        sig_col1, sig_col2, sig_col3 = st.columns([1, 1, 1])
         with sig_col1:
             st.markdown(f"""
-            <div class="signal-box" style="background:{st_bg};">
-                <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">⚡ 단타 신호</div>
-                <div style="font-size:1.25rem;font-weight:bold;color:{st_fc};">{h_badge} {h_label}</div>
-                <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">점수: <b style="color:{st_fc};">{h_score:+.1f}</b></div>
-            </div>
+<div class="signal-box" style="background:{st_bg};">
+  <div style="font-size:0.8rem;color:#888;margin-bottom:4px;letter-spacing:1px;">⚡ 단타 신호</div>
+  <div style="font-size:1.45rem;font-weight:bold;color:{st_fc};">{h_badge} {h_label}</div>
+  <div style="font-size:0.92rem;color:#aaa;margin-top:4px;">점수: <b style="color:{st_fc};">{h_score:+.1f}</b></div>
+</div>
             """, unsafe_allow_html=True)
         with sig_col2:
             st.markdown(f"""
-            <div class="signal-box" style="background:{lt_bg};">
-                <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">🏛️ 장투 신호</div>
-                <div style="font-size:1.25rem;font-weight:bold;color:{lt_fc};">{f_badge} {f_label}</div>
-                <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">점수: <b style="color:{lt_fc};">{fs:+.1f}</b></div>
-            </div>
+<div class="signal-box" style="background:{lt_bg};">
+  <div style="font-size:0.8rem;color:#888;margin-bottom:4px;letter-spacing:1px;">🏛️ 장투 신호</div>
+  <div style="font-size:1.45rem;font-weight:bold;color:{lt_fc};">{f_badge} {f_label}</div>
+  <div style="font-size:0.92rem;color:#aaa;margin-top:4px;">점수: <b style="color:{lt_fc};">{fs:+.1f}</b></div>
+</div>
             """, unsafe_allow_html=True)
+        with sig_col3:
+            st.markdown(_price_card, unsafe_allow_html=True)
 
-        # ── 단타 신호 전체 단계 안내 ──────────────────────────────────────────
+        # ── 단타 신호 판정 기준 ─────────────────────────────────────────────────
         with st.expander("⚡ 단타 신호 판정 기준 보기", expanded=False):
             st.markdown("""
 <div style="font-size:0.82rem;line-height:1.9;">
@@ -2620,115 +2641,129 @@ with tab_chart:
 </div>
             """, unsafe_allow_html=True)
 
-        # ── 점수 구성 미니 테이블 ──────────────────────────────────────────────
+        # ── 점수 구성 미니 테이블 ───────────────────────────────────────────────
         tc = "#a5d6a7" if tech_score >= 0 else "#ef9a9a"
         nc = "#a5d6a7" if news_score >= 0 else "#ef9a9a"
         fc_color = lt_fc
         st.markdown(f"""
-<div style="background:#1e2130;border-radius:8px;padding:6px 10px;margin-top:4px;">
+<div style="background:#1e2130;border-radius:8px;padding:7px 12px;margin-top:4px;">
   <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:4px;align-items:start;">
     <div>
-      <div style="color:#666;font-size:0.62rem;margin-bottom:3px;">⚡ 단타 구성</div>
-      <div style="display:flex;justify-content:space-between;font-size:0.75rem;"><span style="color:#aaa;">기술(70%)</span><b style="color:{tc};">{tech_score:+.1f}</b></div>
-      <div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-top:2px;"><span style="color:#aaa;">뉴스(30%)</span><b style="color:{nc};">{news_score:+.1f}</b></div>
+      <div style="color:#666;font-size:0.72rem;margin-bottom:3px;">⚡ 단타 구성</div>
+      <div style="display:flex;justify-content:space-between;font-size:0.86rem;"><span style="color:#aaa;">기술(70%)</span><b style="color:{tc};">{tech_score:+.1f}</b></div>
+      <div style="display:flex;justify-content:space-between;font-size:0.86rem;margin-top:2px;"><span style="color:#aaa;">뉴스(30%)</span><b style="color:{nc};">{news_score:+.1f}</b></div>
     </div>
-    <div style="width:1px;background:#2a2d3e;align-self:stretch;margin:2px 6px;"></div>
+    <div style="width:1px;background:#2a2d3e;align-self:stretch;margin:2px 8px;"></div>
     <div>
-      <div style="color:#666;font-size:0.62rem;margin-bottom:3px;">🏛️ 장투 구성</div>
-      <div style="display:flex;justify-content:space-between;font-size:0.75rem;"><span style="color:#aaa;">펀더멘털</span><b style="color:{fc_color};">{fs:+.1f}</b></div>
-      <div style="font-size:0.62rem;color:#555;margin-top:3px;">PER·PBR·ROE·FCF ▶</div>
+      <div style="color:#666;font-size:0.72rem;margin-bottom:3px;">🏛️ 장투 구성</div>
+      <div style="display:flex;justify-content:space-between;font-size:0.86rem;"><span style="color:#aaa;">펀더멘털</span><b style="color:{fc_color};">{fs:+.1f}</b></div>
+      <div style="font-size:0.72rem;color:#555;margin-top:3px;">PER·PBR·ROE·FCF ▶</div>
     </div>
   </div>
 </div>
         """, unsafe_allow_html=True)
 
-        if not close.empty and len(close) >= 2:
-            last_price = float(close.iloc[-1])
-            prev_price = float(close.iloc[-2])
-            daily_chg  = (last_price - prev_price) / prev_price * 100
-            _is_krw  = last_price > 500
-            _fmt     = "{:,.0f}" if _is_krw else "{:,.2f}"
-            _chg_clr = "#a5d6a7" if daily_chg >= 0 else "#ef9a9a"
-            _chg_sym = "▲" if daily_chg >= 0 else "▼"
-            st.markdown(f"""
-<div style="display:flex;justify-content:space-between;align-items:center;
-            background:#1e2130;border-radius:8px;padding:5px 12px;margin-top:4px;">
-  <span style="color:#888;font-size:0.72rem;">💰 현재가</span>
-  <span style="font-size:1.05rem;font-weight:bold;color:#e0e0e0;">{_fmt.format(last_price)}</span>
-  <span style="font-size:0.78rem;font-weight:bold;color:{_chg_clr};">{_chg_sym} {abs(daily_chg):.2f}%</span>
-</div>
-            """, unsafe_allow_html=True)
+        # ── 매수/매도 적정가 (세로) + 손절익절 가이드 (우측) ───────────────────
+        _price_col, _sl_col = st.columns([1, 1])
 
-            # ── 매수 / 매도 적정가 (2-column) ──────────────────────────────
-            _bt = get_buy_target_price(data)
-            _st_data = get_sell_target_price(data)
-            _buy_card = ""
-            _sell_card = ""
+        with _price_col:
+            if _has_price:
+                _bt      = get_buy_target_price(data)
+                _st_data = get_sell_target_price(data)
 
-            if _bt:
-                _t_price = _bt["buy_target"]
-                _gap     = _bt["gap_pct"]
-                _timing  = _bt["timing"]
-                _tc_clr  = _bt["timing_color"]
-                _bb_l    = _bt["bb_lower"]
-                _s20     = _bt["sma20"]
-                _l5      = _bt["low5"]
-                _gap_clr = "#ef9a9a" if _gap > 5 else ("#fff176" if _gap > 0 else "#69f0ae")
-                _buy_card = f"""
-<div style="background:#12161f;border:1px solid #2a2d3e;border-radius:8px;padding:8px 10px;">
-  <div style="font-size:0.62rem;color:#888;margin-bottom:4px;">🎯 매수 적정가</div>
+                if _bt:
+                    _t_price = _bt["buy_target"]
+                    _gap     = _bt["gap_pct"]
+                    _timing  = _bt["timing"]
+                    _tc_clr  = _bt["timing_color"]
+                    _bb_l    = _bt["bb_lower"]
+                    _s20     = _bt["sma20"]
+                    _l5      = _bt["low5"]
+                    _gap_clr = "#ef9a9a" if _gap > 5 else ("#fff176" if _gap > 0 else "#69f0ae")
+                    st.markdown(f"""
+<div style="background:#12161f;border:1px solid #2a2d3e;border-radius:8px;padding:8px 10px;margin-top:4px;">
+  <div style="font-size:0.65rem;color:#888;margin-bottom:4px;">🎯 매수 적정가</div>
   <div style="font-size:1.05rem;font-weight:bold;color:#e0e0e0;">{_fmt.format(_t_price)}</div>
-  <div style="font-size:0.7rem;color:{_gap_clr};margin:2px 0;">현재가 {_gap:+.1f}%</div>
-  <div style="font-size:0.68rem;font-weight:bold;color:{_tc_clr};">{_timing}</div>
-  <div style="border-top:1px solid #1e2130;padding-top:4px;margin-top:5px;font-size:0.6rem;color:#555;line-height:1.6;">
+  <div style="font-size:0.75rem;color:{_gap_clr};margin:2px 0;">현재가 {_gap:+.1f}%</div>
+  <div style="font-size:0.72rem;font-weight:bold;color:{_tc_clr};">{_timing}</div>
+  <div style="border-top:1px solid #1e2130;padding-top:4px;margin-top:5px;font-size:0.62rem;color:#555;line-height:1.6;">
     BB하단 {_fmt.format(_bb_l)}<br>SMA20 {_fmt.format(_s20)} · 5일저 {_fmt.format(_l5)}
   </div>
-</div>"""
+</div>""", unsafe_allow_html=True)
 
-            if _st_data:
-                _cons     = _st_data["conservative_target"]
-                _aggr     = _st_data["aggressive_target"]
-                _cons_gap = _st_data["cons_gap"]
-                _aggr_gap = _st_data["aggr_gap"]
-                _s_timing = _st_data["sell_timing"]
-                _s_color  = _st_data["sell_color"]
-                _bb_u     = _st_data["bb_upper"]
-                _res      = _st_data["resistance_level"]
-                _fib_val  = _st_data["fib_1618"]
-                _is_nh    = _st_data["is_new_high"]
-                _cons_clr = "#a5d6a7" if _cons_gap > 5 else ("#fff176" if _cons_gap > 0 else "#ef9a9a")
-                _aggr_clr = "#a5d6a7" if _aggr_gap > 10 else ("#fff176" if _aggr_gap > 0 else "#ef9a9a")
-                _nh_badge = '<span style="background:#1a237e;color:#82b1ff;font-size:0.58rem;padding:1px 5px;border-radius:8px;margin-left:4px;">신고가</span>' if _is_nh else ""
-                _ref_line = f"BB상단 {_fmt.format(_bb_u)}" + (f"<br>매물대 {_fmt.format(_res)}" if _res else "") + (f" · 피보 {_fmt.format(_fib_val)}" if _fib_val else "")
-                _sell_card = f"""
-<div style="background:#1a0f0a;border:1px solid #3d1f0f;border-radius:8px;padding:8px 10px;">
-  <div style="font-size:0.62rem;color:#888;margin-bottom:4px;">📤 매도 적정가{_nh_badge}</div>
+                if _st_data:
+                    _cons     = _st_data["conservative_target"]
+                    _aggr     = _st_data["aggressive_target"]
+                    _cons_gap = _st_data["cons_gap"]
+                    _aggr_gap = _st_data["aggr_gap"]
+                    _s_timing = _st_data["sell_timing"]
+                    _s_color  = _st_data["sell_color"]
+                    _bb_u     = _st_data["bb_upper"]
+                    _res      = _st_data["resistance_level"]
+                    _fib_val  = _st_data["fib_1618"]
+                    _is_nh    = _st_data["is_new_high"]
+                    _cons_clr = "#a5d6a7" if _cons_gap > 5 else ("#fff176" if _cons_gap > 0 else "#ef9a9a")
+                    _aggr_clr = "#a5d6a7" if _aggr_gap > 10 else ("#fff176" if _aggr_gap > 0 else "#ef9a9a")
+                    _nh_badge = '<span style="background:#1a237e;color:#82b1ff;font-size:0.6rem;padding:1px 5px;border-radius:8px;margin-left:4px;">신고가</span>' if _is_nh else ""
+                    _ref_line = f"BB상단 {_fmt.format(_bb_u)}" + (f"<br>매물대 {_fmt.format(_res)}" if _res else "") + (f" · 피보 {_fmt.format(_fib_val)}" if _fib_val else "")
+                    st.markdown(f"""
+<div style="background:#1a0f0a;border:1px solid #3d1f0f;border-radius:8px;padding:8px 10px;margin-top:5px;">
+  <div style="font-size:0.65rem;color:#888;margin-bottom:4px;">📤 매도 적정가{_nh_badge}</div>
   <div style="display:flex;justify-content:space-between;gap:4px;">
     <div>
-      <div style="font-size:0.58rem;color:#777;">보수적</div>
-      <div style="font-size:0.88rem;font-weight:bold;color:#ffccbc;">{_fmt.format(_cons)}</div>
-      <div style="font-size:0.68rem;color:{_cons_clr};">{_cons_gap:+.1f}%</div>
+      <div style="font-size:0.62rem;color:#777;">보수적</div>
+      <div style="font-size:0.92rem;font-weight:bold;color:#ffccbc;">{_fmt.format(_cons)}</div>
+      <div style="font-size:0.72rem;color:{_cons_clr};">{_cons_gap:+.1f}%</div>
     </div>
     <div style="text-align:right;">
-      <div style="font-size:0.58rem;color:#777;">공격적</div>
-      <div style="font-size:0.88rem;font-weight:bold;color:#ff8a65;">{_fmt.format(_aggr)}</div>
-      <div style="font-size:0.68rem;color:{_aggr_clr};">{_aggr_gap:+.1f}%</div>
+      <div style="font-size:0.62rem;color:#777;">공격적</div>
+      <div style="font-size:0.92rem;font-weight:bold;color:#ff8a65;">{_fmt.format(_aggr)}</div>
+      <div style="font-size:0.72rem;color:{_aggr_clr};">{_aggr_gap:+.1f}%</div>
     </div>
   </div>
-  <div style="font-size:0.65rem;font-weight:bold;color:{_s_color};margin-top:4px;">{_s_timing}</div>
-  <div style="border-top:1px solid #3d1f0f;padding-top:4px;margin-top:5px;font-size:0.6rem;color:#555;line-height:1.6;">
+  <div style="font-size:0.7rem;font-weight:bold;color:{_s_color};margin-top:4px;">{_s_timing}</div>
+  <div style="border-top:1px solid #3d1f0f;padding-top:4px;margin-top:5px;font-size:0.62rem;color:#555;line-height:1.6;">
     {_ref_line}
   </div>
-</div>"""
+</div>""", unsafe_allow_html=True)
 
-            if _buy_card or _sell_card:
+        with _sl_col:
+            sl = get_stop_loss_targets(data)
+            if sl:
+                _is_krw_sl = sl["current"] > 500
+                _sfmt = "{:,.0f}" if _is_krw_sl else "{:,.2f}"
                 st.markdown(f"""
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:4px;">
-  {_buy_card}
-  {_sell_card}
+<div style="background:#0d1117;border:1px solid #2a2d3e;border-radius:10px;
+            padding:11px 14px;margin-top:4px;">
+  <div style="font-size:0.72rem;color:#888;letter-spacing:0.5px;margin-bottom:8px;">
+    🛡️ 손절·익절 가이드
+    <span style="float:right;font-size:0.65rem;color:#555;">오닐 원칙 + ATR</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+    <div style="background:#1a0808;border-radius:6px;padding:6px 9px;">
+      <div style="font-size:0.65rem;color:#888;">🔴 손절 (8% 룰)</div>
+      <div style="font-size:0.95rem;font-weight:bold;color:#ef9a9a;">{_sfmt.format(sl['stop_8pct'])}</div>
+    </div>
+    <div style="background:#1a0f08;border-radius:6px;padding:6px 9px;">
+      <div style="font-size:0.65rem;color:#888;">🟠 손절 (ATR×2.5)</div>
+      <div style="font-size:0.95rem;font-weight:bold;color:#ffab91;">{_sfmt.format(sl['stop_atr'])}</div>
+    </div>
+    <div style="background:#0f1a08;border-radius:6px;padding:6px 9px;">
+      <div style="font-size:0.65rem;color:#888;">🟡 1차 목표 (2R)</div>
+      <div style="font-size:0.95rem;font-weight:bold;color:#fff176;">{_sfmt.format(sl['target_2r'])}</div>
+    </div>
+    <div style="background:#091a08;border-radius:6px;padding:6px 9px;">
+      <div style="font-size:0.65rem;color:#888;">🟢 2차 목표 (3R)</div>
+      <div style="font-size:0.95rem;font-weight:bold;color:#a5d6a7;">{_sfmt.format(sl['target_3r'])}</div>
+    </div>
+  </div>
+  <div style="font-size:0.7rem;color:#555;margin-top:7px;text-align:right;">
+    ATR {sl['atr_ratio']:.2f}% · {_sfmt.format(sl['atr'])}
+  </div>
 </div>
                 """, unsafe_allow_html=True)
 
+        # ── 예상 수익률 구간 ───────────────────────────────────────────────────
         if expected:
             _M    = expected["expected_return_pct"]
             _A    = expected.get("return_low",  _M - 5.0)
@@ -2748,23 +2783,23 @@ with tab_chart:
             _beta_clr = "#a5d6a7" if _beta >= 1.0 else "#fff176"
             _kelly_bar = min(int(_kelly * 2), 100)
             _rr_str   = f"{abs(_B) / max(abs(_A), 0.1):.1f}:1" if _A < 0 else "—"
-            _vpvr_note = '<div style="font-size:0.62rem;color:#ffab91;margin-top:2px;">⚠️ 목표가 부근 매물대 저항 — B 하향 보정</div>' if _vpvr else ""
+            _vpvr_note = '<div style="font-size:0.65rem;color:#ffab91;margin-top:2px;">⚠️ 목표가 부근 매물대 저항 — B 하향 보정</div>' if _vpvr else ""
 
             st.markdown(f"""
 <div style="background:#1a1d2e;border-radius:8px;padding:8px 12px;margin-top:4px;border:1px solid #2a2d3e;">
-  <div style="font-size:0.62rem;color:#888;margin-bottom:5px;">📈 예상 수익률 구간 (20거래일)</div>
+  <div style="font-size:0.65rem;color:#888;margin-bottom:5px;">📈 예상 수익률 구간 (20거래일)</div>
   <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
     <div style="text-align:center;">
-      <div style="font-size:0.58rem;color:#777;">최저 A</div>
-      <div style="font-size:0.82rem;font-weight:bold;color:{_a_clr};">{_A:+.1f}%</div>
+      <div style="font-size:0.62rem;color:#777;">최저 A</div>
+      <div style="font-size:0.88rem;font-weight:bold;color:{_a_clr};">{_A:+.1f}%</div>
     </div>
     <div style="text-align:center;">
-      <div style="font-size:0.58rem;color:#777;">중간값 M</div>
-      <div style="font-size:0.92rem;font-weight:bold;color:{_m_clr};">{_M:+.1f}%</div>
+      <div style="font-size:0.62rem;color:#777;">중간값 M</div>
+      <div style="font-size:1.0rem;font-weight:bold;color:{_m_clr};">{_M:+.1f}%</div>
     </div>
     <div style="text-align:center;">
-      <div style="font-size:0.58rem;color:#777;">최고 B{'⚠️' if _vpvr else ''}</div>
-      <div style="font-size:0.82rem;font-weight:bold;color:{_b_clr};">{_B:+.1f}%</div>
+      <div style="font-size:0.62rem;color:#777;">최고 B{'⚠️' if _vpvr else ''}</div>
+      <div style="font-size:0.88rem;font-weight:bold;color:{_b_clr};">{_B:+.1f}%</div>
     </div>
   </div>
   <div style="position:relative;background:#2a2d3e;border-radius:3px;height:5px;margin-bottom:2px;">
@@ -2775,15 +2810,15 @@ with tab_chart:
   <div style="border-top:1px solid #2a2d3e;padding-top:5px;margin-top:5px;
               display:grid;grid-template-columns:repeat(4,1fr);gap:2px;text-align:center;">
     <div>
-      <div style="font-size:0.58rem;color:#666;">켈리 비중</div>
-      <b style="font-size:0.78rem;color:#90caf9;">{_kelly:.1f}%</b>
+      <div style="font-size:0.62rem;color:#666;">켈리 비중</div>
+      <b style="font-size:0.82rem;color:#90caf9;">{_kelly:.1f}%</b>
       <div style="background:#2a2d3e;border-radius:2px;height:3px;margin-top:2px;">
         <div style="background:#90caf9;width:{_kelly_bar}%;height:3px;border-radius:2px;"></div>
       </div>
     </div>
-    <div><div style="font-size:0.58rem;color:#666;">승률 추정</div><b style="font-size:0.78rem;color:#aaa;">{_winp:.0f}%</b></div>
-    <div><div style="font-size:0.58rem;color:#666;">W/L</div><b style="font-size:0.78rem;color:#aaa;">{_rr_str}</b></div>
-    <div><div style="font-size:0.58rem;color:#666;">β 베타</div><b style="font-size:0.78rem;color:{_beta_clr};">{_beta:+.2f}</b></div>
+    <div><div style="font-size:0.62rem;color:#666;">승률 추정</div><b style="font-size:0.82rem;color:#aaa;">{_winp:.0f}%</b></div>
+    <div><div style="font-size:0.62rem;color:#666;">W/L</div><b style="font-size:0.82rem;color:#aaa;">{_rr_str}</b></div>
+    <div><div style="font-size:0.62rem;color:#666;">β 베타</div><b style="font-size:0.82rem;color:{_beta_clr};">{_beta:+.2f}</b></div>
   </div>
 </div>
             """, unsafe_allow_html=True)
@@ -2798,112 +2833,7 @@ with tab_chart:
                 st.metric("샤프 지수", f"{expected['sharpe']:.2f}",
                           help="무위험 수익률(3.5%) 초과 수익 ÷ 변동성 (연환산)")
 
-        # ── VWAP 멀티 타임프레임 카드 (Shannon) ─────────────────────────────
-        if not data.empty and len(data) >= 2:
-            _cur = float(data["Close"].iloc[-1])
-            _is_krw = _cur > 500
-            _pf = "{:,.0f}" if _is_krw else "{:,.2f}"
-            _vw_row  = data.iloc[-1]
-
-            def _vwap_row_html(label, col, color):
-                if col not in data.columns or pd.isna(_vw_row[col]):
-                    return ""
-                _v = float(_vw_row[col])
-                _diff = (_cur - _v) / _v * 100
-                _arrow = "▲" if _diff >= 0 else "▼"
-                _dc = "#69f0ae" if _diff >= 0 else "#ef9a9a"
-                return (
-                    f'<div style="display:flex;justify-content:space-between;'
-                    f'align-items:center;padding:4px 0;border-bottom:1px solid #2a2d3e;">'
-                    f'<span style="font-size:0.72rem;color:{color};">● {label}</span>'
-                    f'<span style="font-size:0.75rem;color:#ddd;">{_pf.format(_v)}</span>'
-                    f'<span style="font-size:0.72rem;color:{_dc};">{_arrow}{abs(_diff):.1f}%</span>'
-                    f'</div>'
-                )
-
-            # VWAP 스택 방향 판별
-            _vw = float(_vw_row["VWAP_W"]) if "VWAP_W" in data.columns and pd.notna(_vw_row["VWAP_W"]) else None
-            _vm = float(_vw_row["VWAP_M"]) if "VWAP_M" in data.columns and pd.notna(_vw_row["VWAP_M"]) else None
-            _vq = float(_vw_row["VWAP_Q"]) if "VWAP_Q" in data.columns and pd.notna(_vw_row["VWAP_Q"]) else None
-
-            if _vw and _vm and _vq:
-                if _vw > _vm > _vq:
-                    _stack_txt = "📶 상승 스택 — 단·중·장기 강세 정렬"
-                    _stack_clr = "#69f0ae"
-                elif _vw < _vm < _vq:
-                    _stack_txt = "📉 하락 스택 — 단·중·장기 약세 정렬"
-                    _stack_clr = "#ef9a9a"
-                else:
-                    _stack_txt = "↔ 혼조 — 타임프레임 간 방향 불일치"
-                    _stack_clr = "#fff176"
-            else:
-                _stack_txt, _stack_clr = "데이터 부족", "#888"
-
-            _vwap_rows = (
-                _vwap_row_html("주간 VWAP (5봉)",  "VWAP_W", "#ff8f00") +
-                _vwap_row_html("월간 VWAP (20봉)", "VWAP_M", "#ce93d8") +
-                _vwap_row_html("분기 VWAP (60봉)", "VWAP_Q", "#80deea")
-            )
-            st.markdown(f"""
-<div style="background:#12161f;border:1px solid #2a2d3e;border-radius:10px;
-            padding:11px 14px;margin-bottom:6px;">
-  <div style="font-size:0.68rem;color:#888;letter-spacing:0.5px;margin-bottom:6px;">
-    📊 VWAP 다중 타임프레임
-    <span style="float:right;font-size:0.6rem;color:#555;">Shannon, 2008</span>
-  </div>
-  {_vwap_rows}
-  <div style="margin-top:7px;font-size:0.74rem;font-weight:bold;color:{_stack_clr};">
-    {_stack_txt}
-  </div>
-  <div style="font-size:0.65rem;color:#555;margin-top:3px;">
-    수식: Σ(Typical Price × Volume) / Σ(Volume) — 롤링 누적합
-  </div>
-</div>
-            """, unsafe_allow_html=True)
-
-        st.divider()
-        st.markdown("**📋 기술 신호 근거**")
-        _BUY_KEYS  = ["매수", "반등", "상승", "골든", "과매도", "매집", "긍정", "유입", "강세"]
-        _SELL_KEYS = ["매도", "과열", "하락", "데드", "과매수", "분산", "약세", "이탈 주의"]
-        for r in signals.get("reasons", []):
-            if any(k in r for k in _BUY_KEYS):
-                st.success(r, icon="🔺")
-            elif any(k in r for k in _SELL_KEYS):
-                st.error(r, icon="🔻")
-            else:
-                st.info(r, icon="🔷")
-
-        st.divider()
-        st.markdown("**📊 지표값**")
-        indicator_map = [
-            ("RSI",        "RSI",        ".1f"),
-            ("MACD",       "MACD",       ".4f"),
-            ("ADX",        "ADX",        ".1f"),
-            ("+DI",        "ADX_POS",    ".1f"),
-            ("-DI",        "ADX_NEG",    ".1f"),
-            ("CCI",        "CCI",        ".1f"),
-            ("Williams%R", "WILLIAMS_R", ".1f"),
-            ("MFI",        "MFI",        ".1f"),
-            ("ROC",        "ROC",        ".2f"),
-            ("BB상단",     "BB_Upper",   ",.0f"),
-            ("BB중단",     "BB_Middle",  ",.0f"),
-            ("BB하단",     "BB_Lower",   ",.0f"),
-            ("EMA20",      "EMA_20",     ",.0f"),
-            ("EMA50",      "EMA_50",     ",.0f"),
-            ("EMA200",     "EMA_200",    ",.0f"),
-            ("VWAP 주간",  "VWAP_W",    ",.0f"),
-            ("VWAP 월간",  "VWAP_M",    ",.0f"),
-            ("VWAP 분기",  "VWAP_Q",    ",.0f"),
-        ]
-        last_row = data.iloc[-1]
-        for lbl, col, fmt in indicator_map:
-            if col in data.columns:
-                val = last_row[col]
-                if pd.notna(val):
-                    st.caption(f"**{lbl}:** {float(val):{fmt}}")
-
-        # ── 종합 판단 스코어보드 ──────────────────────────────────────────────
-        st.divider()
+        # ── 종합 판단 스코어보드 ─────────────────────────────────────────────
         with st.expander("📊 종합 판단 스코어보드", expanded=True):
             ts = advanced.get("trend_score",    50.0)
             ms = advanced.get("momentum_score", 50.0)
@@ -2949,7 +2879,6 @@ with tab_chart:
                 unsafe_allow_html=True,
             )
 
-            # 추가 분석 항목 테이블
             items = advanced.get("summary_items", [])
             if items:
                 st.markdown('<div style="margin-top:10px;font-size:0.75rem;color:#888;">추가 분석 항목</div>',
@@ -2965,7 +2894,6 @@ with tab_chart:
                         unsafe_allow_html=True,
                     )
 
-            # 다이버전스 상세 설명
             div_descs = advanced.get("divergence", {}).get("descriptions", [])
             if div_descs:
                 for d in div_descs:
@@ -2974,42 +2902,128 @@ with tab_chart:
                     else:
                         st.success(d, icon="✅")
 
-        # ── 손절·익절 레벨 ────────────────────────────────────────────────
         st.divider()
-        sl = get_stop_loss_targets(data)
-        if sl:
-            _is_krw_sl = sl["current"] > 500
-            _sfmt = "{:,.0f}" if _is_krw_sl else "{:,.2f}"
-            st.markdown(f"""
-<div style="background:#0d1117;border:1px solid #2a2d3e;border-radius:10px;
-            padding:11px 14px;margin-bottom:4px;">
-  <div style="font-size:0.68rem;color:#888;letter-spacing:0.5px;margin-bottom:8px;">
-    🛡️ 손절·익절 가이드
-    <span style="float:right;font-size:0.62rem;color:#555;">오닐 원칙 + ATR</span>
+
+        # ── VWAP + 지표값 (좌) │ 기술 신호 근거 (우) ───────────────────────────
+        _tech_left, _tech_right = st.columns([1, 1])
+
+        with _tech_left:
+            if not data.empty and len(data) >= 2:
+                _cur    = float(data["Close"].iloc[-1])
+                _is_krw_v = _cur > 500
+                _pf     = "{:,.0f}" if _is_krw_v else "{:,.2f}"
+                _vw_row = data.iloc[-1]
+
+                def _vwap_row_html(label, col, color):
+                    if col not in data.columns or pd.isna(_vw_row[col]):
+                        return ""
+                    _v    = float(_vw_row[col])
+                    _diff = (_cur - _v) / _v * 100
+                    _arrow = "▲" if _diff >= 0 else "▼"
+                    _dc   = "#69f0ae" if _diff >= 0 else "#ef9a9a"
+                    return (
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'align-items:center;padding:4px 0;border-bottom:1px solid #2a2d3e;">'
+                        f'<span style="font-size:0.72rem;color:{color};">● {label}</span>'
+                        f'<span style="font-size:0.75rem;color:#ddd;">{_pf.format(_v)}</span>'
+                        f'<span style="font-size:0.72rem;color:{_dc};">{_arrow}{abs(_diff):.1f}%</span>'
+                        f'</div>'
+                    )
+
+                _vw = float(_vw_row["VWAP_W"]) if "VWAP_W" in data.columns and pd.notna(_vw_row["VWAP_W"]) else None
+                _vm = float(_vw_row["VWAP_M"]) if "VWAP_M" in data.columns and pd.notna(_vw_row["VWAP_M"]) else None
+                _vq = float(_vw_row["VWAP_Q"]) if "VWAP_Q" in data.columns and pd.notna(_vw_row["VWAP_Q"]) else None
+
+                if _vw and _vm and _vq:
+                    if _vw > _vm > _vq:
+                        _stack_txt = "📶 상승 스택 — 단·중·장기 강세 정렬"
+                        _stack_clr = "#69f0ae"
+                    elif _vw < _vm < _vq:
+                        _stack_txt = "📉 하락 스택 — 단·중·장기 약세 정렬"
+                        _stack_clr = "#ef9a9a"
+                    else:
+                        _stack_txt = "↔ 혼조 — 타임프레임 간 방향 불일치"
+                        _stack_clr = "#fff176"
+                else:
+                    _stack_txt, _stack_clr = "데이터 부족", "#888"
+
+                _vwap_rows = (
+                    _vwap_row_html("주간 VWAP (5봉)",  "VWAP_W", "#ff8f00") +
+                    _vwap_row_html("월간 VWAP (20봉)", "VWAP_M", "#ce93d8") +
+                    _vwap_row_html("분기 VWAP (60봉)", "VWAP_Q", "#80deea")
+                )
+                st.markdown(f"""
+<div style="background:#12161f;border:1px solid #2a2d3e;border-radius:10px;
+            padding:11px 14px;margin-bottom:6px;">
+  <div style="font-size:0.68rem;color:#888;letter-spacing:0.5px;margin-bottom:6px;">
+    📊 VWAP 다중 타임프레임
+    <span style="float:right;font-size:0.6rem;color:#555;">Shannon, 2008</span>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-    <div style="background:#1a0808;border-radius:6px;padding:6px 9px;">
-      <div style="font-size:0.61rem;color:#888;">🔴 손절 (8% 룰)</div>
-      <div style="font-size:0.95rem;font-weight:bold;color:#ef9a9a;">{_sfmt.format(sl['stop_8pct'])}</div>
-    </div>
-    <div style="background:#1a0f08;border-radius:6px;padding:6px 9px;">
-      <div style="font-size:0.61rem;color:#888;">🟠 손절 (ATR×2.5)</div>
-      <div style="font-size:0.95rem;font-weight:bold;color:#ffab91;">{_sfmt.format(sl['stop_atr'])}</div>
-    </div>
-    <div style="background:#0f1a08;border-radius:6px;padding:6px 9px;">
-      <div style="font-size:0.61rem;color:#888;">🟡 1차 목표 (2R)</div>
-      <div style="font-size:0.95rem;font-weight:bold;color:#fff176;">{_sfmt.format(sl['target_2r'])}</div>
-    </div>
-    <div style="background:#091a08;border-radius:6px;padding:6px 9px;">
-      <div style="font-size:0.61rem;color:#888;">🟢 2차 목표 (3R)</div>
-      <div style="font-size:0.95rem;font-weight:bold;color:#a5d6a7;">{_sfmt.format(sl['target_3r'])}</div>
-    </div>
+  {_vwap_rows}
+  <div style="margin-top:7px;font-size:0.74rem;font-weight:bold;color:{_stack_clr};">
+    {_stack_txt}
   </div>
-  <div style="font-size:0.67rem;color:#555;margin-top:7px;text-align:right;">
-    ATR {sl['atr_ratio']:.2f}% · {_sfmt.format(sl['atr'])}
+  <div style="font-size:0.65rem;color:#555;margin-top:3px;">
+    수식: Σ(Typical Price × Volume) / Σ(Volume) — 롤링 누적합
   </div>
 </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+
+            with st.expander("📊 지표값", expanded=False):
+                indicator_map = [
+                    ("RSI",        "RSI",        ".1f"),
+                    ("MACD",       "MACD",       ".4f"),
+                    ("ADX",        "ADX",        ".1f"),
+                    ("+DI",        "ADX_POS",    ".1f"),
+                    ("-DI",        "ADX_NEG",    ".1f"),
+                    ("CCI",        "CCI",        ".1f"),
+                    ("Williams%R", "WILLIAMS_R", ".1f"),
+                    ("MFI",        "MFI",        ".1f"),
+                    ("ROC",        "ROC",        ".2f"),
+                    ("BB상단",     "BB_Upper",   ",.0f"),
+                    ("BB중단",     "BB_Middle",  ",.0f"),
+                    ("BB하단",     "BB_Lower",   ",.0f"),
+                    ("EMA20",      "EMA_20",     ",.0f"),
+                    ("EMA50",      "EMA_50",     ",.0f"),
+                    ("EMA200",     "EMA_200",    ",.0f"),
+                    ("VWAP 주간",  "VWAP_W",    ",.0f"),
+                    ("VWAP 월간",  "VWAP_M",    ",.0f"),
+                    ("VWAP 분기",  "VWAP_Q",    ",.0f"),
+                ]
+                last_row = data.iloc[-1]
+                for lbl, col, fmt in indicator_map:
+                    if col in data.columns:
+                        val = last_row[col]
+                        if pd.notna(val):
+                            st.caption(f"**{lbl}:** {float(val):{fmt}}")
+
+        with _tech_right:
+            with st.expander("📋 기술 신호 근거", expanded=False):
+                _BUY_KEYS  = ["매수", "반등", "상승", "골든", "과매도", "매집", "긍정", "유입", "강세"]
+                _SELL_KEYS = ["매도", "과열", "하락", "데드", "과매수", "분산", "약세", "이탈 주의"]
+                _reason_items = []
+                for r in signals.get("reasons", []):
+                    if any(k in r for k in _BUY_KEYS):
+                        _reason_items.append(
+                            f'<div style="background:#1b3a28;border-radius:5px;padding:5px 7px;'
+                            f'font-size:0.75rem;color:#a5d6a7;line-height:1.4;">🔺 {r}</div>')
+                    elif any(k in r for k in _SELL_KEYS):
+                        _reason_items.append(
+                            f'<div style="background:#3a1a1a;border-radius:5px;padding:5px 7px;'
+                            f'font-size:0.75rem;color:#ef9a9a;line-height:1.4;">🔻 {r}</div>')
+                    else:
+                        _reason_items.append(
+                            f'<div style="background:#1a1d2e;border-radius:5px;padding:5px 7px;'
+                            f'font-size:0.75rem;color:#90caf9;line-height:1.4;">🔷 {r}</div>')
+                if _reason_items:
+                    st.markdown(
+                        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">'
+                        + "".join(_reason_items)
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.caption("신호 근거 없음")
 
         # ── 내 주식 분석 ────────────────────────────────────────────────────────
         st.divider()
