@@ -2278,7 +2278,7 @@ with tab_chart:
             unsafe_allow_html=True,
         )
 
-    col_chart, col_sig = st.columns([3, 1])
+    col_chart, col_sig = st.columns([3, 7])
 
     with col_chart:
         title_label = f"{sname} ({ticker})" if sname != ticker else ticker
@@ -2496,7 +2496,7 @@ with tab_chart:
         fig.update_layout(
             height=900,
             template="plotly_dark",
-            dragmode="pan",                     # 드래그 = 좌우 이동
+            dragmode=False,                     # 터치 드래그 비활성화
             xaxis_rangeslider_visible=False,    # 기본 rangeslider 숨김
             legend=dict(
                 orientation="h",
@@ -2514,7 +2514,7 @@ with tab_chart:
             fig,
             use_container_width=True,
             config={
-                "scrollZoom": True,               # 마우스 휠로 x축 확대/축소
+                "scrollZoom": False,              # 터치 스크롤 줌 비활성화
                 "displayModeBar": True,
                 "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
                 "modeBarButtonsToAdd":    ["pan2d", "zoomIn2d", "zoomOut2d"],
