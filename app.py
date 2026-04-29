@@ -28,6 +28,7 @@ try:
         get_stop_loss_targets, get_buy_target_price, get_sell_target_price,
         get_advanced_analysis, calculate_vpvr, detect_divergence,
         get_hybrid_signal, check_volume_anomaly,
+        check_dead_time, check_breakout_signal, adjust_risk_conservative,
     )
     from src.fundamental import (
         get_fundamental_data, calculate_fundamental_score,
@@ -296,6 +297,10 @@ def _insider_trades(ticker):
 @st.cache_data(ttl=3600)
 def _naver_news(ticker: str) -> list:
     return get_naver_news(ticker, max_items=10)
+
+@st.cache_data(ttl=300)
+def _dead_time(ticker: str) -> dict:
+    return check_dead_time(ticker)
 
 @st.cache_data(ttl=300)
 def _sector_perf(ticker: str) -> dict:
@@ -939,6 +944,9 @@ if _data_ready:
     news_score = news_result.get("score", 0.0)
     tech_score = signals.get("score", 0)
     hybrid     = get_hybrid_signal(tech_score, news_score)
+    dead_time  = _dead_time(_aticker)
+    breakout   = check_breakout_signal(data)
+    risk_adj   = adjust_risk_conservative(expected) if expected else {}
     _total_elapsed = int(time.time() - _load_start)
     _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
@@ -968,6 +976,9 @@ else:
     close           = pd.Series(dtype=float, name="Close")
     fund_info       = {}
     fund_score_data = {"fund_score": 0, "fund_label": "분석 대기", "fund_reasons": []}
+    dead_time       = {"is_dead": False, "message": ""}
+    breakout        = {"status": "wait", "detail": ""}
+    risk_adj        = {}
 
 # ─── 관심종목 Toast 알림 (우측 하단 팝업) ────────────────────────────────────
 if st.session_state.watchlist:
@@ -2945,6 +2956,53 @@ with tab_chart:
                           help="조회 기간 내 고점 대비 최대 하락폭 (MDD)")
                 st.metric("샤프 지수", f"{expected['sharpe']:.2f}",
                           help="무위험 수익률(3.5%) 초과 수익 ÷ 변동성 (연환산)")
+
+        # ── 보수적 리스크 조정 (승률 < 50%) ──────────────────────────────────
+        if risk_adj.get("conservative_applied"):
+            _ct  = risk_adj["conservative_target"]
+            _csl = risk_adj["conservative_stoploss"]
+            _cwp = risk_adj.get("win_prob", 0.0)
+            st.warning(
+                f"**⚠️ 저승률 보수 조정** — 승률 {_cwp:.0f}%로 50% 미만  \n"
+                f"목표 수익률 → **{_ct:+.1f}%** (원래 M의 50%)  \n"
+                f"손절 라인 → **{_csl:+.1f}%** (현재가 대비 타이트 설정)  \n"
+                f"*분석 결과가 틀릴 확률이 더 높으므로 포지션 크기를 줄이고 손절을 철저히 지키세요.*",
+                icon="⚠️",
+            )
+
+        # ── Dead Time Check (기회비용 지수) ──────────────────────────────────
+        if dead_time.get("message"):
+            _dt_vol  = dead_time.get("volatility_14d", 0.0)
+            _dt_vr   = dead_time.get("vol_ratio", 1.0)
+            _dt_dead = dead_time.get("is_dead", False)
+            if _dt_dead:
+                st.warning(dead_time["message"], icon="⏳")
+                st.markdown(
+                    f'<div style="background:#1a1d2e;border-radius:7px;padding:8px 12px;'
+                    f'border-left:3px solid #f39c12;font-size:0.86rem;color:#aaa;margin-top:4px;">'
+                    f'14일 변동성 <b style="color:#fff176;">{_dt_vol:.1f}%</b> (기준 5% 미만) · '
+                    f'거래량 비율 <b style="color:#fff176;">{_dt_vr*100:.0f}%</b> (기준 70% 미만)<br>'
+                    f'<span style="color:#888;">자금이 묶인 채 방향을 잡지 못하는 구간입니다. '
+                    f'돌파 신호(Breakout) 전까지 신규 진입을 자제하세요.</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info(dead_time["message"], icon="📊")
+
+        # ── 상승 임계치(Breakout) 필터 ────────────────────────────────────────
+        _bk_status = breakout.get("status", "wait")
+        _bk_detail = breakout.get("detail", "")
+        if _bk_status == "breakout_both":
+            st.success(f"**돌파(Breakout) 조건 충족** — {_bk_detail}", icon="🚀")
+        elif _bk_status in ("breakout_ma", "breakout_vol"):
+            st.info(f"**부분 돌파 감지** — {_bk_detail}", icon="📈")
+        else:
+            st.info(
+                f"**관망(Wait) 유지** — {_bk_detail}  \n"
+                f"*20일 MA 상향 돌파 또는 전일 거래량 200% 초과 시 진입 고려*",
+                icon="⏸️",
+            )
 
         # ── 종합 판단 스코어보드 ─────────────────────────────────────────────
         with st.expander("📊 종합 판단 스코어보드", expanded=True):

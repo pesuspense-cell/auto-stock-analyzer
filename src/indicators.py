@@ -14,6 +14,9 @@ from stock_ai import (
     calculate_vpvr,
     get_advanced_analysis,
     get_hybrid_signal,
+    check_dead_time,
+    check_breakout_signal,
+    adjust_risk_conservative,
 )
 
 __all__ = [
@@ -28,4 +31,7 @@ __all__ = [
     "calculate_vpvr",
     "get_advanced_analysis",
     "get_hybrid_signal",
+    "check_dead_time",
+    "check_breakout_signal",
+    "adjust_risk_conservative",
 ]

@@ -669,6 +669,142 @@ def check_volume_anomaly(data: pd.DataFrame, low_ratio: float = 0.05) -> dict:
             "recent_vol": int(recent_avg), "avg_vol": avg_vol}
 
 
+# ─── 기회비용 지수: Dead Time Check ──────────────────────────────────────────
+
+def check_dead_time(ticker: str, days: int = 14) -> dict:
+    """
+    최근 N일간 변동성·거래량으로 '지지부진 구간(Dead Time)' 여부 판단.
+
+    조건 (AND):
+      • 14일 일간 수익률 표준편차 < 5%
+      • 14일 평균 거래량 < 이전 60일 평균 거래량의 70%
+    """
+    try:
+        raw = yf.download(ticker, period="3mo", auto_adjust=True, progress=False)
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.droplevel(1)
+    except Exception:
+        return {"is_dead": False, "volatility_14d": 0.0, "vol_ratio": 1.0, "message": ""}
+
+    if raw.empty or len(raw) < days + 5:
+        return {"is_dead": False, "volatility_14d": 0.0, "vol_ratio": 1.0, "message": ""}
+
+    close  = raw["Close"]
+    volume = raw["Volume"]
+
+    returns_14d    = close.pct_change().iloc[-days:].dropna()
+    volatility_14d = float(returns_14d.std() * 100)   # 일 단위 %
+
+    avg_vol_14d = float(volume.iloc[-days:].mean())
+    ref_len     = min(60, len(volume) - days)
+    avg_vol_ref = (
+        float(volume.iloc[-(days + ref_len):-days].mean())
+        if ref_len > 0 else avg_vol_14d
+    )
+    vol_ratio = avg_vol_14d / max(avg_vol_ref, 1)
+
+    is_dead = (volatility_14d < 5.0) and (vol_ratio < 0.70)
+
+    if is_dead:
+        msg = (
+            f"⏳ 지지부진 구간: 자금 고착 주의 "
+            f"(14일 변동성 {volatility_14d:.1f}% / 거래량 {vol_ratio*100:.0f}% 수준)"
+        )
+    elif volatility_14d < 5.0:
+        msg = f"📉 저변동성 구간 (변동성 {volatility_14d:.1f}%) — 거래량 보통 수준"
+    elif vol_ratio < 0.70:
+        msg = f"📊 거래량 감소 구간 (대비 {vol_ratio*100:.0f}%) — 변동성 보통 수준"
+    else:
+        msg = f"✅ 정상 거래 구간 (변동성 {volatility_14d:.1f}% / 거래량 {vol_ratio*100:.0f}%)"
+
+    return {
+        "is_dead":        is_dead,
+        "volatility_14d": round(volatility_14d, 2),
+        "avg_vol_14d":    int(avg_vol_14d),
+        "avg_vol_ref":    int(avg_vol_ref),
+        "vol_ratio":      round(vol_ratio, 3),
+        "message":        msg,
+    }
+
+
+# ─── 상승 임계치(Breakout Point) 필터 ────────────────────────────────────────
+
+def check_breakout_signal(data: pd.DataFrame) -> dict:
+    """
+    기술적 돌파 조건 판단 — 조건 미충족 시 '관망(Wait)' 유지.
+
+    조건 A: 20일 MA 상향 돌파 (전일 종가 < SMA20, 당일 종가 ≥ SMA20)
+    조건 B: 당일 거래량 > 전일 거래량 × 200%
+    """
+    if data.empty or len(data) < 22:
+        return {"status": "wait", "detail": "데이터 부족 — 관망"}
+
+    close  = data["Close"]
+    volume = data["Volume"]
+    sma20  = data["SMA_20"] if "SMA_20" in data.columns else close.rolling(20).mean()
+
+    curr_c = float(close.iloc[-1])
+    prev_c = float(close.iloc[-2])
+    curr_s = float(sma20.iloc[-1])
+    prev_s = float(sma20.iloc[-2])
+    curr_v = float(volume.iloc[-1])
+    prev_v = float(volume.iloc[-2])
+
+    ma_break  = (prev_c < prev_s) and (curr_c >= curr_s)
+    vol_break = (prev_v > 0) and (curr_v >= prev_v * 2.0)
+
+    if ma_break and vol_break:
+        return {
+            "status": "breakout_both",
+            "detail": (
+                f"20일 MA 상향 돌파({curr_s:,.0f}) + "
+                f"거래량 폭증({curr_v/prev_v:.1f}배) → 강력 진입 신호"
+            ),
+        }
+    if ma_break:
+        return {
+            "status": "breakout_ma",
+            "detail": f"20일 MA 상향 돌파({curr_s:,.0f}) — 거래량 확인 후 진입 권장",
+        }
+    if vol_break:
+        return {
+            "status": "breakout_vol",
+            "detail": f"거래량 폭증({curr_v/prev_v:.1f}배) — MA 돌파 미확인, 추가 확인 필요",
+        }
+    return {
+        "status": "wait",
+        "detail": f"돌파 조건 미충족 (현가 {curr_c:,.0f} / SMA20 {curr_s:,.0f}) → 관망 유지",
+    }
+
+
+# ─── 리스크 관리: 보수적 조정 ────────────────────────────────────────────────
+
+def adjust_risk_conservative(expected: dict) -> dict:
+    """
+    승률 50% 미만일 때 목표 수익률·손절 라인을 보수적으로 조정.
+
+    규칙:
+      - 목표 수익률(M) → M × 0.5 로 하향
+      - 손절 라인     → 현재가 대비 −5.0% 로 타이트하게 설정
+    """
+    if not expected:
+        return {}
+    win_prob = expected.get("win_prob", 50.0)
+    if win_prob >= 50.0:
+        return {**expected, "conservative_applied": False}
+
+    M_adj = round(expected.get("expected_return_pct", 0.0) * 0.5, 2)
+    return {
+        **expected,
+        "conservative_applied":  True,
+        "conservative_target":   M_adj,
+        "conservative_stoploss": -5.0,
+        "conservative_note": (
+            f"승률 {win_prob:.0f}% (<50%) — 목표 {M_adj:+.1f}% / 손절 −5.0%로 보수 조정"
+        ),
+    }
+
+
 # ─── 예상 수익률 & 리스크 분석 ────────────────────────────────────────────────
 
 def calculate_expected_return(
