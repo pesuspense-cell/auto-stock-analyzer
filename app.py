@@ -40,6 +40,7 @@ try:
         analyze_news_sentiment_llm, analyze_news_batch, summarize_article_llm,
         get_advanced_sentiment, get_related_sector_performance,
         get_etf_news_with_holdings, analyze_etf_news_sentiment,
+        analyze_news_fast, fetch_naver_news_fast,
     )
     from src.utils import (
         KOSPI_STOCKS, US_STOCKS, INDICES,
@@ -294,9 +295,16 @@ def _fundamental(ticker):
 def _insider_trades(ticker):
     return get_insider_trades_sec(ticker)
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def _naver_news(ticker: str) -> list:
-    return get_naver_news(ticker, max_items=10)
+    # httpx 비동기 수집 우선 시도, 실패 시 requests 폴백
+    try:
+        items = fetch_naver_news_fast(ticker, max_items=12)
+        if items:
+            return items
+    except Exception:
+        pass
+    return get_naver_news(ticker, max_items=12)
 
 @st.cache_data(ttl=300)
 def _dead_time(ticker: str) -> dict:
@@ -318,7 +326,7 @@ def _bench_returns(ticker: str) -> "pd.Series":
     except Exception:
         return pd.Series(dtype=float)
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def _news_sentiment_kw(ticker: str, company_name: str = "") -> dict:
     news = _naver_news(ticker)
     if not news:
@@ -341,31 +349,47 @@ def _news_sentiment_kw(ticker: str, company_name: str = "") -> dict:
 def _news_sentiment_llm_cached(
     ticker: str, api_key: str, groq_api_key: str = "", company_name: str = ""
 ) -> dict:
-    """LLM 분석은 API 키가 세션마다 다를 수 있어 session_state 캐시 사용"""
+    """
+    LLM 뉴스 분석 — API 키가 세션마다 다를 수 있어 session_state 캐시 사용.
+    analyze_news_fast()를 통해 3단계 필터 + 비동기 수집 파이프라인 사용.
+    캐시 TTL: 10분 (기존 1시간에서 단축)
+    """
     cache_key = (
         f"llm_news|{ticker}|{api_key[:8] if api_key else ''}"
         f"|{groq_api_key[:8] if groq_api_key else ''}|{company_name}"
     )
     cached = st.session_state.get(cache_key)
-    if cached and (datetime.now() - cached["ts"]).seconds < 3600:
+    if cached and (datetime.now() - cached["ts"]).seconds < 600:
         return cached["data"]
-    news = _naver_news(ticker)
-    if not news:
+
+    # analyze_news_fast: 비동기 수집 + 3단계 필터 + LLM 상위 5건만 처리
+    result = analyze_news_fast(
+        ticker=ticker,
+        company_name=company_name,
+        api_key=api_key,
+        groq_api_key=groq_api_key,
+        max_news=12,
+        deep_n=5,
+    )
+
+    # analyze_news_fast가 뉴스를 못 가져온 경우 yfinance 뉴스로 폴백
+    if not result.get("detail"):
         try:
             raw = yf.Ticker(ticker).news or []
             items = []
             for it in raw[:10]:
                 c = it.get("content", it)
                 items.append({
-                    "title": c.get("title", it.get("title", "")),
-                    "link":  (c.get("canonicalUrl", {}).get("url") or it.get("link", "#")),
+                    "title":     c.get("title", it.get("title", "")),
+                    "link":      (c.get("canonicalUrl", {}).get("url") or it.get("link", "#")),
                     "publisher": (c.get("provider", {}).get("displayName") or it.get("publisher", "")),
-                    "pub_date": "",
+                    "pub_date":  "",
                 })
-            news = items
+            if items:
+                result = analyze_news_sentiment_llm(items, ticker, api_key, groq_api_key, company_name)
         except Exception:
-            news = []
-    result = analyze_news_sentiment_llm(news, ticker, api_key, groq_api_key, company_name)
+            pass
+
     st.session_state[cache_key] = {"data": result, "ts": datetime.now()}
     return result
 

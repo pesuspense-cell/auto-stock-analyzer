@@ -4618,18 +4618,24 @@ def get_related_sector_performance(ticker: str) -> dict:
     if not related:
         return {"avg_chg": 0.0, "tickers": [], "has_data": False, "sector": sector_label}
 
-    rows: list[dict] = []
-    for sym in related:
+    def _fetch_peer(sym: str) -> dict | None:
         try:
             d = yf.download(sym, period="2d", auto_adjust=True, progress=False)
             if isinstance(d.columns, pd.MultiIndex):
                 d.columns = d.columns.droplevel(1)
             if len(d) < 2:
-                continue
+                return None
             chg = float((d["Close"].iloc[-1] - d["Close"].iloc[-2]) / d["Close"].iloc[-2] * 100)
-            rows.append({"name": sym, "ticker": sym, "chg": round(chg, 2)})
+            return {"name": sym, "ticker": sym, "chg": round(chg, 2)}
         except Exception:
-            continue
+            return None
+
+    # 섹터 피어 yfinance 호출을 병렬 실행 (순차 → 동시)
+    rows: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(len(related), 6)) as pool:
+        for result in pool.map(_fetch_peer, related):
+            if result is not None:
+                rows.append(result)
 
     if not rows:
         return {"avg_chg": 0.0, "tickers": [], "has_data": False, "sector": sector_label}
@@ -4884,40 +4890,42 @@ def get_etf_news_with_holdings(ticker: str, etf_data: dict, max_items: int = 15)
     ETF 뉴스 수집 (섹터 뉴스 + 상위 구성종목 뉴스 통합).
     - ETF 자체 뉴스: 종목명 필터 느슨하게 적용
     - 상위 구성종목 최대 3개의 뉴스도 포함해 정확도 향상
+    - ETF + 구성종목 뉴스를 ThreadPoolExecutor로 동시 수집
     """
-    seen_titles: set[str] = set()
-    all_news:   list[dict] = []
-
-    # 1) ETF 자체 뉴스
-    try:
-        etf_news = get_naver_news(ticker, max_items=10)
-        for item in etf_news:
-            t = item.get("title", "").strip()
-            if t and t not in seen_titles:
-                item["_source_type"] = "etf_direct"
-                all_news.append(item)
-                seen_titles.add(t)
-    except Exception:
-        pass
-
-    # 2) 상위 구성종목 뉴스 (최대 3종목 × 4기사)
     holdings = etf_data.get("top_holdings", [])
-    for holding in holdings[:3]:
-        h_ticker = holding.get("ticker", "")
-        h_name   = holding.get("name", h_ticker)
-        if not h_ticker:
-            continue
+    valid_holdings = [h for h in holdings[:3] if h.get("ticker")]
+
+    # (ticker, source_type, holding_name, max_items) 수집 작업 목록
+    tasks: list[tuple[str, str, str, int]] = [
+        (ticker, "etf_direct", "", 10),
+    ] + [
+        (h["ticker"], "holding", h.get("name", h["ticker"]), 6)
+        for h in valid_holdings
+    ]
+
+    def _fetch(task: tuple[str, str, str, int]) -> list[dict]:
+        t, source_type, holding_name, n = task
         try:
-            h_news = get_naver_news(h_ticker, max_items=6)
-            for item in h_news[:4]:
+            items = get_naver_news(t, max_items=n)
+            for item in items:
+                item["_source_type"]  = source_type
+                item["_holding_name"] = holding_name
+            return items
+        except Exception:
+            return []
+
+    # 동시 수집 (ETF 1 + 구성종목 최대 3 → 최대 4개 HTTP 요청 병렬화)
+    all_news:   list[dict] = []
+    seen_titles: set[str]  = set()
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        for batch in pool.map(_fetch, tasks):
+            limit = 4 if batch and batch[0].get("_source_type") == "holding" else len(batch)
+            for item in batch[:limit]:
                 t = item.get("title", "").strip()
                 if t and t not in seen_titles:
-                    item["_source_type"] = "holding"
-                    item["_holding_name"] = h_name
                     all_news.append(item)
                     seen_titles.add(t)
-        except Exception:
-            continue
 
     return all_news[:max_items]
 
