@@ -803,7 +803,7 @@ if _pending and not _aticker:
     데이터를 불러오는 중입니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 ({time.time()-_load_start:.1f}s)</p>
+  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>0s</b> 경과</p>
 </div>
 """, unsafe_allow_html=True)
     # pending → analyzed 로 전환 후 rerun (탭 이동은 분석 완료 후)
@@ -834,7 +834,7 @@ if _data_ready:
     주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 (0s)</p>
+  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>0s</b> 경과</p>
 </div>
 """, unsafe_allow_html=True)
     # 병렬 로딩 시작 (spinner 제거하고 실시간 업데이트)
@@ -856,7 +856,7 @@ if _data_ready:
     주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 ({_elapsed}s)</p>
+  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>{_elapsed}s</b> 경과</p>
 </div>
 """, unsafe_allow_html=True)
             time.sleep(1)
@@ -877,7 +877,7 @@ if _data_ready:
     뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">이전 단계 {_load_elapsed}s | 진행 중 (0s)</p>
+  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>{_load_elapsed}s</b> 경과</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -2582,7 +2582,7 @@ with tab_chart:
             )
             # 작업 완료까지 매초마다 경과 시간 업데이트
             while not _f_news.done():
-                _elapsed = int(time.time() - _signal_start)
+                _elapsed = int(time.time() - _load_start)
                 _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
             border:2px solid #3b82f6; border-radius:16px;
@@ -2595,7 +2595,7 @@ with tab_chart:
     뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">이전 단계 {_load_elapsed}s | 진행 중 ({_elapsed}s)</p>
+  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>{_elapsed}s</b> 경과</p>
 </div>
 """, unsafe_allow_html=True)
                 time.sleep(1)
@@ -2604,7 +2604,7 @@ with tab_chart:
 
         # ── 단타 신호 (기술 + 뉴스) ────────────────────────────────────────────
         hybrid  = get_hybrid_signal(tech_score, news_score)
-        _signal_elapsed = int(time.time() - _signal_start)
+        _total_elapsed = int(time.time() - _load_start)
         _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
             border:2px solid #3b82f6; border-radius:16px;
@@ -2617,7 +2617,7 @@ with tab_chart:
     데이터 분석이 완료되었습니다.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill" style="animation:none;background:#60a5fa;"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">총 소요 시간: {_load_elapsed + _signal_elapsed}s</p>
+  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ 총 소요 시간: <b>{_total_elapsed}s</b></p>
 </div>
 """, unsafe_allow_html=True)
         _loading_ph.empty()
