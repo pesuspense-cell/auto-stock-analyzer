@@ -1115,7 +1115,7 @@ with tab_market:
                     use_container_width=True, hide_index=True,
                 )
     else:
-        st.info("pykrx 또는 FinanceDataReader 미설치 시 전체 시장 데이터를 불러올 수 없습니다.")
+        st.warning("시장 데이터를 불러올 수 없습니다. (KRX 서버 응답 없음 또는 네트워크 오류)", icon="⚠️")
 
     st.divider()
 

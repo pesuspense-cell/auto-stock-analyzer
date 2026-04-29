@@ -5,6 +5,7 @@ utils.py - 공통 유틸리티 모듈
 from stock_ai import (
     # ── 상수 ──────────────────────────────────────────────────────────────────
     KOSPI_STOCKS,
+    KOSDAQ_STOCKS,
     US_STOCKS,
     EXCHANGE_PAIRS,
     INDICES,

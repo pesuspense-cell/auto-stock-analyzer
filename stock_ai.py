@@ -49,6 +49,20 @@ KOSPI_STOCKS = {
     "셀트리온":       "068270.KS",
 }
 
+KOSDAQ_STOCKS = {
+    "에코프로비엠":   "247540.KQ",
+    "에코프로":       "086520.KQ",
+    "HLB":           "028300.KQ",
+    "알테오젠":       "196170.KQ",
+    "리가켐바이오":   "141080.KQ",
+    "삼천당제약":     "000250.KQ",
+    "클래시스":       "214150.KQ",
+    "포스코DX":       "022100.KQ",
+    "두산테스나":     "131220.KQ",
+    "메가스터디교육": "215200.KQ",
+    "나무기술":       "242040.KQ",
+}
+
 US_STOCKS = {
     "Apple":      "AAPL",
     "Microsoft":  "MSFT",
@@ -960,51 +974,99 @@ def get_market_movers(tickers_dict: dict) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("등락률(%)", ascending=False).reset_index(drop=True)
 
 
-def get_full_market_movers(top_n: int = 10) -> tuple:
-    """
-    FinanceDataReader StockListing으로 KOSPI+KOSDAQ 전체 종목 등락률 조회.
-    반환: (gainers_df, losers_df) — 각 top_n개, 컬럼: 종목명·티커·현재가·등락률(%)·거래량·시장
-    """
+def _yf_movers_fallback(top_n: int = 10) -> tuple:
+    """FDR 실패 시 yfinance로 하드코딩 종목 등락률 조회"""
+    all_stocks = {**KOSPI_STOCKS, **KOSDAQ_STOCKS}
+    tickers    = list(all_stocks.values())
+    name_map   = {v: k for k, v in all_stocks.items()}
+    mkt_map    = {v: ("KOSPI" if v.endswith(".KS") else "KOSDAQ") for v in tickers}
+
     try:
-        import FinanceDataReader as fdr
-    except ImportError:
+        raw = yf.download(
+            tickers, period="2d", auto_adjust=True, progress=False, group_by="ticker"
+        )
+    except Exception:
         return pd.DataFrame(), pd.DataFrame()
 
     rows = []
-    for market, suffix in [("KOSPI", "KS"), ("KOSDAQ", "KQ")]:
+    single = len(tickers) == 1
+    for ticker in tickers:
         try:
-            listing = fdr.StockListing(market)
-            if listing is None or listing.empty:
+            d = raw if single else raw[ticker]
+            if isinstance(d.columns, pd.MultiIndex):
+                d = d.droplevel(1, axis=1)
+            d = d.dropna(subset=["Close"])
+            if len(d) < 2:
                 continue
-            for _, row in listing.iterrows():
-                try:
-                    code  = str(row.get("Code", "")).strip().zfill(6)
-                    name  = str(row.get("Name", "")).strip()
-                    chg   = float(row.get("ChagesRatio", 0) or 0)
-                    price = float(row.get("Close", 0) or 0)
-                    vol   = int(row.get("Volume", 0) or 0)
-                    if not code or not name or price == 0:
-                        continue
-                    rows.append({
-                        "종목명": name,
-                        "티커": f"{code}.{suffix}",
-                        "현재가": price,
-                        "등락률(%)": round(chg, 2),
-                        "거래량": vol,
-                        "시장": market,
-                    })
-                except Exception:
-                    continue
+            price = float(d["Close"].iloc[-1])
+            prev  = float(d["Close"].iloc[-2])
+            chg   = (price - prev) / prev * 100
+            vol   = int(d["Volume"].iloc[-1]) if "Volume" in d.columns else 0
+            rows.append({
+                "종목명":   name_map.get(ticker, ticker),
+                "티커":     ticker,
+                "현재가":   price,
+                "등락률(%)": round(chg, 2),
+                "거래량":   vol,
+                "시장":     mkt_map.get(ticker, ""),
+            })
         except Exception:
             continue
 
     if not rows:
         return pd.DataFrame(), pd.DataFrame()
 
-    df = pd.DataFrame(rows)
+    df      = pd.DataFrame(rows)
     gainers = df.nlargest(top_n, "등락률(%)").reset_index(drop=True)
     losers  = df.nsmallest(top_n, "등락률(%)").reset_index(drop=True)
     return gainers, losers
+
+
+def get_full_market_movers(top_n: int = 10) -> tuple:
+    """
+    FinanceDataReader StockListing으로 KOSPI+KOSDAQ 전체 종목 등락률 조회.
+    FDR 실패 시 yfinance 기반 하드코딩 폴백 사용.
+    반환: (gainers_df, losers_df) — 각 top_n개, 컬럼: 종목명·티커·현재가·등락률(%)·거래량·시장
+    """
+    rows = []
+    try:
+        import FinanceDataReader as fdr
+        for market, suffix in [("KOSPI", "KS"), ("KOSDAQ", "KQ")]:
+            try:
+                listing = fdr.StockListing(market)
+                if listing is None or listing.empty:
+                    continue
+                for _, row in listing.iterrows():
+                    try:
+                        code  = str(row.get("Code", "")).strip().zfill(6)
+                        name  = str(row.get("Name", "")).strip()
+                        chg   = float(row.get("ChagesRatio", 0) or 0)
+                        price = float(row.get("Close", 0) or 0)
+                        vol   = int(row.get("Volume", 0) or 0)
+                        if not code or not name or price == 0:
+                            continue
+                        rows.append({
+                            "종목명": name,
+                            "티커": f"{code}.{suffix}",
+                            "현재가": price,
+                            "등락률(%)": round(chg, 2),
+                            "거래량": vol,
+                            "시장": market,
+                        })
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+    except ImportError:
+        pass
+
+    if rows:
+        df      = pd.DataFrame(rows)
+        gainers = df.nlargest(top_n, "등락률(%)").reset_index(drop=True)
+        losers  = df.nsmallest(top_n, "등락률(%)").reset_index(drop=True)
+        return gainers, losers
+
+    return _yf_movers_fallback(top_n)
 
 
 # ─── 환율 정보 ────────────────────────────────────────────────────────────────
@@ -1641,18 +1703,31 @@ def get_us_stock_list() -> dict:
 
 # ─── KRX 전체 종목 리스트 (이름 검색용) ──────────────────────────────────────
 
+def _krx_stock_fallback() -> dict:
+    """FDR 실패 시 KOSPI+KOSDAQ 하드코딩 폴백"""
+    result = {}
+    for name, ticker in {**KOSPI_STOCKS, **KOSDAQ_STOCKS}.items():
+        code = ticker.split(".")[0]
+        result[f"{name} ({code})"] = ticker
+    return result
+
+
 def get_krx_stock_list() -> dict:
     """
     KOSPI + KOSDAQ 전체 종목 이름 → 티커 매핑 반환
     반환 형태: {"삼성전자 (005930)": "005930.KS", ...}
     데이터 소스: FinanceDataReader (KRX 실시간 종목 목록)
+    FDR 실패 시 주요 종목 하드코딩 폴백 반환.
     """
     try:
         import FinanceDataReader as fdr
         result = {}
         for market, suffix in [("KOSPI", "KS"), ("KOSDAQ", "KQ")]:
-            df = fdr.StockListing(market)
-            if df.empty:
+            try:
+                df = fdr.StockListing(market)
+            except Exception:
+                continue
+            if df is None or df.empty:
                 continue
             df["Code"] = df["Code"].astype(str).str.strip()
             df["Name"] = df["Name"].astype(str).str.strip()
@@ -1661,9 +1736,9 @@ def get_krx_stock_list() -> dict:
             df["_display"] = df["Name"] + " (" + df["Code"] + ")"
             df["_ticker"]  = df["Code"] + "." + suffix
             result.update(dict(zip(df["_display"], df["_ticker"])))
-        return result
+        return result if result else _krx_stock_fallback()
     except Exception:
-        return {}
+        return _krx_stock_fallback()
 
 
 # ─── KRX ETF 리스트 ──────────────────────────────────────────────────────────
