@@ -834,16 +834,36 @@ if _data_ready:
     주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중...</p>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 (0s)</p>
 </div>
 """, unsafe_allow_html=True)
-    with st.spinner("📊 주가·재무 데이터 병렬 분석 중..."):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
-            _f_data = _pool.submit(_stock_data, _aticker, _aperiod)
-            _f_fund = _pool.submit(_fundamental, _aticker)
-            data      = _f_data.result()
-            fund_info = _f_fund.result()
-    _load_elapsed = time.time() - _load_start
+    # 병렬 로딩 시작 (spinner 제거하고 실시간 업데이트)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
+        _f_data = _pool.submit(_stock_data, _aticker, _aperiod)
+        _f_fund = _pool.submit(_fundamental, _aticker)
+        # 작업 완료까지 매초마다 경과 시간 업데이트
+        while not (_f_data.done() and _f_fund.done()):
+            _elapsed = int(time.time() - _load_start)
+            _loading_ph.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
+            border:2px solid #3b82f6; border-radius:16px;
+            padding:28px 24px; text-align:center; margin:8px 0 16px;
+            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
+  <div class="loading-icon" style="font-size:40px;">📊</div>
+  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 분석 중</h3>
+  <p style="color:#94a3b8; margin:0; line-height:1.7;">
+    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
+    주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
+  </p>
+  <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 ({_elapsed}s)</p>
+</div>
+""", unsafe_allow_html=True)
+            time.sleep(1)
+        # 작업 결과 수집
+        data      = _f_data.result()
+        fund_info = _f_fund.result()
+    _load_elapsed = int(time.time() - _load_start)
     _signal_start = time.time()
     _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
@@ -857,7 +877,7 @@ if _data_ready:
     뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">이전 단계 {_load_elapsed:.1f}s | 진행 중...</p>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">이전 단계 {_load_elapsed}s | 진행 중 (0s)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -2553,17 +2573,38 @@ with tab_chart:
 
         tech_score = signals.get("score", 0)
 
-        # 뉴스 감성 점수 계산
-        with st.spinner("뉴스 감성 분석 중..."):
-            if use_llm:
-                news_result = _news_sentiment_llm_cached(ticker, gemini_api_key, groq_api_key)
-            else:
-                news_result = _news_sentiment_kw(ticker)
+        # 뉴스 감성 점수 계산 (실시간 카운트)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+            _f_news = _pool.submit(
+                _news_sentiment_llm_cached if use_llm else _news_sentiment_kw,
+                ticker,
+                *(gemini_api_key, groq_api_key) if use_llm else ()
+            )
+            # 작업 완료까지 매초마다 경과 시간 업데이트
+            while not _f_news.done():
+                _elapsed = int(time.time() - _signal_start)
+                _loading_ph.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
+            border:2px solid #3b82f6; border-radius:16px;
+            padding:28px 24px; text-align:center; margin:8px 0 16px;
+            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
+  <div class="loading-icon" style="font-size:40px;">🎯</div>
+  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 매매신호 분석 중</h3>
+  <p style="color:#94a3b8; margin:0; line-height:1.7;">
+    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
+    뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
+  </p>
+  <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">이전 단계 {_load_elapsed}s | 진행 중 ({_elapsed}s)</p>
+</div>
+""", unsafe_allow_html=True)
+                time.sleep(1)
+            news_result = _f_news.result()
         news_score = news_result.get("score", 0.0)
 
         # ── 단타 신호 (기술 + 뉴스) ────────────────────────────────────────────
         hybrid  = get_hybrid_signal(tech_score, news_score)
-        _signal_elapsed = time.time() - _signal_start
+        _signal_elapsed = int(time.time() - _signal_start)
         _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
             border:2px solid #3b82f6; border-radius:16px;
@@ -2576,7 +2617,7 @@ with tab_chart:
     데이터 분석이 완료되었습니다.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill" style="animation:none;background:#60a5fa;"></div></div>
-  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">총 소요 시간: {_load_elapsed + _signal_elapsed:.1f}s</p>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">총 소요 시간: {_load_elapsed + _signal_elapsed}s</p>
 </div>
 """, unsafe_allow_html=True)
         _loading_ph.empty()
