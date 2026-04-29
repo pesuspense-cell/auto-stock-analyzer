@@ -5,6 +5,7 @@ app.py - AI 주식 분석 대시보드 v2.0
 import json
 import os
 import concurrent.futures
+import time
 import streamlit as st
 from fundamental_db import load_settings_db, save_settings_db
 import yfinance as yf
@@ -789,6 +790,7 @@ _data_ready = bool(_aticker)
 if _pending and not _aticker:
     _pname = st.session_state.get('_pending_sname', _pending)
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 중: **{_pname}** (`{_pending}`)")
+    _load_start = time.time()
     _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
             border:2px solid #3b82f6; border-radius:16px;
@@ -801,6 +803,7 @@ if _pending and not _aticker:
     데이터를 불러오는 중입니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 ({time.time()-_load_start:.1f}s)</p>
 </div>
 """, unsafe_allow_html=True)
     # pending → analyzed 로 전환 후 rerun (탭 이동은 분석 완료 후)
@@ -818,6 +821,7 @@ if _data_ready:
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
 
     # ── 주가 데이터 + 펀더멘털 병렬 로딩 ────────────────────────────────────
+    _load_start = time.time()
     _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
             border:2px solid #3b82f6; border-radius:16px;
@@ -830,6 +834,7 @@ if _data_ready:
     주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 ({time.time()-_load_start:.1f}s)</p>
 </div>
 """, unsafe_allow_html=True)
     with st.spinner("📊 주가·재무 데이터 병렬 분석 중..."):
@@ -838,6 +843,7 @@ if _data_ready:
             _f_fund = _pool.submit(_fundamental, _aticker)
             data      = _f_data.result()
             fund_info = _f_fund.result()
+    _load_start = time.time()
     _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
             border:2px solid #3b82f6; border-radius:16px;
@@ -850,6 +856,7 @@ if _data_ready:
     뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
   </p>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+  <p style="color:#64748b; margin:8px 0 0; font-size:12px;">진행 중 ({time.time()-_load_start:.1f}s)</p>
 </div>
 """, unsafe_allow_html=True)
 
