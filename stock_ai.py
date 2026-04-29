@@ -2418,25 +2418,46 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
     if data.empty or len(data) < 20:
         return {}
 
-    close   = data["Close"]
-    current = float(close.iloc[-1])
+    def _f(val):
+        """pandas 스칼라 → Python float 변환 (pd.NA / NaN / TypeError 안전 처리)."""
+        try:
+            f = float(val)
+            return None if pd.isna(f) else f
+        except Exception:
+            return None
 
-    bb_lower = float(data["BB_Lower"].iloc[-1]) if "BB_Lower" in data.columns else None
-    sma20    = float(data["SMA_20"].iloc[-1])   if "SMA_20"   in data.columns else None
-    atr      = float(data["ATR"].iloc[-1])      if "ATR"      in data.columns else None
+    close   = data["Close"]
+    current = _f(close.iloc[-1]) or 0.0
+
+    bb_lower = _f(data["BB_Lower"].iloc[-1]) if "BB_Lower" in data.columns else None
+    sma20    = _f(data["SMA_20"].iloc[-1])   if "SMA_20"   in data.columns else None
+    atr      = _f(data["ATR"].iloc[-1])      if "ATR"      in data.columns else None
 
     # 5일 저점 (당일 포함 최근 5봉의 Low)
-    low5 = float(data["Low"].iloc[-5:].min()) if "Low" in data.columns and len(data) >= 5 else current
+    try:
+        low5 = _f(data["Low"].iloc[-5:].min()) if "Low" in data.columns and len(data) >= 5 else current
+    except Exception:
+        low5 = current
+    if low5 is None:
+        low5 = current
 
     # BB Lower 폴백
     if bb_lower is None:
-        _mid = close.rolling(20).mean().iloc[-1]
-        _std = close.rolling(20).std().iloc[-1]
-        bb_lower = float(_mid - 2 * _std)
+        try:
+            _mid = float(close.rolling(20).mean().iloc[-1])
+            _std = float(close.rolling(20).std().iloc[-1])
+            bb_lower = _mid - 2 * _std if not pd.isna(_mid) and not pd.isna(_std) else current * 0.95
+        except Exception:
+            bb_lower = current * 0.95
 
     # SMA20 폴백
     if sma20 is None:
-        sma20 = float(close.rolling(20).mean().iloc[-1])
+        try:
+            sma20 = float(close.rolling(20).mean().iloc[-1])
+            if pd.isna(sma20):
+                sma20 = current
+        except Exception:
+            sma20 = current
 
     # ── 모드별 계산 ──────────────────────────────────────────────────────────
 

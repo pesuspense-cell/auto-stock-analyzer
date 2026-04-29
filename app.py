@@ -2751,7 +2751,7 @@ with tab_chart:
             key="buy_mode_selector",
             label_visibility="collapsed",
         )
-        _buy_mode = _mode_map[_mode_label]
+        _buy_mode = _mode_map.get(_mode_label, "classic")
         st.markdown(
             f'<div style="font-size:0.78rem;color:#555;margin-bottom:6px;padding-left:2px;">{_mode_descs[_mode_label]}</div>',
             unsafe_allow_html=True,
