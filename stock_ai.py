@@ -2406,18 +2406,14 @@ def calculate_fundamental_score(info: dict, close_price: float = None) -> dict:
 
 # ─── 매수 적정가 계산 ────────────────────────────────────────────────────────
 
-def get_buy_target_price(data: pd.DataFrame) -> dict:
+def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
     """
-    기술적 지지선 기반 매수 적정가 산출.
+    매수 적정가 산출 — 4가지 모드 지원
 
-    지지선 가중 평균:
-      BB Lower (50%) — 볼린저밴드 하단: 통계적 과매도 진입선
-      SMA 20  (30%) — 20일 이평: 중기 추세 지지
-      5일 저점 (20%) — 단기 지지
-    타이밍 신호:
-      현재가 ≤ BB Lower × 1.005 → "⚡ 과매도 — 지금이 매수 타이밍"
-      현재가 ≤ SMA20 × 1.01   → "🔵 SMA20 지지 — 분할매수 적합"
-      그 외                   → "⏳ 대기 — {적정가}원 도달 시 매수"
+    mode="classic"  : 종합 — 지지선 가중 평균 (BB하단 50% + SMA20 30% + 5일저 20%)
+    mode="sale"     : 세일 모드 — BB 하단 대기 (현재가 대비 -5~10%)
+    mode="breakout" : 추격 모드 — 저항선 돌파 확인 후 진입 (현재가 대비 +2~3%)
+    mode="vwap"     : 정석 모드 — 시장 참여자 평균가(VWAP) 기준 매수
     """
     if data.empty or len(data) < 20:
         return {}
@@ -2432,7 +2428,7 @@ def get_buy_target_price(data: pd.DataFrame) -> dict:
     # 5일 저점 (당일 포함 최근 5봉의 Low)
     low5 = float(data["Low"].iloc[-5:].min()) if "Low" in data.columns and len(data) >= 5 else current
 
-    # BB Lower가 없으면 수동 계산
+    # BB Lower 폴백
     if bb_lower is None:
         _mid = close.rolling(20).mean().iloc[-1]
         _std = close.rolling(20).std().iloc[-1]
@@ -2442,36 +2438,132 @@ def get_buy_target_price(data: pd.DataFrame) -> dict:
     if sma20 is None:
         sma20 = float(close.rolling(20).mean().iloc[-1])
 
-    # 가중 평균 적정가
-    buy_target = round(bb_lower * 0.50 + sma20 * 0.30 + low5 * 0.20, 2)
+    # ── 모드별 계산 ──────────────────────────────────────────────────────────
 
-    # 적정가 대비 현재가 괴리율
-    gap_pct = (current - buy_target) / buy_target * 100
+    if mode == "sale":
+        # 세일 모드: BB 하단 — 안전하게 밑에서 기다리기
+        buy_target = round(bb_lower, 2)
+        gap_pct    = (current - buy_target) / buy_target * 100  # 양수 = 현재가가 target 위
 
-    # 타이밍 신호
-    if bb_lower and current <= bb_lower * 1.005:
-        timing = "⚡ 과매도 — 지금이 매수 타이밍"
-        timing_color = "#69f0ae"
-    elif sma20 and current <= sma20 * 1.01:
-        timing = "🔵 SMA20 지지 — 분할매수 적합"
-        timing_color = "#82b1ff"
-    elif gap_pct <= 3.0:
-        timing = "🟡 적정가 근접 — 모니터링 권고"
-        timing_color = "#fff176"
+        if current <= bb_lower * 1.005:
+            timing       = "⚡ BB하단 도달 — 즉시 매수 타이밍"
+            timing_color = "#69f0ae"
+        elif gap_pct <= 3.0:
+            timing       = "🟡 BB하단 근접 — 분할매수 준비"
+            timing_color = "#fff176"
+        else:
+            timing       = f"⏳ BB하단까지 -{gap_pct:.1f}% 하락 대기"
+            timing_color = "#aaa"
+
+        mode_label  = "🏷️ 세일 모드 (LBB)"
+        mode_desc   = "안전하게 밑에서 기다릴게요"
+        mode_color  = "#82b1ff"
+        detail_line = f"BB하단 {round(bb_lower, 2)} · 현재가 대비 -{gap_pct:.1f}%"
+
+    elif mode == "breakout":
+        # 추격 모드: 저항선 돌파 확인 후 진입
+        vpvr       = calculate_vpvr(data)
+        resistance = vpvr.get("resistance_level")
+        bb_upper   = float(data["BB_Upper"].iloc[-1]) if "BB_Upper" in data.columns else None
+
+        # 가장 가까운 저항선 선택 (현재가 위)
+        candidates = [r for r in [resistance, bb_upper] if r and r > current]
+        ref_resistance = min(candidates) if candidates else current * 1.03
+
+        buy_target = round(ref_resistance * 1.025, 2)  # 저항선 2.5% 돌파 확인 진입
+        gap_pct    = (buy_target - current) / current * 100  # 양수 = 목표가가 현재가 위
+
+        if current >= ref_resistance * 0.99:
+            timing       = "⚡ 저항선 돌파 직전 — 매수 준비"
+            timing_color = "#69f0ae"
+        elif gap_pct <= 5.0:
+            timing       = "🟡 저항선 접근 중 — 알림 설정 권고"
+            timing_color = "#fff176"
+        else:
+            timing       = f"⏳ 저항선까지 +{gap_pct:.1f}% — 돌파 대기"
+            timing_color = "#aaa"
+
+        mode_label  = "⚡ 추격 모드 (Breakout)"
+        mode_desc   = "저항선을 뚫으면 바로 탈게요"
+        mode_color  = "#ff8a65"
+        detail_line = f"저항선 {round(ref_resistance, 2)} · 돌파확인가 {buy_target}"
+
+    elif mode == "vwap":
+        # 정석 모드: VWAP 기준 평균 매수가
+        vwap_w = float(data["VWAP_W"].iloc[-1]) if "VWAP_W" in data.columns and pd.notna(data["VWAP_W"].iloc[-1]) else None
+        vwap_m = float(data["VWAP_M"].iloc[-1]) if "VWAP_M" in data.columns and pd.notna(data["VWAP_M"].iloc[-1]) else None
+
+        if vwap_w:
+            buy_target  = round(vwap_w, 2)
+            vwap_label  = "VWAP(5일)"
+            extra       = f" · VWAP(20일) {round(vwap_m, 2)}" if vwap_m else ""
+        elif vwap_m:
+            buy_target  = round(vwap_m, 2)
+            vwap_label  = "VWAP(20일)"
+            extra       = ""
+        else:
+            buy_target  = round(sma20, 2)
+            vwap_label  = "SMA20 (VWAP 대체)"
+            extra       = ""
+
+        gap_pct = (current - buy_target) / buy_target * 100
+
+        if current <= buy_target * 1.005:
+            timing       = "⚡ VWAP 하단 — 평균 이하 진입 기회"
+            timing_color = "#69f0ae"
+        elif current <= buy_target * 1.02:
+            timing       = "🔵 VWAP 근접 — 분할매수 적합"
+            timing_color = "#82b1ff"
+        elif gap_pct <= 5.0:
+            timing       = "🟡 VWAP 소폭 상회 — 눌림목 대기"
+            timing_color = "#fff176"
+        else:
+            timing       = f"⏳ VWAP 대비 +{gap_pct:.1f}% 고평가 — 대기"
+            timing_color = "#aaa"
+
+        mode_label  = "📊 정석 모드 (VWAP)"
+        mode_desc   = "시장 참여자 평균가에 살게요"
+        mode_color  = "#a5d6a7"
+        detail_line = f"{vwap_label} {buy_target}{extra}"
+
     else:
-        timing = f"⏳ 대기 중 ({gap_pct:+.1f}% 고평가)"
-        timing_color = "#aaa"
+        # classic (기본): 지지선 가중 평균
+        buy_target = round(bb_lower * 0.50 + sma20 * 0.30 + low5 * 0.20, 2)
+        gap_pct    = (current - buy_target) / buy_target * 100
+
+        if bb_lower and current <= bb_lower * 1.005:
+            timing       = "⚡ 과매도 — 지금이 매수 타이밍"
+            timing_color = "#69f0ae"
+        elif sma20 and current <= sma20 * 1.01:
+            timing       = "🔵 SMA20 지지 — 분할매수 적합"
+            timing_color = "#82b1ff"
+        elif gap_pct <= 3.0:
+            timing       = "🟡 적정가 근접 — 모니터링 권고"
+            timing_color = "#fff176"
+        else:
+            timing       = f"⏳ 대기 중 ({gap_pct:+.1f}% 고평가)"
+            timing_color = "#aaa"
+
+        mode_label  = "🎯 종합 모드"
+        mode_desc   = "지지선 가중 평균 기준"
+        mode_color  = "#e0e0e0"
+        detail_line = f"BB하단 {round(bb_lower, 2)} · SMA20 {round(sma20, 2)} · 5일저 {round(low5, 2)}"
 
     return {
-        "buy_target":    buy_target,
-        "bb_lower":      round(bb_lower, 2),
-        "sma20":         round(sma20, 2),
-        "low5":          round(low5, 2),
-        "gap_pct":       round(gap_pct, 2),
-        "timing":        timing,
-        "timing_color":  timing_color,
-        "current":       round(current, 2),
-        "atr":           round(atr, 2) if atr else None,
+        "buy_target":   buy_target,
+        "bb_lower":     round(bb_lower, 2),
+        "sma20":        round(sma20, 2),
+        "low5":         round(low5, 2),
+        "gap_pct":      round(gap_pct, 2),
+        "timing":       timing,
+        "timing_color": timing_color,
+        "current":      round(current, 2),
+        "atr":          round(atr, 2) if atr else None,
+        "mode":         mode,
+        "mode_label":   mode_label,
+        "mode_desc":    mode_desc,
+        "mode_color":   mode_color,
+        "detail_line":  detail_line,
     }
 
 

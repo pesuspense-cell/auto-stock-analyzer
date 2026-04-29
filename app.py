@@ -2726,32 +2726,76 @@ with tab_chart:
 </div>
         """, unsafe_allow_html=True)
 
+        # ── 매수 적정가 모드 선택 ────────────────────────────────────────────────
+        _mode_map = {
+            "🏷️ 세일 (LBB)":       "sale",
+            "⚡ 추격 (Breakout)":   "breakout",
+            "📊 정석 (VWAP)":       "vwap",
+            "🎯 종합 (가중평균)":    "classic",
+        }
+        _mode_descs = {
+            "🏷️ 세일 (LBB)":       "안전하게 밑에서 기다릴게요  ·  현재가 -5~10%",
+            "⚡ 추격 (Breakout)":   "저항선을 뚫으면 바로 탈게요  ·  현재가 +2~3% 돌파 시",
+            "📊 정석 (VWAP)":       "시장 참여자 평균가에 살게요  ·  당일 VWAP 기준",
+            "🎯 종합 (가중평균)":    "BB하단·SMA20·5일저 가중 평균  ·  50% + 30% + 20%",
+        }
+        st.markdown(
+            '<div style="font-size:0.8rem;color:#888;margin-bottom:4px;margin-top:8px;">💡 매수 적정가 모드 선택</div>',
+            unsafe_allow_html=True,
+        )
+        _mode_label = st.radio(
+            "매수 적정가 모드",
+            list(_mode_map.keys()),
+            index=0,
+            horizontal=True,
+            key="buy_mode_selector",
+            label_visibility="collapsed",
+        )
+        _buy_mode = _mode_map[_mode_label]
+        st.markdown(
+            f'<div style="font-size:0.78rem;color:#555;margin-bottom:6px;padding-left:2px;">{_mode_descs[_mode_label]}</div>',
+            unsafe_allow_html=True,
+        )
+
         # ── 매수/매도 적정가 (세로) + 손절익절 가이드 (우측) — 등높이 HTML 그리드
         _buy_card_html  = ""
         _sell_card_html = ""
         _sl_card_html   = ""
 
         if _has_price:
-            _bt      = get_buy_target_price(data)
+            _bt      = get_buy_target_price(data, mode=_buy_mode)
             _st_data = get_sell_target_price(data)
 
             if _bt:
-                _t_price = _bt["buy_target"]
-                _gap     = _bt["gap_pct"]
-                _timing  = _bt["timing"]
-                _tc_clr  = _bt["timing_color"]
-                _bb_l    = _bt["bb_lower"]
-                _s20     = _bt["sma20"]
-                _l5      = _bt["low5"]
-                _gap_clr = "#ef9a9a" if _gap > 5 else ("#fff176" if _gap > 0 else "#69f0ae")
+                _t_price    = _bt["buy_target"]
+                _gap        = _bt["gap_pct"]
+                _timing     = _bt["timing"]
+                _tc_clr     = _bt["timing_color"]
+                _m_label    = _bt["mode_label"]
+                _m_desc     = _bt["mode_desc"]
+                _m_color    = _bt["mode_color"]
+                _detail     = _bt["detail_line"]
+
+                # 세일/종합/vwap: 양수 gap = 현재가가 목표보다 높음(비쌈) → 빨강
+                # 추격 모드: 양수 gap = 목표가가 현재가보다 높음(올라야 진입) → 노랑
+                if _buy_mode == "breakout":
+                    _gap_clr = "#fff176" if _gap > 0 else "#69f0ae"
+                else:
+                    _gap_clr = "#ef9a9a" if _gap > 5 else ("#fff176" if _gap > 0 else "#69f0ae")
+
+                _gap_label = f"목표가 +{_gap:.1f}%" if _buy_mode == "breakout" else f"현재가 {_gap:+.1f}%"
+
                 _buy_card_html = f"""
 <div style="background:#12161f;border:1px solid #2a2d3e;border-radius:8px;padding:10px 12px;">
-  <div style="font-size:0.78rem;color:#888;margin-bottom:5px;">🎯 매수 적정가</div>
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+    <span style="font-size:0.75rem;font-weight:bold;color:{_m_color};background:rgba(255,255,255,0.05);border:1px solid {_m_color}44;border-radius:10px;padding:1px 8px;">{_m_label}</span>
+  </div>
+  <div style="font-size:0.72rem;color:#666;margin-bottom:4px;">{_m_desc}</div>
   <div style="font-size:1.18rem;font-weight:bold;color:#e0e0e0;">{_fmt.format(_t_price)}</div>
-  <div style="font-size:0.88rem;color:{_gap_clr};margin:3px 0;">현재가 {_gap:+.1f}%</div>
+  <div style="font-size:0.88rem;color:{_gap_clr};margin:3px 0;">{_gap_label}</div>
   <div style="font-size:0.85rem;font-weight:bold;color:{_tc_clr};">{_timing}</div>
   <div style="border-top:1px solid #1e2130;padding-top:5px;margin-top:6px;font-size:0.75rem;color:#555;line-height:1.7;">
-    BB하단 {_fmt.format(_bb_l)}<br>SMA20 {_fmt.format(_s20)} · 5일저 {_fmt.format(_l5)}
+    {_detail}
   </div>
 </div>"""
 
