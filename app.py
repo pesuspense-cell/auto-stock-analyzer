@@ -123,6 +123,8 @@ _SECRETS_KEY_MAP = {
     "gemini_api_key": "GEMINI_API_KEY",
     "groq_api_key":   "GROQ_API_KEY",
     "dart_api_key":   "DART_API_KEY",
+    "krx_id":         "KRX_ID",
+    "krx_pw":         "KRX_PW",
 }
 
 def _persist_to_secrets(data: dict) -> None:
