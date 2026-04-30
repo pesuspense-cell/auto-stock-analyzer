@@ -2296,7 +2296,7 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
     if mode == "sale":
         # 세일 모드: BB 하단 — 안전하게 밑에서 기다리기
         buy_target = round(bb_lower, 2)
-        gap_pct    = (current - buy_target) / buy_target * 100  # 양수 = 현재가가 target 위
+        gap_pct    = (current - buy_target) / buy_target * 100 if buy_target else 0.0  # 양수 = 현재가가 target 위
 
         if current <= bb_lower * 1.005:
             timing       = "⚡ BB하단 도달 — 즉시 매수 타이밍"
@@ -2324,7 +2324,7 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
         ref_resistance = min(candidates) if candidates else current * 1.03
 
         buy_target = round(ref_resistance * 1.025, 2)  # 저항선 2.5% 돌파 확인 진입
-        gap_pct    = (buy_target - current) / current * 100  # 양수 = 목표가가 현재가 위
+        gap_pct    = (buy_target - current) / current * 100 if current else 0.0  # 양수 = 목표가가 현재가 위
 
         if current >= ref_resistance * 0.99:
             timing       = "⚡ 저항선 돌파 직전 — 매수 준비"
@@ -2359,7 +2359,7 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
             vwap_label  = "SMA20 (VWAP 대체)"
             extra       = ""
 
-        gap_pct = (current - buy_target) / buy_target * 100
+        gap_pct = (current - buy_target) / buy_target * 100 if buy_target else 0.0
 
         if current <= buy_target * 1.005:
             timing       = "⚡ VWAP 하단 — 평균 이하 진입 기회"
