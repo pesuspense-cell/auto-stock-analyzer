@@ -575,8 +575,7 @@ with st.sidebar:
             "티커 직접 입력",
             value=st.session_state.get("_direct_ticker_input", "005930.KS"),
             key="_direct_ticker_input",
-            on_change=_trigger_analysis_from_input,
-            help="예) 005930.KS (KOSPI), 247540.KQ (KOSDAQ), AAPL (미국) — 입력 후 Enter 또는 아래 버튼 클릭",
+            help="예) 005930.KS (KOSPI), 247540.KQ (KOSDAQ), AAPL (미국) — 아래 버튼 클릭",
         )
         sname  = ticker
 
