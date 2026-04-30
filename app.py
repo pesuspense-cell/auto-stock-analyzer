@@ -505,14 +505,6 @@ def _clear_analysis():
     st.session_state.pop("analyzed_sname", None)
     st.session_state.pop("analyzed_period", None)
 
-def _trigger_analysis_from_input():
-    """직접 입력 text_input에서 Enter 시 분석을 즉시 시작한다."""
-    val = st.session_state.get("_direct_ticker_input", "").strip()
-    if val:
-        st.session_state["analyzed_ticker"] = val
-        st.session_state["analyzed_sname"]  = val
-        st.session_state["analyzed_period"] = st.session_state.get("_period_sel", "3mo")
-
 with st.sidebar:
     st.markdown("## ⚙️ 종목 설정")
     market_sel = st.selectbox(
@@ -532,6 +524,7 @@ with st.sidebar:
                 "종목 검색 (이름·코드 입력)",
                 options,
                 key="_krx_selected",
+                on_change=_clear_analysis,
                 help="회사 이름이나 종목 코드(6자리)를 입력하면 자동으로 필터링됩니다.",
             )
             ticker = krx[selected]
@@ -539,7 +532,7 @@ with st.sidebar:
         else:
             st.warning("종목 목록 로드 실패 — 기본 목록 사용")
             sname  = st.selectbox("종목", list(KOSPI_STOCKS.keys()),
-                                  key="_krx_fallback")
+                                  key="_krx_fallback", on_change=_clear_analysis)
             ticker = KOSPI_STOCKS[sname]
 
     elif market_sel == "국내 ETF (검색)":
@@ -552,6 +545,7 @@ with st.sidebar:
                 "ETF 검색 (이름·코드 입력)",
                 etf_options,
                 key="_etf_selected",
+                on_change=_clear_analysis,
                 help="ETF 이름이나 6자리 코드를 입력하면 자동 필터링됩니다. 예) KODEX 200, 069500",
             )
             ticker = etf_list[etf_selected]
@@ -559,7 +553,8 @@ with st.sidebar:
         else:
             st.warning("ETF 목록 로드 실패 — 기본 목록 사용")
             _etf_fb = {f"{v['name']} ({k})": f"{k}.KS" for k, v in _ETF_PORTFOLIO_MAP.items()}
-            sname   = st.selectbox("ETF", list(_etf_fb.keys()), key="_etf_fallback")
+            sname   = st.selectbox("ETF", list(_etf_fb.keys()), key="_etf_fallback",
+                                   on_change=_clear_analysis)
             ticker  = _etf_fb[sname]
             sname   = sname.split(" (")[0]
 
@@ -575,6 +570,7 @@ with st.sidebar:
                 "종목 검색 (이름·티커 입력)",
                 us_options,
                 key="_us_selected",
+                on_change=_clear_analysis,
                 help="S&P500 + 나스닥 전체 종목. 회사명 또는 티커(예: AAPL)를 입력하면 자동 필터링됩니다.",
             )
             ticker = us_list[us_selected]
@@ -582,7 +578,7 @@ with st.sidebar:
         else:
             st.warning("미국 종목 목록 로드 실패 — 기본 목록 사용")
             sname  = st.selectbox("종목", list(US_STOCKS.keys()),
-                                  key="_us_fallback")
+                                  key="_us_fallback", on_change=_clear_analysis)
             ticker = US_STOCKS[sname]
 
     else:
@@ -590,12 +586,13 @@ with st.sidebar:
             "티커 직접 입력",
             value=st.session_state.get("_direct_ticker_input", "005930.KS"),
             key="_direct_ticker_input",
+            on_change=_clear_analysis,
             help="예) 005930.KS (KOSPI), 247540.KQ (KOSDAQ), AAPL (미국) — 아래 버튼 클릭",
         )
         sname  = ticker
 
     period = st.selectbox("분석 기간", ["1mo", "3mo", "6mo", "1y", "2y"],
-                          index=1, key="_period_sel")
+                          index=1, key="_period_sel", on_change=_clear_analysis)
 
     # ── 분석 시작 버튼 ─────────────────────────────────────────────────────
     st.divider()
