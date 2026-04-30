@@ -436,7 +436,7 @@ def _check_is_etf(ticker: str) -> bool:
     except Exception:
         return False
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def _etf_fundamental(ticker: str) -> dict:
     return get_etf_fundamental_data(ticker)
 
@@ -1866,9 +1866,16 @@ with tab_fund:
         st.subheader(f"📊 {_asname or sname} ETF 분석")
         st.caption("ETF는 괴리율·운용보수·추적오차 중심으로 평가합니다. '현재 어느 섹터에 돈이 몰리는가'를 파악하는 용도로 활용하세요.")
 
-        with st.spinner("ETF 지표 로딩 중..."):
+        with st.spinner("ETF 지표 로딩 중... (KRX API)"):
             _etf_data   = _etf_fundamental(ticker)
             _etf_score  = calculate_etf_score(_etf_data)
+
+        # ── 데이터 상태 배너 ─────────────────────────────────────────────────
+        _data_status = _etf_data.get("data_status", "ok")
+        if _etf_data.get("cache_used"):
+            st.info(f"⏳ {_data_status}", icon="🔄")
+        elif _data_status not in ("ok", "krx_api+fdr"):
+            st.warning(f"KRX API 상태: {_data_status}", icon="⚠️")
 
         # ── ETF 핵심 지표 메트릭 행 ──────────────────────────────────────────
         _em1, _em2, _em3, _em4, _em5 = st.columns(5)
@@ -1890,8 +1897,11 @@ with tab_fund:
                     help="기초지수 대비 추종 오차. 낮을수록 지수를 정밀하게 추종")
         _em5.metric("배당수익률",  f"{_div:.2f}%" if _div is not None else "N/A")
 
-        if _aum:
-            st.caption(f"순자산(AUM): **{_aum:,.0f}억원**  |  섹터: **{_sector}**  |  출처: {_etf_data.get('source','')}")
+        _src_label = {"krx_api": "KRX 공공 API", "krx_api+fdr": "KRX API + FDR", "error": "오류"}.get(
+            _etf_data.get("source", ""), _etf_data.get("source", "")
+        )
+        _aum_txt = f"순자산(AUM): **{_aum:,.0f}억원**  |  " if _aum else ""
+        st.caption(f"{_aum_txt}섹터: **{_sector}**  |  데이터: {_src_label}")
 
         st.markdown("---")
 
@@ -1952,7 +1962,7 @@ with tab_fund:
                     st.info(_r, icon="ℹ️")
 
             if not _etf_score.get("etf_reasons"):
-                st.info("ETF 지표 데이터를 불러올 수 없습니다. (pykrx / Naver Finance 접근 필요)")
+                st.info("ETF 지표 데이터를 불러올 수 없습니다. (KRX API 장애 또는 지원되지 않는 종목)")
 
         st.markdown("---")
 
@@ -1987,7 +1997,7 @@ with tab_fund:
             st.dataframe(pd.DataFrame(_h_rows), use_container_width=True, hide_index=True)
             st.caption("상위 구성종목이 해당 섹터의 시장 흐름을 직접 반영합니다.")
         else:
-            st.info("구성종목 데이터를 불러올 수 없습니다. (pykrx PDF 미수집)")
+            st.info("구성종목 데이터를 불러올 수 없습니다. (KRX PDF API 미수집 또는 비상장 ETF)")
 
         # ── 기술적 분석 점수 요약 (ETF도 동일 적용) ─────────────────────────
         if _data_ready:

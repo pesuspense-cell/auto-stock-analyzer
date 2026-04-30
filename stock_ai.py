@@ -4648,132 +4648,13 @@ def get_related_sector_performance(ticker: str) -> dict:
 
 def get_etf_fundamental_data(ticker: str) -> dict:
     """
-    ETF 핵심 지표 수집:
-      - 운용보수(ER), 추적오차, NAV 괴리율, PDF 상위 구성종목, 배당수익률
-    pykrx → Naver Finance 스크래핑 → yfinance 순으로 시도
+    ETF 핵심 지표 수집 — KRX 공공 데이터 API 비동기 기반.
+    (NAV, 괴리율, 추적오차, AUM, 구성종목, 운용보수)
     """
-    code = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
+    from src.etf_async import get_etf_fundamental_data as _get_etf
+    code           = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
     portfolio_info = _ETF_PORTFOLIO_MAP.get(code, {})
-
-    result: dict = {
-        "code":           code,
-        "ticker":         ticker,
-        "expense_ratio":  None,   # 운용보수 (%)
-        "tracking_error": None,   # 추적오차 (%)
-        "nav":            None,   # NAV (원)
-        "price":          None,   # 현재가
-        "nav_premium":    None,   # 괴리율 = (price - NAV) / NAV * 100
-        "dividend_yield": None,   # 배당수익률 (%)
-        "aum":            None,   # 순자산 (억원)
-        "top_holdings":   [],     # 상위 구성종목
-        "sector":         portfolio_info.get("sector", ""),
-        "etf_name":       portfolio_info.get("name", ""),
-        "source":         "unknown",
-    }
-
-    # 1) pykrx ETF 기본 지표 (NAV, 괴리율, 추적오차, 순자산)
-    try:
-        from pykrx import stock as pstock
-        for delta in range(5):
-            d_str = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
-            df_fund = pstock.get_etf_fundamental(d_str, code)
-            if df_fund is not None and not df_fund.empty:
-                row = df_fund.iloc[0]
-                nav = float(row.get("NAV", 0) or 0)
-                if nav > 0:
-                    result["nav"]            = nav
-                    result["nav_premium"]    = float(row.get("괴리율", 0) or 0)
-                    result["tracking_error"] = float(row.get("추적오차율", 0) or 0)
-                    aum_raw = float(row.get("순자산총액", 0) or 0)
-                    result["aum"] = round(aum_raw / 1e8, 0) if aum_raw > 0 else None
-                    result["source"] = "pykrx"
-                    break
-    except Exception:
-        pass
-
-    # 2) pykrx PDF로 실제 구성종목 조회
-    try:
-        from pykrx import stock as pstock
-        for delta in range(5):
-            d_str = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
-            df_pdf = pstock.get_etf_portfolio_deposit_file(d_str, code)
-            if df_pdf is not None and not df_pdf.empty:
-                top_h = []
-                for _, r in df_pdf.head(10).iterrows():
-                    t_code = str(r.get("티커", "") or "").strip()
-                    t_name = str(r.get("종목명", "") or "").strip()
-                    t_wgt  = float(r.get("비중", 0) or 0)
-                    if t_code and t_name:
-                        top_h.append({"ticker": f"{t_code}.KS", "name": t_name, "weight": t_wgt})
-                if top_h:
-                    result["top_holdings"] = top_h
-                    break
-    except Exception:
-        pass
-
-    # 3) Naver Finance 스크래핑 (운용보수, 배당수익률, 현재가 보완)
-    if HAS_BS4:
-        try:
-            url  = f"https://finance.naver.com/item/main.naver?code={code}"
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-            soup = BeautifulSoup(resp.text, "lxml")
-
-            # 현재가
-            if result["price"] is None:
-                p_tag = soup.select_one(".no_today .blind")
-                if p_tag:
-                    try:
-                        result["price"] = float(p_tag.get_text(strip=True).replace(",", ""))
-                    except ValueError:
-                        pass
-
-            # 테이블에서 운용보수·배당수익률 파싱
-            for dt in soup.select("dt"):
-                label  = dt.get_text(strip=True)
-                dd_tag = dt.find_next_sibling("dd")
-                if not dd_tag:
-                    continue
-                val_str = dd_tag.get_text(strip=True).replace("%", "").replace(",", "").strip()
-                try:
-                    val_f = float(val_str)
-                except ValueError:
-                    continue
-                if any(k in label for k in ("운용보수", "총보수", "수수료")):
-                    if result["expense_ratio"] is None:
-                        result["expense_ratio"] = val_f
-                elif "배당수익률" in label and result["dividend_yield"] is None:
-                    result["dividend_yield"] = val_f
-        except Exception:
-            pass
-
-    # 4) yfinance 보완 (현재가·배당)
-    try:
-        yf_info = yf.Ticker(ticker).info
-        if result["price"] is None:
-            p = yf_info.get("regularMarketPrice") or yf_info.get("currentPrice")
-            if p:
-                result["price"] = float(p)
-        if result["dividend_yield"] is None:
-            dy = yf_info.get("dividendYield")
-            if dy and dy > 0:
-                result["dividend_yield"] = round(float(dy) * 100, 2)
-    except Exception:
-        pass
-
-    # NAV 괴리율 직접 계산 (pykrx 미수집 시)
-    if result["nav_premium"] is None and result["price"] and result["nav"]:
-        result["nav_premium"] = round(
-            (result["price"] - result["nav"]) / result["nav"] * 100, 2
-        )
-
-    # 포트폴리오 맵 폴백 (구성종목 없을 경우)
-    if not result["top_holdings"] and portfolio_info.get("holdings"):
-        result["top_holdings"] = [
-            {"ticker": t, "name": t.split(".")[0], "weight": None}
-            for t in portfolio_info["holdings"]
-        ]
-
-    return result
+    return _get_etf(ticker, portfolio_info)
 
 
 def calculate_etf_score(etf_data: dict) -> dict:
@@ -4814,7 +4695,7 @@ def calculate_etf_score(etf_data: dict) -> dict:
         score += ps
     else:
         breakdown["괴리율"] = 0.0
-        reasons.append("NAV 괴리율 데이터 없음 (pykrx 미수집)")
+        reasons.append("NAV 괴리율 데이터 없음 (KRX API 일시 장애 또는 장외 시간)")
 
     # ── 운용보수 점수 (±2) ────────────────────────────────────────────────────
     er = etf_data.get("expense_ratio")
@@ -4833,7 +4714,7 @@ def calculate_etf_score(etf_data: dict) -> dict:
         score += es
     else:
         breakdown["운용보수"] = 0.0
-        reasons.append("운용보수 데이터 없음 (Naver Finance 미수집)")
+        reasons.append("운용보수 데이터 없음 (미등록 ETF)")
 
     # ── 추적오차 점수 (±1.5) ─────────────────────────────────────────────────
     te = etf_data.get("tracking_error")

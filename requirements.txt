@@ -8,7 +8,7 @@ pandas>=2.0.0,<3.0.0
 numpy>=1.26.0,<2.0.0
 plotly>=5.18.0
 finance-datareader>=0.9.0
-pykrx>=1.0.0
+httpx>=0.27.0
 OpenDartReader>=0.2.0
 
 # ── Web Scraping ─────────────────────────────────────────────────────────────
