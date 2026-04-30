@@ -35,30 +35,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-# ── 선택 의존성 ───────────────────────────────────────────────────────────────
-try:
-    import httpx
-    HAS_HTTPX = True
-except ImportError:
-    HAS_HTTPX = False
-
-try:
-    import yfinance as yf
-    HAS_YF = True
-except ImportError:
-    HAS_YF = False
-
-try:
-    from bs4 import BeautifulSoup
-    HAS_BS4 = True
-except ImportError:
-    HAS_BS4 = False
-
-try:
-    import FinanceDataReader as fdr
-    HAS_FDR = True
-except ImportError:
-    HAS_FDR = False
+from .providers import YahooProvider, KRXProvider, DARTProvider
 
 # ── 로깅 설정 ─────────────────────────────────────────────────────────────────
 logger = logging.getLogger("fundamental")
@@ -78,24 +55,6 @@ _DB_PATH          = Path(__file__).parent.parent / "fundamentals.db"
 _CACHE_TTL_MARKET = 10 * 60     # 장중(09:00–15:30): 10분
 _CACHE_TTL_OFF    = 6 * 3600    # 장외: 6시간
 
-_KRX_BASE = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
-_KRX_HDR  = {
-    "Content-Type":    "application/x-www-form-urlencoded; charset=UTF-8",
-    "Referer":         "https://data.krx.co.kr/",
-    "User-Agent":      (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    ),
-    "Accept":          "application/json, text/javascript, */*; q=0.01",
-    "X-Requested-With": "XMLHttpRequest",
-}
-_NAVER_HDR = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://finance.naver.com/",
-}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 유틸리티
@@ -203,630 +162,57 @@ def _save_cache(ticker: str, data: dict) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# KRX Open API 클라이언트
+# 통합 비동기 수집 파이프라인 (Provider 패턴)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class KRXApiClient:
-    """
-    KRX data.krx.co.kr 공공 데이터 포털 비동기 클라이언트.
-    인증 불필요 — ETF 외 일반 상장종목 PER/PBR/EPS/BPS 조회.
-    """
+# KRXApiClient / DartApiClient — 하위 호환 재노출 (외부 참조 유지)
+from .providers.krx_provider  import KRXProvider  as KRXApiClient   # noqa: F401
+from .providers.dart_provider import DARTProvider as DartApiClient  # noqa: F401
 
-    def __init__(self, client: "httpx.AsyncClient"):
-        self._c = client
-
-    async def fetch_per_pbr(self, code6: str) -> Optional[dict]:
-        """
-        KRX MDCSTAT03501 — 전 종목 PER/PBR/EPS/BPS.
-        최근 5거래일 중 데이터 있는 가장 최근 날 사용.
-        """
-        for delta in range(5):
-            d = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
-            for mkt in ("STK", "KSQ", "ALL"):
-                try:
-                    resp = await self._c.post(
-                        _KRX_BASE,
-                        data={
-                            "bld":         "dbms/MDC/STAT/standard/MDCSTAT03501",
-                            "locale":      "ko_KR",
-                            "mktId":       mkt,
-                            "trdDd":       d,
-                            "money":       "1",
-                            "csvxls_isNo": "false",
-                        },
-                        headers=_KRX_HDR,
-                        timeout=10.0,
-                    )
-                    resp.raise_for_status()
-                    rows = resp.json().get("output", [])
-                    for r in rows:
-                        if str(r.get("ISU_SRT_CD", "")).strip() == code6:
-                            per = _to_float(r.get("PER"))
-                            pbr = _to_float(r.get("PBR"))
-                            if per or pbr:
-                                result = {}
-                                if per:   result["per"]     = per
-                                if pbr:   result["pbr"]     = pbr
-                                eps = _to_float(
-                                    str(r.get("EPS", "")).replace(",", "")
-                                )
-                                bps = _to_float(
-                                    str(r.get("BPS", "")).replace(",", "")
-                                )
-                                if eps:   result["eps_ttm"] = eps
-                                if bps:   result["bps"]     = bps
-                                logger.info(
-                                    "KRX PER/PBR 수집 성공: %s (날짜=%s)", code6, d
-                                )
-                                return result
-                except Exception as e:
-                    logger.debug("KRX PER/PBR 오류 (delta=%d, mkt=%s): %s", delta, mkt, e)
-                    break  # 해당 날짜 실패 시 다음 날짜로
-        return None
-
-    async def fetch_stock_info(self, code6: str) -> Optional[dict]:
-        """KRX 시가총액·상장주식수 (MDCSTAT01901)"""
-        today = datetime.now().strftime("%Y%m%d")
-        try:
-            resp = await self._c.post(
-                _KRX_BASE,
-                data={
-                    "bld":         "dbms/MDC/STAT/standard/MDCSTAT01901",
-                    "locale":      "ko_KR",
-                    "mktId":       "ALL",
-                    "trdDd":       today,
-                    "money":       "1",
-                    "csvxls_isNo": "false",
-                },
-                headers=_KRX_HDR,
-                timeout=10.0,
-            )
-            resp.raise_for_status()
-            rows = resp.json().get("output", [])
-            for r in rows:
-                if str(r.get("ISU_SRT_CD", "")).strip() == code6:
-                    mcap = _to_float(str(r.get("MKTCAP", "")).replace(",", ""))
-                    return {
-                        "market_cap": mcap,
-                        "short_name": r.get("ISU_ABBRV", ""),
-                        "sector":     r.get("IDX_IND_NM", ""),
-                    }
-        except Exception as e:
-            logger.debug("KRX stock_info 오류: %s", e)
-        return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DART Open API 클라이언트
-# ─────────────────────────────────────────────────────────────────────────────
-
-class DartApiClient:
-    """
-    금융감독원 DART OpenAPI 래퍼.
-    OpenDartReader 라이브러리를 executor에서 비동기 호출.
-
-    API 키 탐색 순서:
-      1. 환경변수 DART_API_KEY
-      2. st.secrets["DART_API_KEY"]
-      3. st.session_state["dart_api_key"]
-    """
-
-    def __init__(self):
-        self._key = self._resolve_key()
-
-    @staticmethod
-    def _resolve_key() -> Optional[str]:
-        key = os.environ.get("DART_API_KEY")
-        if key:
-            return key
-        try:
-            import streamlit as st
-            key = st.secrets.get("DART_API_KEY", "") or st.session_state.get(
-                "dart_api_key", ""
-            )
-        except Exception:
-            pass
-        return key or None
-
-    @property
-    def available(self) -> bool:
-        return bool(self._key)
-
-    def _fetch_sync(self, stock_code: str) -> dict:
-        """OpenDartReader 동기 조회 — executor 오프로드용"""
-        try:
-            from fundamental_db import get_dart_financials
-            return get_dart_financials(f"{stock_code}.KS", self._key)
-        except Exception as e:
-            logger.debug("DART OpenDartReader 조회 실패: %s", e)
-        return {}
-
-    async def fetch(self, code6: str) -> dict:
-        """분기/연간 재무 및 수주잔고 비동기 조회"""
-        if not self.available:
-            return {}
-        loop = asyncio.get_event_loop()
-        try:
-            data = await asyncio.wait_for(
-                loop.run_in_executor(None, self._fetch_sync, code6),
-                timeout=12.0,
-            )
-            if data:
-                logger.info("DART 재무 수집 성공: %s", code6)
-            return data
-        except asyncio.TimeoutError:
-            logger.warning("DART 조회 타임아웃: %s", code6)
-        except Exception as e:
-            logger.warning("DART 조회 실패: %s — %s", code6, e)
-        return {}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 소스별 비동기 수집 함수
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _yf_sync(ticker: str) -> dict:
-    """yfinance 동기 수집 — executor 오프로드용"""
-    t    = yf.Ticker(ticker)
-    info = t.info
-
-    price = _coalesce(
-        info.get("currentPrice"),
-        info.get("regularMarketPrice"),
-        info.get("previousClose"),
-    )
-    if price is None:
-        try:
-            price = t.fast_info.last_price
-        except Exception:
-            pass
-
-    market_cap = info.get("marketCap")
-    if market_cap is None:
-        try:
-            market_cap = t.fast_info.market_cap
-        except Exception:
-            pass
-
-    w52_high = info.get("fiftyTwoWeekHigh")
-    w52_low  = info.get("fiftyTwoWeekLow")
-    if w52_high is None:
-        try:
-            w52_high = t.fast_info.year_high
-        except Exception:
-            pass
-    if w52_low is None:
-        try:
-            w52_low = t.fast_info.year_low
-        except Exception:
-            pass
-
-    eps_ttm   = info.get("trailingEps")
-    book_val  = info.get("bookValue")
-    total_rev = info.get("totalRevenue")
-
-    per = info.get("trailingPE")
-    if per is None and price and eps_ttm and eps_ttm > 0:
-        per = round(price / eps_ttm, 2)
-
-    pbr = info.get("priceToBook")
-    if pbr is None and price and book_val and book_val > 0:
-        pbr = round(price / book_val, 2)
-
-    psr = None
-    if market_cap and total_rev and total_rev > 0:
-        psr = round(market_cap / total_rev, 2)
-
-    # ── 재무제표 상세 ─────────────────────────────────────────────────────────
-    operating_income     = None
-    net_income           = None
-    ocf                  = info.get("operatingCashflow")
-    roe_history: list    = []
-    roe_from_fin         = None
-    revenue_growth_calc  = None
-    earnings_growth_calc = None
-    op_margins_calc      = None
-    fcf_from_cf          = None
-    eps_history: list    = []
-
-    try:
-        fin = t.financials
-        bs  = t.balance_sheet
-        cf  = t.cashflow
-
-        if fin is not None and not fin.empty:
-            for lbl in ["Operating Income", "EBIT"]:
-                if lbl in fin.index:
-                    operating_income = float(fin.loc[lbl].iloc[0])
-                    break
-
-            for lbl in [
-                "Net Income",
-                "Net Income Common Stockholders",
-                "Net Income From Continuing Operation Net Minority Interest",
-            ]:
-                if lbl in fin.index:
-                    net_income = float(fin.loc[lbl].iloc[0])
-                    break
-
-            if cf is not None and not cf.empty:
-                for lbl in ["Operating Cash Flow", "Total Cash From Operating Activities"]:
-                    if lbl in cf.index:
-                        ocf = float(cf.loc[lbl].iloc[0])
-                        break
-
-            if total_rev is None:
-                for lbl in ["Total Revenue", "Operating Revenue"]:
-                    if lbl in fin.index:
-                        v = fin.loc[lbl].iloc[0]
-                        if pd.notna(v):
-                            total_rev = float(v)
-                            break
-
-            for lbl in ["Total Revenue", "Operating Revenue"]:
-                if lbl in fin.index:
-                    rv = fin.loc[lbl].dropna()
-                    if len(rv) >= 2:
-                        r0, r1 = float(rv.iloc[0]), float(rv.iloc[1])
-                        if r1 != 0 and pd.notna(r0) and pd.notna(r1):
-                            revenue_growth_calc = round((r0 - r1) / abs(r1), 6)
-                    break
-
-            for lbl in [
-                "Net Income",
-                "Net Income Common Stockholders",
-                "Net Income From Continuing Operation Net Minority Interest",
-            ]:
-                if lbl in fin.index:
-                    nv = fin.loc[lbl].dropna()
-                    if len(nv) >= 2:
-                        n0, n1 = float(nv.iloc[0]), float(nv.iloc[1])
-                        if n1 != 0 and pd.notna(n0) and pd.notna(n1):
-                            earnings_growth_calc = round((n0 - n1) / abs(n1), 6)
-                    break
-
-            if operating_income is not None and total_rev and total_rev > 0:
-                op_margins_calc = round(operating_income / total_rev, 6)
-
-            if cf is not None and not cf.empty and "Free Cash Flow" in cf.index:
-                v = cf.loc["Free Cash Flow"].iloc[0]
-                if pd.notna(v):
-                    fcf_from_cf = float(v)
-
-            if net_income is not None and bs is not None and not bs.empty:
-                for lbl in [
-                    "Common Stock Equity",
-                    "Stockholders Equity",
-                    "Total Equity Gross Minority Interest",
-                ]:
-                    if lbl in bs.index:
-                        eq = bs.loc[lbl].iloc[0]
-                        if pd.notna(eq) and float(eq) > 0:
-                            roe_from_fin = round(net_income / float(eq), 6)
-                        break
-
-            if bs is not None and not bs.empty:
-                ni_vals = eq_vals = None
-                for lbl in [
-                    "Net Income",
-                    "Net Income Common Stockholders",
-                    "Net Income From Continuing Operation Net Minority Interest",
-                ]:
-                    if lbl in fin.index:
-                        ni_vals = fin.loc[lbl]
-                        break
-                for lbl in [
-                    "Common Stock Equity",
-                    "Stockholders Equity",
-                    "Total Equity Gross Minority Interest",
-                ]:
-                    if lbl in bs.index:
-                        eq_vals = bs.loc[lbl]
-                        break
-                if ni_vals is not None and eq_vals is not None:
-                    for col in [c for c in ni_vals.index if c in eq_vals.index][:4]:
-                        ni_v = ni_vals.get(col)
-                        eq_v = eq_vals.get(col)
-                        if (
-                            ni_v and eq_v
-                            and float(eq_v) > 0
-                            and pd.notna(ni_v)
-                            and pd.notna(eq_v)
-                        ):
-                            roe_history.append(
-                                round(float(ni_v) / float(eq_v) * 100, 2)
-                            )
-
-        for lbl in ["Diluted EPS", "Basic EPS"]:
-            if fin is not None and lbl in fin.index:
-                ep = fin.loc[lbl].dropna()
-                eps_history = [float(v) for v in reversed(ep.values[:4])]
-                break
-
-        if not eps_history and fin is not None and not fin.empty:
-            ni_row = sh_row = None
-            for lbl in [
-                "Net Income",
-                "Net Income Common Stockholders",
-                "Net Income From Continuing Operation Net Minority Interest",
-            ]:
-                if lbl in fin.index:
-                    ni_row = fin.loc[lbl]
-                    break
-            for lbl in ["Diluted Average Shares", "Ordinary Shares Number", "Share Issued"]:
-                if lbl in fin.index:
-                    sh_row = fin.loc[lbl]
-                    break
-                if bs is not None and lbl in bs.index:
-                    sh_row = bs.loc[lbl]
-                    break
-            if ni_row is not None and sh_row is not None:
-                raw = []
-                for col in [c for c in ni_row.index if c in sh_row.index][:4]:
-                    niv = ni_row.get(col)
-                    shv = sh_row.get(col)
-                    if (
-                        niv is not None and shv is not None
-                        and float(shv) > 0
-                        and pd.notna(niv) and pd.notna(shv)
-                    ):
-                        raw.append(float(niv) / float(shv))
-                eps_history = list(reversed(raw))
-    except Exception as e:
-        logger.debug("yfinance 재무제표 파싱 오류 [%s]: %s", ticker, e)
-
-    # ── 자사주·배당 → 주주환원율 ──────────────────────────────────────────────
-    buyback_amount  = None
-    div_paid_amount = None
-    shareholder_yield = None
-    try:
-        cf2 = t.cashflow
-        if cf2 is not None and not cf2.empty:
-            for lbl in [
-                "Repurchase Of Capital Stock",
-                "Common Stock Payments",
-                "Common Stock Repurchased",
-            ]:
-                if lbl in cf2.index:
-                    v = cf2.loc[lbl].iloc[0]
-                    if pd.notna(v) and float(v) < 0:
-                        buyback_amount = abs(float(v))
-                        break
-            for lbl in ["Cash Dividends Paid", "Payment Of Dividends"]:
-                if lbl in cf2.index:
-                    v = cf2.loc[lbl].iloc[0]
-                    if pd.notna(v) and float(v) < 0:
-                        div_paid_amount = abs(float(v))
-                        break
-        if market_cap and market_cap > 0:
-            total_return = (buyback_amount or 0) + (div_paid_amount or 0)
-            if total_return > 0:
-                shareholder_yield = round(total_return / market_cap * 100, 2)
-    except Exception:
-        pass
-
-    if psr is None and market_cap and total_rev and total_rev > 0:
-        psr = round(market_cap / total_rev, 2)
-
-    return {
-        "per":               per,
-        "pbr":               pbr,
-        "psr":               psr,
-        "roe":               _coalesce(info.get("returnOnEquity"), roe_from_fin),
-        "roe_history":       roe_history,
-        "eps_history":       eps_history,
-        "debt_equity":       info.get("debtToEquity"),
-        "revenue_growth":    _coalesce(info.get("revenueGrowth"),  revenue_growth_calc),
-        "earnings_growth":   _coalesce(info.get("earningsGrowth"), earnings_growth_calc),
-        "operating_margins": _coalesce(info.get("operatingMargins"), op_margins_calc),
-        "w52_high":          w52_high,
-        "w52_low":           w52_low,
-        "market_cap":        market_cap,
-        "total_revenue":     total_rev,
-        "operating_income":  operating_income,
-        "net_income":        net_income,
-        "free_cashflow":     _coalesce(info.get("freeCashflow"), fcf_from_cf),
-        "ocf":               ocf,
-        "buyback_amount":    buyback_amount,
-        "div_paid_amount":   div_paid_amount,
-        "shareholder_yield": shareholder_yield,
-        "eps_ttm":           eps_ttm,
-        "forward_pe":        info.get("forwardPE"),
-        "div_yield":         info.get("dividendYield"),
-        "sector":            info.get("sector", "N/A"),
-        "industry":          info.get("industry", "N/A"),
-        "short_name":        info.get("shortName", ticker),
-    }
-
-
-async def _fetch_yf(ticker: str) -> dict:
-    """yfinance 비동기 래퍼"""
-    if not HAS_YF:
-        return {}
-    loop = asyncio.get_event_loop()
-    try:
-        data = await asyncio.wait_for(
-            loop.run_in_executor(None, _yf_sync, ticker),
-            timeout=15.0,
-        )
-        logger.info("yfinance 수집 성공: %s", ticker)
-        return data
-    except asyncio.TimeoutError:
-        logger.warning("yfinance 타임아웃: %s", ticker)
-    except Exception as e:
-        logger.warning("yfinance 실패 [%s]: %s", ticker, e)
-    return {}
-
-
-async def _fetch_naver(code6: str, client: "httpx.AsyncClient") -> dict:
-    """Naver Finance per_table 비동기 스크래핑 — PER/PBR/EPS/BPS/배당"""
-    if not HAS_BS4:
-        return {}
-    url = f"https://finance.naver.com/item/main.naver?code={code6}"
-    try:
-        resp = await client.get(url, headers=_NAVER_HDR, timeout=8.0)
-        resp.raise_for_status()
-        html = resp.content.decode("euc-kr", errors="replace")
-        soup = BeautifulSoup(html, "html.parser")
-        table = soup.find("table", {"class": "per_table"})
-        if not table:
-            return {}
-
-        def _pf(text: str) -> Optional[float]:
-            m = re.search(r"-?[\d,]+\.?\d*", text.strip())
-            return float(m.group().replace(",", "")) if m else None
-
-        rows_data, row_values = [], []
-        for tr in table.find_all("tr"):
-            td = tr.find("td")
-            if td:
-                parts = [
-                    p.strip()
-                    for p in td.text.split("\n")
-                    if p.strip() and p.strip() != "l"
-                ]
-                rows_data.append(_pf(parts[0]) if parts else None)
-                row_values.append(_pf(parts[-1]) if len(parts) > 1 else None)
-
-        per = rows_data[0] if len(rows_data) > 0 else None
-        pbr = rows_data[2] if len(rows_data) > 2 else None
-        div = rows_data[3] if len(rows_data) > 3 else None
-
-        eps_ttm = row_values[0] if (row_values and row_values[0]) else None
-        bps     = row_values[2] if (len(row_values) > 2 and row_values[2]) else None
-
-        result: dict = {}
-        if per:     result["per"]      = per
-        if pbr:     result["pbr"]      = pbr
-        if eps_ttm: result["eps_ttm"]  = eps_ttm
-        if bps:     result["bps"]      = bps
-        if div:     result["div_yield"] = div / 100
-        if result:
-            logger.info("Naver Finance 수집 성공: %s", code6)
-        return result
-    except Exception as e:
-        logger.warning("Naver Finance 실패 [%s]: %s", code6, e)
-        return {}
-
-
-async def _fetch_krx(code6: str, client: "httpx.AsyncClient") -> dict:
-    """KRX Open API — PER/PBR/EPS/BPS"""
-    krx = KRXApiClient(client)
-    data = await krx.fetch_per_pbr(code6)
-    return data or {}
-
-
-async def _fetch_fdr(ticker: str) -> dict:
-    """FinanceDataReader — 52주 고저·현재가 보완"""
-    if not HAS_FDR:
-        return {}
-    loop = asyncio.get_event_loop()
-    code = ticker.split(".")[0]
-    try:
-        start = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        end   = datetime.now().strftime("%Y-%m-%d")
-        df = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: fdr.DataReader(code, start, end)),
-            timeout=10.0,
-        )
-        if df is None or df.empty:
-            return {}
-        result: dict = {}
-        if "Close" in df.columns:
-            result["_fdr_price"] = float(df["Close"].iloc[-1])
-        if "High" in df.columns:
-            result["w52_high"] = float(df["High"].max())
-        if "Low" in df.columns:
-            result["w52_low"] = float(df["Low"].min())
-        logger.info("FinanceDataReader 수집 성공: %s", code)
-        return result
-    except asyncio.TimeoutError:
-        logger.warning("FDR 타임아웃: %s", code)
-    except Exception as e:
-        logger.warning("FDR 실패 [%s]: %s", code, e)
-    return {}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 통합 비동기 수집 파이프라인
-# ─────────────────────────────────────────────────────────────────────────────
 
 async def _fetch_all(ticker: str) -> dict:
     """
-    모든 소스를 병렬 실행 → 우선순위 병합.
-    yfinance(기본) > Naver(KRX PER/PBR) > KRX API(PER/PBR 2차) > FDR(52주)
-    DART 분기 재무는 info["dart"] 키로 첨부.
+    Provider 패턴으로 병렬 수집 → 우선순위 병합.
+    YahooProvider(기본) > KRXProvider(KRX: per/pbr/52주/시총) > DARTProvider(KRX: 재무)
     """
-    is_krx = _is_krx(ticker)
-    code6  = _code(ticker)
+    yahoo_p = YahooProvider()
+    krx_p   = KRXProvider()
+    dart_p  = DARTProvider()
 
-    if not HAS_HTTPX:
-        # httpx 미설치 — 동기 yfinance만 실행
-        data = _yf_sync(ticker) if HAS_YF else {}
-        data["source"] = "yfinance_only"
-        return data
+    t_yf   = asyncio.create_task(yahoo_p.fetch_with_fallback(ticker))
+    t_krx  = asyncio.create_task(krx_p.fetch_with_fallback(ticker))
+    t_dart = asyncio.create_task(dart_p.fetch_with_fallback(ticker))
 
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        # ── 병렬 태스크 생성 ──────────────────────────────────────────────────
-        tasks: dict[str, asyncio.Task] = {
-            "yf": asyncio.create_task(_fetch_yf(ticker)),
-            "fdr": asyncio.create_task(_fetch_fdr(ticker)),
-        }
-        if is_krx:
-            tasks["naver"] = asyncio.create_task(_fetch_naver(code6, client))
-            tasks["krx"]   = asyncio.create_task(_fetch_krx(code6, client))
-            tasks["dart"]  = asyncio.create_task(DartApiClient().fetch(code6))
+    done, pending = await asyncio.wait(
+        {t_yf, t_krx, t_dart}, timeout=20.0
+    )
+    for t in pending:
+        t.cancel()
 
-        # ── 결과 수집 (개별 실패 격리) ────────────────────────────────────────
-        gathered: dict[str, dict] = {}
-        done, _ = await asyncio.wait(
-            tasks.values(), timeout=18.0, return_when=asyncio.ALL_COMPLETED
-        )
-        name_map = {t: n for n, t in tasks.items()}
-        for task in done:
-            name = name_map.get(task, "unknown")
-            try:
-                gathered[name] = task.result() or {}
-            except Exception as e:
-                logger.warning("태스크 예외 [%s/%s]: %s", ticker, name, e)
-                gathered[name] = {}
-        # 타임아웃으로 완료 못 한 태스크
-        for name, task in tasks.items():
-            if name not in gathered:
-                task.cancel()
-                gathered[name] = {}
+    def _safe_result(task: asyncio.Task) -> dict:
+        try:
+            return task.result() if not task.cancelled() else {}
+        except Exception:
+            return {}
 
-    yf_data    = gathered.get("yf", {})
-    nav_data   = gathered.get("naver", {})
-    krx_data   = gathered.get("krx", {})
-    fdr_data   = gathered.get("fdr", {})
-    dart_data  = gathered.get("dart", {})
+    yf_data   = _safe_result(t_yf)
+    krx_data  = _safe_result(t_krx)
+    dart_data = _safe_result(t_dart)
 
-    # ── 우선순위 병합 ─────────────────────────────────────────────────────────
     merged: dict = {}
 
     if yf_data:
         merged.update({k: v for k, v in yf_data.items() if not k.startswith("_")})
     else:
-        logger.warning("yfinance 미수집, 폴백 실행: %s", ticker)
+        logger.warning("yfinance 미수집, KRX 폴백: %s", ticker)
 
-    # Naver → per/pbr/eps/bps/div_yield 보완
-    for k in ("per", "pbr", "eps_ttm", "bps", "div_yield"):
-        if merged.get(k) is None and nav_data.get(k) is not None:
-            merged[k] = nav_data[k]
-
-    # KRX API → per/pbr 2차 보완
-    for k in ("per", "pbr", "eps_ttm", "bps"):
+    # KRXProvider → per/pbr/eps_ttm/bps/market_cap/w52_high/w52_low/short_name/sector 보완
+    for k in ("per", "pbr", "eps_ttm", "bps", "market_cap",
+              "w52_high", "w52_low", "short_name", "sector", "div_yield"):
         if merged.get(k) is None and krx_data.get(k) is not None:
             merged[k] = krx_data[k]
 
-    # FDR → 52주 고저 보완 (yfinance 미수집 시)
-    if merged.get("w52_high") is None and fdr_data.get("w52_high"):
-        merged["w52_high"] = fdr_data["w52_high"]
-    if merged.get("w52_low") is None and fdr_data.get("w52_low"):
-        merged["w52_low"] = fdr_data["w52_low"]
-
-    # DART — 별도 키로 첨부 + 핵심 재무 보완
+    # DART — 별도 키 첨부 + 핵심 재무 보완 (억원 → 원 환산)
     if dart_data:
         merged["dart"] = dart_data
         for k, dk in [
@@ -834,18 +220,17 @@ async def _fetch_all(ticker: str) -> dict:
             ("net_income",       "net_income"),
         ]:
             if merged.get(k) is None and dart_data.get(dk):
-                merged[k] = dart_data[dk] * 1e8  # 억원 → 원 환산
+                merged[k] = dart_data[dk] * 1e8
 
-    # ── 소스 추적 ─────────────────────────────────────────────────────────────
     sources = []
     if yf_data:   sources.append("yfinance")
-    if nav_data:  sources.append("naver")
-    if krx_data:  sources.append("krx_api")
+    if krx_data:  sources.append("krx")
     if dart_data: sources.append("dart")
-    if fdr_data:  sources.append("fdr")
     merged["source"] = "+".join(sources) if sources else "none"
 
     return merged
+
+
 
 
 def _run_async(coro) -> Any:
@@ -1435,9 +820,8 @@ def get_investment_recommendation(
 
 
 def get_insider_trades_sec(ticker: str, days: int = 90) -> "pd.DataFrame":
-    """SEC EDGAR Form4 내부자 거래 — stock_ai.py 위임"""
-    from stock_ai import get_insider_trades_sec as _fn
-    return _fn(ticker, days)
+    """SEC EDGAR Form 4 내부자 거래 (미국 주식 전용)."""
+    return DARTProvider().fetch_insider_trades(ticker, days)
 
 
 def get_etf_fundamental_data(ticker: str) -> dict:

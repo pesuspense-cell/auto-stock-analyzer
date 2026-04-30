@@ -3362,10 +3362,10 @@ with tab_chart:
                     _dc   = "#69f0ae" if _diff >= 0 else "#ef9a9a"
                     return (
                         f'<div style="display:flex;justify-content:space-between;'
-                        f'align-items:center;padding:5px 0;border-bottom:1px solid #2a2d3e;">'
-                        f'<span style="font-size:0.85rem;color:{color};">● {label}</span>'
-                        f'<span style="font-size:0.88rem;color:#ddd;">{_pf.format(_v)}</span>'
-                        f'<span style="font-size:0.85rem;color:{_dc};">{_arrow}{abs(_diff):.1f}%</span>'
+                        f'align-items:center;padding:5px 0;border-bottom:1px solid #2a2d3e;gap:6px;">'
+                        f'<span style="font-size:0.85rem;color:{color};white-space:nowrap;flex-shrink:0;">● {label}</span>'
+                        f'<span style="font-size:0.88rem;color:#ddd;white-space:nowrap;">{_pf.format(_v)}</span>'
+                        f'<span style="font-size:0.85rem;color:{_dc};white-space:nowrap;flex-shrink:0;">{_arrow}{abs(_diff):.1f}%</span>'
                         f'</div>'
                     )
 
