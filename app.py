@@ -451,6 +451,10 @@ def _check_is_etf(ticker: str) -> bool:
 def _etf_fundamental(ticker: str) -> dict:
     return get_etf_fundamental_data(ticker)
 
+@st.cache_data(ttl=300)
+def _inv_data(ticker: str) -> dict:
+    return get_investor_trading_naver(ticker) or {}
+
 # ─── 관심종목 알림 체크 ───────────────────────────────────────────────────────
 def _get_wl_alerts() -> list:
     """
@@ -2403,6 +2407,101 @@ with tab_fund:
 
             > 📘 참고: 《현명한 투자자》(그레이엄) · 《전설로 떠나는 월가의 영웅》(린치) · 《최고의 주식 최적의 타이밍》(오닐)
             """)
+def generate_signal(data, advanced, hybrid, news_result, expected, signals):
+    """신호등 3단 판정: BUY / WAIT / SELL + 액션 메시지 + 근거 리스트 반환"""
+    if data.empty or len(data) < 2:
+        return "WAIT", "데이터가 부족합니다. 관망을 권장합니다.", ["데이터 부족"]
+
+    close   = data["Close"]
+    current = float(close.iloc[-1])
+
+    trend_score  = advanced.get("trend_score",  50.0)
+    volume_score = advanced.get("volume_score", 50.0)
+    news_score   = news_result.get("score", 0.0)
+    h_score      = hybrid.get("hybrid_score", 0.0)
+
+    # EMA 역배열 (단기 < 중기 < 장기 = 하락 배열)
+    ema_downtrend = False
+    if all(c in data.columns for c in ["EMA_20", "EMA_50", "EMA_200"]):
+        _row = data.iloc[-1]
+        _e20  = float(_row["EMA_20"])  if pd.notna(_row.get("EMA_20"))  else None
+        _e50  = float(_row["EMA_50"])  if pd.notna(_row.get("EMA_50"))  else None
+        _e200 = float(_row["EMA_200"]) if pd.notna(_row.get("EMA_200")) else None
+        if all(v is not None for v in [_e20, _e50, _e200]):
+            ema_downtrend = _e20 < _e50 < _e200
+
+    # 손절가 이탈 여부
+    stop_loss_breached = False
+    _sl = get_stop_loss_targets(data)
+    if _sl:
+        stop_loss_breached = current < _sl["stop_8pct"]
+
+    # VWAP(월간) 위치
+    vwap_above = False
+    if "VWAP_M" in data.columns:
+        _vm = data["VWAP_M"].iloc[-1]
+        if pd.notna(_vm):
+            vwap_above = current > float(_vm)
+
+    # 거래량 비율 (최근 1봉 / 20일 평균)
+    vol_ratio = 1.0
+    if "Volume_MA20" in data.columns and len(data) >= 1:
+        _vma = float(data["Volume_MA20"].iloc[-1])
+        if _vma > 0 and pd.notna(_vma):
+            vol_ratio = float(data["Volume"].iloc[-1]) / _vma
+
+    reasons = []
+
+    # ── SELL 조건 ────────────────────────────────────────────────────────────
+    if stop_loss_breached:
+        reasons.append(f"손절가({_sl['stop_8pct']:,.0f}) 이탈 — 즉시 손절 고려")
+        return "SELL", "손절가를 이탈했습니다. 포지션 정리를 검토하세요.", reasons
+
+    if ema_downtrend and news_score <= -1.5:
+        reasons.append("EMA 역배열 — 단·중·장기 하락 추세 배열")
+        reasons.append(f"부정적 뉴스 감성 ({news_score:+.1f}점) 확인")
+        if h_score <= -1:
+            reasons.append(f"종합 신호 약세 ({h_score:+.1f}점)")
+        return "SELL", "추세 하락과 악재 뉴스가 겹쳤습니다. 비중 축소를 검토하세요.", reasons
+
+    if ema_downtrend and h_score <= -3:
+        reasons.append("EMA 역배열 — 하락 추세 지속")
+        reasons.append(f"강한 하락 신호 ({h_score:+.1f}점)")
+        return "SELL", "강한 하락 추세가 지속 중입니다. 신중한 접근이 필요합니다.", reasons
+
+    # ── BUY 조건 ─────────────────────────────────────────────────────────────
+    if trend_score > 70 and vol_ratio > 1.0 and vwap_above:
+        reasons.append(f"추세 점수 {trend_score:.0f}점 — {'강력한 ' if trend_score > 80 else ''}상승 추세 형성")
+        reasons.append(f"거래량 평균 대비 {vol_ratio:.1f}배 — 충분한 매수 에너지")
+        reasons.append("현재가 월간 VWAP 상단 — 시장 평균가 이상")
+        if news_score >= 1.0:
+            reasons.append(f"긍정적 뉴스 감성 뒷받침 ({news_score:+.1f}점)")
+        action = (
+            f"거래량 평균 {vol_ratio:.1f}배 — 매수 조건이 충족되었습니다."
+            if vol_ratio > 1.5 else "매수 조건이 충족되었습니다. 진입을 검토하세요."
+        )
+        return "BUY", action, reasons
+
+    # ── WAIT 조건 (기본값) ────────────────────────────────────────────────────
+    if trend_score <= 70:
+        reasons.append(f"추세 점수 {trend_score:.0f}점 — 상승 추세 미확인 (기준: 70점)")
+    else:
+        reasons.append("추세 점수 양호하나 추가 조건 미충족")
+    if not vwap_above:
+        reasons.append("현재가 월간 VWAP 하단 — 시장 평균가 미달")
+    if vol_ratio <= 1.0:
+        reasons.append(f"거래량 비율 {vol_ratio:.1f}x — 관심 부족 구간 (기준: 1.0배)")
+
+    if h_score >= 2:
+        action = f"기술 신호 양호({h_score:+.1f}점)하나 매수 조건 미충족 — 돌파 대기 중입니다."
+    elif h_score <= -2:
+        action = "하락 신호 감지. 손절 라인을 재확인하고 신중히 접근하세요."
+    else:
+        action = "지금은 관망 구간입니다. 돌파 신호 확인 후 진입을 검토하세요."
+
+    return "WAIT", action, reasons
+
+
 with tab_chart:
     if not _data_ready:
         st.info("👈 사이드바에서 종목을 선택하고 **분석 시작** 버튼을 눌러주세요.", icon="📊")
@@ -2696,32 +2795,13 @@ with tab_chart:
     with col_sig:
         st.subheader("🎯 AI 매매 신호")
 
-        # tech_score / news_score / hybrid 는 UI 렌더링 전 병렬 연산 단계에서 이미 계산됨
+        # 사전 계산 (아래 섹션에서 재사용)
         h_score = hybrid["hybrid_score"]
         h_label = hybrid["label"]
         h_badge = hybrid["badge"]
-
-        if h_score >= 2:
-            st_bg, st_fc = "#1b3a28", "#a5d6a7"
-        elif h_score <= -2:
-            st_bg, st_fc = "#3a1a1a", "#ef9a9a"
-        else:
-            st_bg, st_fc = "#1e2130", "#bdbdbd"
-
-        # ── 장투 신호 (펀더멘털) ───────────────────────────────────────────────
         fs      = fund_score_data.get("fund_score", 0)
         f_label = fund_score_data.get("fund_label", "N/A")
 
-        if fs >= 3:
-            lt_bg, lt_fc = "#1a2f3a", "#80cbc4"
-        elif fs <= -2:
-            lt_bg, lt_fc = "#3a2a1a", "#ffcc80"
-        else:
-            lt_bg, lt_fc = "#1e2130", "#bdbdbd"
-
-        f_badge = "🏛️"
-
-        # ── 현재가 사전 계산 ────────────────────────────────────────────────────
         _has_price = not close.empty and len(close) >= 2
         if _has_price:
             last_price = float(close.iloc[-1])
@@ -2729,18 +2809,144 @@ with tab_chart:
             daily_chg  = (last_price - prev_price) / prev_price * 100
             _is_krw    = last_price > 500
             _fmt       = "{:,.0f}" if _is_krw else "{:,.2f}"
-            _chg_clr   = "#a5d6a7" if daily_chg >= 0 else "#ef9a9a"
-            _chg_sym   = "▲" if daily_chg >= 0 else "▼"
+        else:
+            last_price, prev_price, daily_chg = 0.0, 0.0, 0.0
+            _is_krw, _fmt = True, "{:,.0f}"
+
+        # ═══════════════════════════════════════════════════════════════════
+        # LAYER 1 — 결론 레이어 (신호등 카드)
+        # ═══════════════════════════════════════════════════════════════════
+        _tl_signal, _tl_action, _tl_reasons = generate_signal(
+            data=data, advanced=advanced, hybrid=hybrid,
+            news_result=news_result, expected=expected, signals=signals,
+        )
+        if _tl_signal == "BUY":
+            _l1_bg, _l1_border, _l1_fc = "#0d2318", "#22c55e", "#4ade80"
+        elif _tl_signal == "SELL":
+            _l1_bg, _l1_border, _l1_fc = "#1f0d0d", "#ef4444", "#f87171"
+        else:
+            _l1_bg, _l1_border, _l1_fc = "#1c1a0a", "#eab308", "#facc15"
+        _l1_emoji = "🟢" if _tl_signal == "BUY" else ("🔴" if _tl_signal == "SELL" else "🟡")
+
+        st.markdown(f"""
+<div style="background:{_l1_bg};border:2px solid {_l1_border};border-radius:16px;
+            padding:20px 18px;text-align:center;margin-bottom:10px;
+            box-shadow:0 0 24px {_l1_border}44;">
+  <div style="font-size:0.7rem;color:#888;letter-spacing:2px;margin-bottom:8px;">AI TRADING SIGNAL</div>
+  <div style="font-size:2.8rem;font-weight:900;color:{_l1_fc};letter-spacing:4px;">{_l1_emoji} {_tl_signal}</div>
+  <div style="font-size:0.88rem;color:{_l1_fc}cc;margin-top:10px;line-height:1.5;">{_tl_action}</div>
+</div>
+        """, unsafe_allow_html=True)
+
+        # Key Metrics — 현재가·목표가·손절가·등락률
+        _sl_data = get_stop_loss_targets(data) if _has_price else None
+        _bt_data = get_buy_target_price(data, mode="classic") if _has_price else None
+        _m1, _m2, _m3, _m4 = st.columns(4)
+        _m1.metric("현재가", _fmt.format(last_price) if _has_price else "—")
+        _m2.metric("목표가", _fmt.format(_bt_data["buy_target"]) if _bt_data else "—")
+        _m3.metric("손절가", _fmt.format(_sl_data["stop_8pct"])  if _sl_data else "—")
+        _m4.metric("등락률", f"{daily_chg:+.2f}%"               if _has_price else "—")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # LAYER 2 — 근거 레이어
+        # ═══════════════════════════════════════════════════════════════════
+        st.markdown("---")
+
+        # Reasoning Box — 신호 근거 TOP 3
+        _sig_icon = _l1_emoji
+        _reason_html = "".join(
+            f'<div style="padding:6px 0;border-bottom:1px solid #1e2130;font-size:0.9rem;color:#ddd;">'
+            f'{_sig_icon} {r}</div>'
+            for r in _tl_reasons[:3]
+        ) or '<div style="color:#555;font-size:0.88rem;">분석 데이터 수집 중...</div>'
+        st.markdown(f"""
+<div style="background:#12161f;border:1px solid {_l1_border}44;border-radius:12px;
+            padding:14px 16px;margin-bottom:14px;">
+  <div style="font-size:0.72rem;color:#888;letter-spacing:1px;margin-bottom:8px;">📋 신호 근거 (TOP 3)</div>
+  {_reason_html}
+</div>
+        """, unsafe_allow_html=True)
+
+        # Scorecard — 추세/탄력/에너지 progress bars
+        _ts = advanced.get("trend_score",    50.0)
+        _ms = advanced.get("momentum_score", 50.0)
+        _vs = advanced.get("volume_score",   50.0)
+
+        def _signal_prog_bar(label, score, icon):
+            _sc = "#4ade80" if score >= 65 else ("#f87171" if score <= 35 else "#facc15")
+            st.markdown(
+                f'<div style="margin-bottom:10px;">'
+                f'<div style="display:flex;justify-content:space-between;font-size:0.88rem;">'
+                f'<span style="color:#aaa;">{icon} {label}</span>'
+                f'<b style="color:{_sc};">{score:.0f}점</b></div>'
+                f'<div style="background:#1e2130;border-radius:4px;height:8px;margin-top:4px;">'
+                f'<div style="background:{_sc};width:{int(score)}%;height:8px;border-radius:4px;"></div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        _signal_prog_bar("추세 (Trend)",    _ts, "📈")
+        _signal_prog_bar("탄력 (Momentum)", _ms, "⚡")
+        _signal_prog_bar("에너지 (Volume)", _vs, "🔋")
+
+        # 수급 요약 (KRX 종목만)
+        _is_kr_sig = _data_ready and (ticker.endswith(".KS") or ticker.endswith(".KQ"))
+        if _is_kr_sig:
+            try:
+                _inv_s = _inv_data(ticker)
+                if _inv_s:
+                    _for_n  = _inv_s.get("외국인",  0) or 0
+                    _inst_n = _inv_s.get("기관합계", 0) or 0
+                    if _for_n > 0 and _inst_n > 0:
+                        _inv_txt, _inv_brd = f"외국인·기관 쌍끌이 매수 중 (외국인 {_for_n:+,} / 기관 {_inst_n:+,}주)", "#22c55e"
+                    elif _for_n < 0 and _inst_n < 0:
+                        _inv_txt, _inv_brd = f"외국인·기관 동반 매도 중 (외국인 {_for_n:+,} / 기관 {_inst_n:+,}주)", "#ef4444"
+                    elif _for_n > 0:
+                        _inv_txt, _inv_brd = f"외국인 단독 순매수 {_for_n:+,}주 (기관 {_inst_n:+,}주)", "#4b9cf5"
+                    elif _inst_n > 0:
+                        _inv_txt, _inv_brd = f"기관 단독 순매수 {_inst_n:+,}주 (외국인 {_for_n:+,}주)", "#4b9cf5"
+                    else:
+                        _inv_txt, _inv_brd = f"외국인·기관 중립 (외국인 {_for_n:+,} / 기관 {_inst_n:+,}주)", "#555"
+                    st.markdown(
+                        f'<div style="background:#1a1d2e;border-radius:8px;padding:10px 14px;'
+                        f'border-left:3px solid {_inv_brd};margin-bottom:6px;">'
+                        f'<div style="font-size:0.72rem;color:#888;margin-bottom:3px;">📊 수급 동향</div>'
+                        f'<div style="font-size:0.9rem;color:#e0e0e0;">{_inv_txt}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            except Exception:
+                pass
+
+        st.markdown("---")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # LAYER 3 — 검증 레이어 (expander)
+        # ═══════════════════════════════════════════════════════════════════
+        # ── 단타/장투 신호 세부 (expander) ──────────────────────────────────
+        with st.expander("⚡ 단타/장투 신호 세부 보기", expanded=False):
+            if h_score >= 2:
+                st_bg, st_fc = "#1b3a28", "#a5d6a7"
+            elif h_score <= -2:
+                st_bg, st_fc = "#3a1a1a", "#ef9a9a"
+            else:
+                st_bg, st_fc = "#1e2130", "#bdbdbd"
+
+            if fs >= 3:
+                lt_bg, lt_fc = "#1a2f3a", "#80cbc4"
+            elif fs <= -2:
+                lt_bg, lt_fc = "#3a2a1a", "#ffcc80"
+            else:
+                lt_bg, lt_fc = "#1e2130", "#bdbdbd"
+
+            _chg_clr = "#a5d6a7" if daily_chg >= 0 else "#ef9a9a"
+            _chg_sym = "▲" if daily_chg >= 0 else "▼"
             _price_inner = (
                 f'<div style="font-size:1.35rem;font-weight:bold;color:#e0e0e0;">{_fmt.format(last_price)}</div>'
                 f'<div style="font-size:1.02rem;font-weight:bold;color:{_chg_clr};margin-top:4px;">{_chg_sym} {abs(daily_chg):.2f}%</div>'
-            )
-        else:
-            _fmt = "{:,.0f}"
-            _price_inner = '<div style="color:#555;font-size:0.9rem;">가격 데이터 없음</div>'
+            ) if _has_price else '<div style="color:#555;font-size:0.9rem;">가격 데이터 없음</div>'
 
-        # ── 단타/장투 신호 + 현재가 (3열, 등높이 그리드) ───────────────────────
-        st.markdown(f"""
+            st.markdown(f"""
 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:stretch;">
   <div class="signal-box" style="background:{st_bg};margin:0;">
     <div style="font-size:0.92rem;color:#888;margin-bottom:5px;letter-spacing:1px;">⚡ 단타 신호</div>
@@ -2749,7 +2955,7 @@ with tab_chart:
   </div>
   <div class="signal-box" style="background:{lt_bg};margin:0;">
     <div style="font-size:0.92rem;color:#888;margin-bottom:5px;letter-spacing:1px;">🏛️ 장투 신호</div>
-    <div style="font-size:1.6rem;font-weight:bold;color:{lt_fc};">{f_badge} {f_label}</div>
+    <div style="font-size:1.6rem;font-weight:bold;color:{lt_fc};">🏛️ {f_label}</div>
     <div style="font-size:1.02rem;color:#aaa;margin-top:5px;">점수: <b style="color:{lt_fc};">{fs:+.1f}</b></div>
   </div>
   <div style="background:{st_bg};border-radius:8px;padding:10px 12px;border:1px solid #2a2d3e;">
@@ -2757,12 +2963,10 @@ with tab_chart:
     {_price_inner}
   </div>
 </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-        # ── 단타 신호 판정 기준 ─────────────────────────────────────────────────
-        with st.expander("⚡ 단타 신호 판정 기준 보기", expanded=False):
             st.markdown("""
-<div style="font-size:0.82rem;line-height:1.9;">
+<div style="font-size:0.82rem;line-height:1.9;margin-top:12px;">
 
 | 신호 | 점수 범위 | 의미 |
 |------|-----------|------|
@@ -2780,12 +2984,11 @@ with tab_chart:
 </div>
             """, unsafe_allow_html=True)
 
-        # ── 점수 구성 미니 테이블 ───────────────────────────────────────────────
-        tc = "#a5d6a7" if tech_score >= 0 else "#ef9a9a"
-        nc = "#a5d6a7" if news_score >= 0 else "#ef9a9a"
-        fc_color = lt_fc
-        st.markdown(f"""
-<div style="background:#1e2130;border-radius:8px;padding:8px 14px;margin-top:4px;">
+            tc = "#a5d6a7" if tech_score >= 0 else "#ef9a9a"
+            nc = "#a5d6a7" if news_score >= 0 else "#ef9a9a"
+            fc_color = lt_fc
+            st.markdown(f"""
+<div style="background:#1e2130;border-radius:8px;padding:8px 14px;margin-top:10px;">
   <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:4px;align-items:start;">
     <div>
       <div style="color:#666;font-size:0.85rem;margin-bottom:4px;">⚡ 단타 구성</div>
@@ -2800,7 +3003,7 @@ with tab_chart:
     </div>
   </div>
 </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
         # ── 매수 적정가 모드 선택 ────────────────────────────────────────────────
         _mode_map = {
@@ -3070,7 +3273,7 @@ with tab_chart:
             )
 
         # ── 종합 판단 스코어보드 ─────────────────────────────────────────────
-        with st.expander("📊 종합 판단 스코어보드", expanded=True):
+        with st.expander("📊 종합 판단 스코어보드", expanded=False):
             ts = advanced.get("trend_score",    50.0)
             ms = advanced.get("momentum_score", 50.0)
             vs = advanced.get("volume_score",   50.0)
