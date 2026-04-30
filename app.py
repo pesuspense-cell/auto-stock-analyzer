@@ -1553,9 +1553,11 @@ with tab_news:
         else:
             # ── 이벤트 대기 배너 ─────────────────────────────────────────────
             event_flags = sent.get("event_flags", [])
-            if event_flags:
+            # dict 형식 이벤트만 배너에 표시 (문자열 플래그 "수급_미동반" 등 제외)
+            _dict_flags = [e for e in event_flags if isinstance(e, dict)]
+            if _dict_flags:
                 _ev_labels = "·".join(
-                    "·".join(e.get("event_kw", [])[:2]) for e in event_flags[:3]
+                    "·".join(e.get("event_kw", [])[:2]) for e in _dict_flags[:3]
                 )
                 st.markdown(
                     f'<div style="background:#4a148c;border:1px solid #ce93d8;border-radius:8px;'
