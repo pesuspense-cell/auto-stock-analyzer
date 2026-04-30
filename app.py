@@ -347,7 +347,13 @@ def _news_sentiment_kw(ticker: str, company_name: str = "") -> dict:
     return analyze_news_sentiment_keywords(news, ticker, company_name)
 
 def _news_sentiment_llm_cached(
-    ticker: str, api_key: str, groq_api_key: str = "", company_name: str = ""
+    ticker: str,
+    api_key: str,
+    groq_api_key: str = "",
+    company_name: str = "",
+    price_change_pct: float | None = None,
+    net_foreign_buy: float | None = None,
+    net_institution_buy: float | None = None,
 ) -> dict:
     """
     LLM 뉴스 분석 — API 키가 세션마다 다를 수 있어 session_state 캐시 사용.
@@ -370,6 +376,9 @@ def _news_sentiment_llm_cached(
         groq_api_key=groq_api_key,
         max_news=12,
         deep_n=5,
+        price_change_pct=price_change_pct,
+        net_foreign_buy=net_foreign_buy,
+        net_institution_buy=net_institution_buy,
     )
 
     # analyze_news_fast가 뉴스를 못 가져온 경우 yfinance 뉴스로 폴백
@@ -1513,7 +1522,19 @@ with tab_news:
                 # ETF 전용 섹터 키워드 기반 감성 분석 (_etf_fund_data는 위 수집 단계에서 이미 로드됨)
                 sent = analyze_etf_news_sentiment(ticker, _etf_fund_data, raw_news)
             elif use_llm:
-                sent = _news_sentiment_llm_cached(ticker, gemini_api_key, groq_api_key, _cname)
+                # 등락률: data가 로드된 상태면 추가 비용 없이 계산
+                _pct: float | None = None
+                try:
+                    if _data_ready and len(data["Close"]) >= 2:
+                        _pct = float(
+                            (data["Close"].iloc[-1] / data["Close"].iloc[-2] - 1) * 100
+                        )
+                except Exception:
+                    pass
+                sent = _news_sentiment_llm_cached(
+                    ticker, gemini_api_key, groq_api_key, _cname,
+                    price_change_pct=_pct,
+                )
             else:
                 sent = _news_sentiment_kw(ticker, _cname)
 
