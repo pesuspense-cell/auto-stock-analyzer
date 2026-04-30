@@ -2843,7 +2843,7 @@ with tab_chart:
         _bt_data = get_buy_target_price(data, mode="classic") if _has_price else None
         _m1, _m2, _m3, _m4 = st.columns(4)
         _m1.metric("현재가", _fmt.format(last_price) if _has_price else "—")
-        _m2.metric("목표가", _fmt.format(_bt_data["buy_target"]) if _bt_data else "—")
+        _m2.metric("추천 매수가", _fmt.format(_bt_data["buy_target"]) if _bt_data else "—")
         _m3.metric("손절가", _fmt.format(_sl_data["stop_8pct"])  if _sl_data else "—")
         _m4.metric("등락률", f"{daily_chg:+.2f}%"               if _has_price else "—")
 
