@@ -87,6 +87,50 @@ _NEG_COMPOUND_RE = re.compile(
 )
 
 
+# 수주/계약 키워드 — DART 교차 검증 대상
+_CONTRACT_KW: list[str] = ["수주", "계약"]
+
+
+# ─── DART 공시 교차 검증 ──────────────────────────────────────────────────────
+def _check_dart_contract_disclosure(ticker: str, dart_api_key: str) -> bool:
+    """최근 30일 DART 공시에서 수주/계약 관련 공시가 있으면 True.
+
+    OpenDartReader 미설치 또는 API 오류 시 False 반환 (분석 계속 진행).
+    """
+    if not dart_api_key:
+        return False
+    try:
+        import OpenDartReader  # type: ignore
+
+        code = ticker.split(".")[0]
+        dart = OpenDartReader.OpenDartReader(dart_api_key)
+
+        end_dt   = time.strftime("%Y%m%d")
+        # timedelta 계산은 datetime 객체 필요
+        import datetime as _dt
+        start_dt = (_dt.date.today() - _dt.timedelta(days=30)).strftime("%Y%m%d")
+
+        # stock_code → DART corp_code 변환
+        corp_df = dart.corp_codes
+        rows = corp_df[corp_df["stock_code"] == code]
+        if rows.empty:
+            return False
+        corp_code = rows.iloc[0]["corp_code"]
+
+        disc = dart.list(corp_code, start=start_dt, end=end_dt)
+        if disc is None or (hasattr(disc, "empty") and disc.empty):
+            return False
+
+        title_col = "report_nm" if "report_nm" in disc.columns else "title"
+        return any(
+            any(kw in str(t) for kw in _CONTRACT_KW)
+            for t in disc[title_col]
+        )
+    except Exception as exc:
+        logger.debug("DART 공시 조회 실패 [%s]: %s", ticker, exc)
+        return False
+
+
 # ─── Streamlit 호환 비동기 실행기 ─────────────────────────────────────────────
 def run_async(coro) -> Any:
     """
@@ -106,12 +150,27 @@ async def _fetch_one(
     code: str,
     max_items: int,
 ) -> list[dict]:
-    """단일 종목 코드 → 네이버 금융 뉴스 비동기 스크래핑."""
+    """단일 종목 코드 → 네이버 금융 뉴스 비동기 스크래핑. 403/타임아웃 시 최대 2회 재시도."""
     url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
-    try:
-        resp = await client.get(url, timeout=8.0)
+    for attempt in range(3):  # 최초 1회 + 재시도 2회
+        try:
+            resp = await client.get(url, timeout=8.0)
+        except Exception as exc:
+            # httpx.TimeoutException 계열 이름 감지
+            if "Timeout" in type(exc).__name__ and attempt < 2:
+                logger.warning("타임아웃 [%s] — %d회 재시도", code, attempt + 1)
+                await asyncio.sleep(1)
+                continue
+            logger.warning("크롤링 실패 [%s]: %s", code, exc)
+            return []
+
+        if resp.status_code == 403 and attempt < 2:
+            logger.warning("403 차단 [%s] — %d회 재시도", code, attempt + 1)
+            await asyncio.sleep(1)
+            continue
         if resp.status_code != 200:
             return []
+
         html = resp.content.decode("euc-kr", errors="replace")
         soup = BeautifulSoup(html, "html.parser")
 
@@ -134,9 +193,9 @@ async def _fetch_one(
             if len(items) >= max_items:
                 break
         return items
-    except Exception as exc:
-        logger.warning("크롤링 실패 [%s]: %s", code, exc)
-        return []
+
+    logger.warning("크롤링 최종 실패 [%s]: 최대 재시도 초과", code)
+    return []
 
 
 async def async_fetch_multi_news(
@@ -165,7 +224,11 @@ async def async_fetch_multi_news(
     if not code_map:
         return {t: [] for t in tickers}
 
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        headers=_HEADERS,
+        follow_redirects=True,
+        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+    ) as client:
         aws = [_fetch_one(client, code, max_items) for code in code_map.values()]
         raw_results = await asyncio.gather(*aws, return_exceptions=True)
 
@@ -332,9 +395,10 @@ def stage2_keyword_filter(
 def stage3_select_for_deep(candidates: list[dict], n: int = 5) -> list[dict]:
     """
     3단계: LLM 정밀 분석에 보낼 상위 N개 선택.
-    현재는 최신순(원본 순서) 상위 N개 — 추후 A/B 등급 우선 정렬 가능.
+    _title_weight 점수가 높은 순(종목명+핵심KW > 종목명만 > 간접 언급)으로 정렬하여
+    LLM 비용을 가장 신뢰도 높은 뉴스에 집중한다.
     """
-    return candidates[:n]
+    return sorted(candidates, key=lambda x: x.get("_title_weight", 1.0), reverse=True)[:n]
 
 
 # ─── 전체 최적화 뉴스 분석 파이프라인 ────────────────────────────────────────
@@ -343,6 +407,7 @@ def analyze_news_fast(
     company_name: str = "",
     api_key: str = "",
     groq_api_key: str = "",
+    dart_api_key: str = "",
     news_items: list[dict] | None = None,
     max_news: int = 12,
     deep_n: int = 5,
@@ -412,6 +477,29 @@ def analyze_news_fast(
         "Step3 키워드필터: %.3fs — LLM대상=%d건, 즉시처리=%d건",
         time.perf_counter() - t0, len(deep_candidates), len(pre_scored),
     )
+
+    # ── Step 3.5: DART 공시 교차 검증 ───────────────────────────────────────
+    # pre_scored 중 수주/계약 키워드 뉴스가 있고 dart_api_key가 제공된 경우에만 실행
+    if dart_api_key and pre_scored and any(
+        any(kw in item.get("title", "") for kw in _CONTRACT_KW)
+        for item in pre_scored
+    ):
+        t0 = time.perf_counter()
+        dart_confirmed = _check_dart_contract_disclosure(ticker, dart_api_key)
+        logger.info(
+            "Step3.5 DART교차검증: %.2fs — %s",
+            time.perf_counter() - t0,
+            "공시 확인됨 (+1.0)" if dart_confirmed else "공시 없음",
+        )
+        if dart_confirmed:
+            boosted: list[dict] = []
+            for item in pre_scored:
+                if any(kw in item.get("title", "") for kw in _CONTRACT_KW):
+                    item = dict(item)
+                    item["_fast_score"]  = round(item.get("_fast_score", 0.0) + 1.0, 2)
+                    item["_fast_reason"] = item.get("_fast_reason", "") + " +DART공시확인(+1.0)"
+                boosted.append(item)
+            pre_scored = boosted
 
     # ── Step 4: 3단계 정밀 분석 (상위 deep_n건만 LLM 호출) ──────────────────
     t0 = time.perf_counter()
