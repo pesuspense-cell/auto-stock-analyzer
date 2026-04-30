@@ -1271,12 +1271,14 @@ with tab_rec:
             "분석 시장",
             ["KOSPI", "KOSDAQ", "미국 주식 (S&P500)", "미국 주식 (나스닥)"],
             horizontal=True,
+            key="rec_market_radio",
         )
     with col_b:
         rec_n = st.select_slider(
             "분석 종목 수",
             options=list(range(10, 510, 10)),
             value=50,
+            key="rec_n_slider",
             help=(
                 "시가총액 상위 N개 종목을 분석합니다.\n\n"
                 "• 20~50개: 약 30~60초\n"
@@ -1287,8 +1289,14 @@ with tab_rec:
     with col_c:
         run_btn = st.button("🔄 분석 실행", type="primary", use_container_width=True)
 
+    # 슬라이더·라디오 변경으로 인한 rerun에서 분석이 실행되지 않도록
+    # 버튼 클릭 시에만 session_state 플래그를 세운다.
     if run_btn:
-        spinner_msg  = f"AI가 {rec_market} 상위 {rec_n}개 종목 분석 중... (종목 수에 따라 수 분 소요)"
+        st.session_state["_rec_run_requested"] = True
+
+    if st.session_state.get("_rec_run_requested"):
+        st.session_state["_rec_run_requested"] = False
+        spinner_msg = f"AI가 {rec_market} 상위 {rec_n}개 종목 분석 중... (종목 수에 따라 수 분 소요)"
         with st.spinner(spinner_msg):
             _recs.clear()
             rec_df = _recs(rec_market, rec_n)
