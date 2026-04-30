@@ -689,19 +689,29 @@ def check_dead_time(ticker: str, days: int = 14) -> dict:
     """
     최근 N일간 변동성·거래량으로 '지지부진 구간(Dead Time)' 여부 판단.
 
-    조건 (AND):
-      • 14일 일간 수익률 표준편차 < 5%
-      • 14일 평균 거래량 < 이전 60일 평균 거래량의 70%
+    조건:
+      is_dead  (AND):
+        • 14일 일간 수익률 표준편차 < 5%
+        • 14일 평균 거래량 < 이전 60일 평균 거래량의 70%
+      buy_hold (OR, 독립):
+        • 14일 평균 거래량 ≤ 이전 60일 평균 거래량의 80%
+        → 매수 권장 유보 플래그 (유동성 부족 시 체결 슬리피지 위험)
     """
     try:
         raw = yf.download(ticker, period="3mo", auto_adjust=True, progress=False)
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.droplevel(1)
     except Exception:
-        return {"is_dead": False, "volatility_14d": 0.0, "vol_ratio": 1.0, "message": ""}
+        return {
+            "is_dead": False, "buy_hold": False,
+            "volatility_14d": 0.0, "vol_ratio": 1.0, "message": "",
+        }
 
     if raw.empty or len(raw) < days + 5:
-        return {"is_dead": False, "volatility_14d": 0.0, "vol_ratio": 1.0, "message": ""}
+        return {
+            "is_dead": False, "buy_hold": False,
+            "volatility_14d": 0.0, "vol_ratio": 1.0, "message": "",
+        }
 
     close  = raw["Close"]
     volume = raw["Volume"]
@@ -717,22 +727,27 @@ def check_dead_time(ticker: str, days: int = 14) -> dict:
     )
     vol_ratio = avg_vol_14d / max(avg_vol_ref, 1)
 
-    is_dead = (volatility_14d < 5.0) and (vol_ratio < 0.70)
+    is_dead  = (volatility_14d < 5.0) and (vol_ratio < 0.70)
+    buy_hold = vol_ratio <= 0.80   # 매수 권장 유보: 거래량이 평균의 80% 이하
 
     if is_dead:
         msg = (
             f"⏳ 지지부진 구간: 자금 고착 주의 "
             f"(14일 변동성 {volatility_14d:.1f}% / 거래량 {vol_ratio*100:.0f}% 수준)"
         )
+    elif buy_hold:
+        msg = (
+            f"⚠️ 거래량 부족 — 매수 유보 권장 "
+            f"(최근 {days}일 거래량이 기준 대비 {vol_ratio*100:.0f}% 수준, 80% 미달)"
+        )
     elif volatility_14d < 5.0:
         msg = f"📉 저변동성 구간 (변동성 {volatility_14d:.1f}%) — 거래량 보통 수준"
-    elif vol_ratio < 0.70:
-        msg = f"📊 거래량 감소 구간 (대비 {vol_ratio*100:.0f}%) — 변동성 보통 수준"
     else:
         msg = f"✅ 정상 거래 구간 (변동성 {volatility_14d:.1f}% / 거래량 {vol_ratio*100:.0f}%)"
 
     return {
         "is_dead":        is_dead,
+        "buy_hold":       buy_hold,
         "volatility_14d": round(volatility_14d, 2),
         "avg_vol_14d":    int(avg_vol_14d),
         "avg_vol_ref":    int(avg_vol_ref),
@@ -1231,6 +1246,19 @@ def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
             comp_label = hybrid["label"]
             comp_badge = hybrid["badge"]
 
+            # ── 샤프 가드: 예상수익률 ≥50% 이지만 샤프지수 < 0.5 → '주의' 강제 ──
+            # 고수익 기대치가 위험 조정 후 실질 매력이 없는 종목을 걸러냄
+            sharpe_warn = False
+            if ret_pct >= 50.0 and sharpe < 0.5:
+                comp_label = "주의"
+                comp_badge = "🟡"
+                sharpe_warn = True
+
+            # ── Dead-time 거래량 체크 (매수 유보) ────────────────────────────
+            dt = check_dead_time(ticker)
+            buy_hold_flag = dt.get("buy_hold", False)
+            vol_ratio_val = dt.get("vol_ratio", 1.0)
+
             rows.append({
                 "종목명":         name,
                 "티커":           ticker,
@@ -1244,6 +1272,9 @@ def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
                 "변동성(%)":      round(float(exp.get("hist_volatility", 0)), 1),
                 "모멘텀(20일)%":  round(float(exp.get("momentum_20d", 0)), 2),
                 "샤프지수":       round(sharpe, 2),
+                "샤프경고":       sharpe_warn,
+                "거래량비율(%)":  round(vol_ratio_val * 100, 1),
+                "매수유보":       buy_hold_flag,
             })
         except Exception:
             continue
@@ -4154,14 +4185,19 @@ def get_investment_recommendation(
     tech_score: float,
     news_score: float,
     fund_score: float,
+    dead_time: dict | None = None,
 ) -> dict:
     """
     평단가 기반 개인화 매매 추천.
 
-    우선순위: 손절 > 익절 > 추가매수 > 보유 > 관망
+    우선순위: 손절 > 익절 > 매수유보(dead_time) > 추가매수 > 보유 > 관망
+
+    dead_time (check_dead_time 결과):
+      buy_hold=True  → 매수 계열 액션을 '매수 유보'로 전환
+                       (거래량이 기준 대비 80% 이하 — 슬리피지·유동성 위험)
 
     반환: {
-      "action":     str,   # "손절검토" | "익절" | "추가매수" | "보유" | "관망"
+      "action":     str,   # "손절검토" | "익절" | "매수유보" | "추가매수" | "보유" | "관망"
       "badge":      str,
       "title":      str,
       "color_bg":   str,
@@ -4243,6 +4279,32 @@ def get_investment_recommendation(
                 f"MACD 히스토그램 음전환 ({macd_hist:+.4f})",
                 f"RSI {rsi:.0f}",
                 "💡 부분 익절 또는 손절선 상향 조정 고려",
+            ],
+        }
+
+    # ── 매수 유보 가드 (dead_time: 거래량 80% 이하) ──────────────────────────
+    # 손절·익절 이후 단계에서만 적용 — 이미 보유 중인 포지션 청산은 차단하지 않음
+    _dt        = dead_time or {}
+    _buy_hold  = _dt.get("buy_hold", False)
+    _vol_ratio = _dt.get("vol_ratio", 1.0)
+    if _buy_hold:
+        return {
+            "action":     "매수유보",
+            "badge":      "⏸️",
+            "title":      "매수 권장 유보",
+            "color_bg":   "#1e1e12",
+            "color_fg":   "#fff176",
+            "profit_rate": profit_rate,
+            "reason": (
+                f"최근 거래량이 기준 대비 {_vol_ratio*100:.0f}% 수준 (80% 미달) — "
+                "유동성 부족으로 매수 시 슬리피지 위험 높음"
+            ),
+            "details": [
+                f"거래량 비율: 최근 14일 평균이 기준(60일) 대비 {_vol_ratio*100:.0f}%",
+                "거래량이 회복될 때까지 신규 매수는 유보 권장",
+                "기존 보유 포지션은 그대로 유지",
+                f"기술 신호 {tech_score:+.1f}점 / RSI {rsi:.0f} (참고용)",
+                "💡 거래량이 기준 대비 80% 이상 회복 후 재진입 검토",
             ],
         }
 

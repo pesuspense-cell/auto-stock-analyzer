@@ -979,6 +979,13 @@ if _data_ready:
     tech_score = signals.get("score", 0)
     hybrid     = get_hybrid_signal(tech_score, news_score)
     dead_time  = _dead_time(_aticker)
+
+    # ── 샤프 가드: 예상수익률 ≥50% 이지만 샤프지수 < 0.5 → 신호 레이블 '주의' 강제 ──
+    if expected:
+        _exp_ret = expected.get("expected_return_pct", 0.0)
+        _sharpe  = expected.get("sharpe", 1.0)
+        if _exp_ret >= 50.0 and _sharpe < 0.5:
+            hybrid = {**hybrid, "label": "주의", "badge": "🟡"}
     breakout   = check_breakout_signal(data)
     risk_adj   = adjust_risk_conservative(expected) if expected else {}
     _total_elapsed = int(time.time() - _load_start)
@@ -3303,6 +3310,7 @@ with tab_chart:
                     tech_score    = tech_score,
                     news_score    = news_score,
                     fund_score    = fs,
+                    dead_time     = dead_time,
                 )
                 st.session_state[f"rec_{ticker}"] = rec
 
