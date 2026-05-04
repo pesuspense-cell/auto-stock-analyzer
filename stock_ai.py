@@ -3420,7 +3420,7 @@ def analyze_news_sentiment_llm(
             from langchain_google_genai import ChatGoogleGenerativeAI
             from langchain_core.messages import HumanMessage
             llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 google_api_key=api_key,
                 temperature=0.0,
             )
@@ -3608,9 +3608,10 @@ def summarize_article_llm(
     link: str,
     ticker: str,
     api_key: str,
+    groq_api_key: str = "",
 ) -> dict:
     """
-    단일 기사를 Gemini AI로 요약.
+    단일 기사를 Gemini AI로 요약. Gemini 쿼터 초과 시 Groq으로 폴백.
     반환: {
         "summary": str,          # 핵심 내용 3~5문장
         "sentiment": str,        # 긍정/중립/부정
@@ -3629,9 +3630,6 @@ def summarize_article_llm(
         }
 
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_core.messages import HumanMessage
-
         # 기사 본문 스크래핑 시도
         body = fetch_article_content(link)
         used_content = bool(body)
@@ -3640,12 +3638,6 @@ def summarize_article_llm(
             article_text = f"기사 제목: {title}\n\n기사 본문:\n{body}"
         else:
             article_text = f"기사 제목: {title}\n\n(본문 스크래핑 불가 — 제목만으로 분석합니다)"
-
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
-            google_api_key=api_key,
-            temperature=0.1,
-        )
 
         prompt = f"""다음 뉴스 기사를 분석해 주세요. 분석 대상 종목: {ticker}
 
@@ -3660,8 +3652,42 @@ def summarize_article_llm(
   "investment_implication": "<투자자 관점 시사점 1~2문장>"
 }}"""
 
-        response = llm.invoke([HumanMessage(content=prompt)])
-        raw = response.content.strip()
+        # ── 1순위: Gemini ──────────────────────────────────────────────────────
+        raw = None
+        _provider = "Gemini"
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            from langchain_core.messages import HumanMessage
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-1.5-flash",
+                google_api_key=api_key,
+                temperature=0.1,
+            )
+            raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+        except Exception as _gemini_exc:
+            _msg = str(_gemini_exc)
+            _is_quota = (
+                "429" in _msg
+                or "quota" in _msg.lower()
+                or "ResourceExhausted" in type(_gemini_exc).__name__
+            )
+            # ── 2순위: Groq (쿼터 초과이고 Groq 키가 있을 때만) ────────────
+            if _is_quota and groq_api_key:
+                try:
+                    from groq import Groq as _Groq
+                    _client = _Groq(api_key=groq_api_key)
+                    _resp = _client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.1,
+                        max_tokens=512,
+                    )
+                    raw = _resp.choices[0].message.content.strip()
+                    _provider = "Groq"
+                except Exception:
+                    raise _gemini_exc
+            else:
+                raise
 
         import json as _json, re as _re
         match = _re.search(r'\{[\s\S]*\}', raw)
@@ -3669,8 +3695,12 @@ def summarize_article_llm(
             raise ValueError("JSON not found in response")
         parsed, _ = _json.JSONDecoder().raw_decode(match.group().strip())
 
+        summary = parsed.get("summary", "요약 없음")
+        if _provider != "Gemini":
+            summary = f"[{_provider}] {summary}"
+
         return {
-            "summary":                parsed.get("summary", "요약 없음"),
+            "summary":                summary,
             "sentiment":              parsed.get("sentiment", "중립"),
             "score":                  float(parsed.get("score", 0.0)),
             "key_points":             parsed.get("key_points", []),

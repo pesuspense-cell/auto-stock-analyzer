@@ -1061,7 +1061,7 @@ if st.session_state.watchlist:
 
 # ─── 기사 AI 요약 모달 ───────────────────────────────────────────────────────
 @st.dialog("📰 기사 AI 요약", width="large")
-def _article_dialog(title: str, link: str, ticker_sym: str, api_key: str) -> None:
+def _article_dialog(title: str, link: str, ticker_sym: str, api_key: str, groq_key: str = "") -> None:
     """뉴스 기사 클릭 시 팝업되는 AI 요약 모달"""
     # 제목 + 원문 링크
     st.markdown(f"### {title}")
@@ -1077,7 +1077,7 @@ def _article_dialog(title: str, link: str, ticker_sym: str, api_key: str) -> Non
         return
 
     with st.spinner("AI가 기사를 분석 중입니다..."):
-        result = summarize_article_llm(title, link, ticker_sym, api_key)
+        result = summarize_article_llm(title, link, ticker_sym, api_key, groq_key)
 
     # 감성 배지
     senti = result.get("sentiment", "N/A")
@@ -1688,7 +1688,7 @@ with tab_news:
                         help="AI가 이 기사를 요약합니다",
                         use_container_width=True,
                     ):
-                        _article_dialog(title, link, ticker, gemini_api_key)
+                        _article_dialog(title, link, ticker, gemini_api_key, groq_api_key)
                 st.divider()
 
             detail_map  = {d["title"]: d for d in sent.get("detail", [])}

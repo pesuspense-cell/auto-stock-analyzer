@@ -250,9 +250,16 @@ def _build_report(
 
 # ── 인증 확인 ────────────────────────────────────────────────────────────────
 def _is_allowed(update: Update) -> bool:
+    chat = update.effective_chat
     if not ALLOWED_CHAT:
         return True
-    return str(update.effective_chat.id) == ALLOWED_CHAT
+    allowed = str(chat.id) == ALLOWED_CHAT
+    if not allowed:
+        logger.warning(
+            f"미허가 접근 차단 — chat_id={chat.id}  "
+            f"username=@{chat.username or '?'}  name={chat.first_name or ''}"
+        )
+    return allowed
 
 
 # ── 명령어 파싱 (한국어/영어 혼용) ───────────────────────────────────────────
