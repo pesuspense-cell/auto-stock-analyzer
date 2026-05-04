@@ -24,3 +24,16 @@ settings.json
 # OS
 .DS_Store
 Thumbs.db
+
+# 환경 변수 (자격증명 포함 — 절대 커밋 금지)
+.env
+
+# 로컬 DB 캐시
+*.db
+
+# Redis 포터블 바이너리
+redis/
+
+# Claude 내부 파일
+.claude/
+settings.json.migrated

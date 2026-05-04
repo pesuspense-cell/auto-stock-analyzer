@@ -24,3 +24,11 @@ youtube-transcript-api>=0.6.0
 langchain-core>=0.3.0,<0.4.0
 langchain-google-genai>=2.0.0,<3.0.0
 groq>=0.9.0
+
+# ── Real-time Event-Driven Architecture ────────────────────────────────────
+redis[asyncio]>=5.0.0
+aiohttp>=3.9.0
+websockets>=12.0
+
+# ── Async/Concurrency ──────────────────────────────────────────────────────
+python-dotenv>=1.0.0

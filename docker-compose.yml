@@ -1,0 +1,127 @@
+version: '3.9'
+
+services:
+  # ─── Redis (메시지 브로커) ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: stock_analyzer_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - stock_network
+    environment:
+      - REDIS_PASSWORD=
+
+  # ─── Data Ingestor (Producer) ────────────────────────────────────────────
+  data_ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestor
+    container_name: stock_data_ingestor
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - stock_network
+    # 시뮬레이션 모드로 실행 (실제 WebSocket 구현 시 변경)
+    command: python data_ingestor.py
+
+  # ─── Analysis Worker (Consumer) ────────────────────────────────────────────
+  analysis_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: stock_analysis_worker
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - stock_network
+    command: python analysis_worker.py
+
+  # ─── Redis Commander (모니터링 UI) ────────────────────────────────────────
+  redis_commander:
+    image: rediscommander/redis-commander:latest
+    container_name: stock_redis_commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - stock_network
+
+volumes:
+  redis_data:
+
+networks:
+  stock_network:
+    driver: bridge
+
+# ─── 실행 방법 ────────────────────────────────────────────────────────────
+# 
+# 1. 환경 변수 설정 (.env 파일 또는 export):
+#    export TELEGRAM_BOT_TOKEN="your_bot_token"
+#    export TELEGRAM_CHAT_ID="your_chat_id"
+#
+# 2. 모든 서비스 시작:
+#    docker-compose up -d
+#
+# 3. 로그 확인:
+#    docker-compose logs -f data_ingestor
+#    docker-compose logs -f analysis_worker
+#
+# 4. Redis 모니터링 (웹 UI):
+#    http://localhost:8081
+#
+# 5. 개별 서비스 중지:
+#    docker-compose stop analysis_worker
+#    docker-compose stop data_ingestor
+#
+# 6. 모든 서비스 중지 및 삭제:
+#    docker-compose down
+#    docker-compose down -v  # 볼륨 포함 삭제
+#
+# ─── 트러블슈팅 ────────────────────────────────────────────────────────────
+#
+# Q: Redis 연결 오류
+# A: docker-compose ps로 redis 컨테이너 실행 상태 확인
+#    docker-compose logs redis
+#
+# Q: 메시지가 도착하지 않음
+# A: docker-compose logs data_ingestor
+#    docker-compose logs analysis_worker
+#    Redis Commander (http://localhost:8081)에서 채널 구독 상태 확인
+#
+# Q: Telegram 알림이 오지 않음
+# A: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID 설정 확인
+#    docker-compose logs analysis_worker | grep Telegram
