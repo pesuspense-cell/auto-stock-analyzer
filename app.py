@@ -631,7 +631,7 @@ with st.sidebar:
     _krx_ok = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
     st.caption("📊 KRX:   " + ("🟢 자동 로그인 활성" if _krx_ok else "⚪ 인증 미설정"))
 
-    use_llm = bool(gemini_api_key)
+    use_llm = bool(gemini_api_key or groq_api_key)
 
     # ── API 키 설정 폼 (미설정 키 있으면 자동 펼침) ────────────────────────
     _cur_gemini = st.session_state.get("gemini_api_key", "")
@@ -1615,7 +1615,12 @@ with tab_news:
                     f'<span style="font-size:0.82rem;color:#bdbdbd;margin-left:4px;">'
                     f'(종목 {s_indiv:+.1f})</span>'
                 )
-            llm_badge = "&nbsp;|&nbsp; 🤖 Gemini AI 분석" if use_llm else "&nbsp;|&nbsp; 🔑 키워드 분석"
+            if gemini_api_key:
+                llm_badge = "&nbsp;|&nbsp; 🤖 Gemini AI 분석"
+            elif groq_api_key:
+                llm_badge = "&nbsp;|&nbsp; 🦙 Groq AI 분석"
+            else:
+                llm_badge = "&nbsp;|&nbsp; 🔑 키워드 분석"
             summary_html = f'<div style="font-size:0.88rem;color:#ccc;margin-top:6px;">{s_summary}</div>' if s_summary else ""
 
             st.markdown(
