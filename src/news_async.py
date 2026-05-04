@@ -803,7 +803,7 @@ def analyze_news_fast(
     t0 = time.perf_counter()
     top_for_deep = stage3_select_for_deep(deep_candidates, n=deep_n)
 
-    if api_key and top_for_deep:
+    if (api_key or groq_api_key) and top_for_deep:
         deep_result = analyze_news_sentiment_llm(
             top_for_deep, ticker, api_key, groq_api_key, company_name
         )

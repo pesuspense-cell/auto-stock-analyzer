@@ -3347,6 +3347,29 @@ def analyze_news_sentiment_keywords(
     }
 
 
+def _call_groq_api(prompt: str, groq_api_key: str, max_tokens: int = 512) -> str:
+    """Groq API 호출 헬퍼. 성공 시 raw 문자열 반환, 실패 시 예외 전파."""
+    from groq import Groq as _Groq
+    client = _Groq(api_key=groq_api_key)
+    resp = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """Gemini 쿼터/속도 초과 에러 여부 판별."""
+    msg = str(exc)
+    return (
+        "429" in msg
+        or "quota" in msg.lower()
+        or "ResourceExhausted" in type(exc).__name__
+    )
+
+
 def analyze_news_sentiment_llm(
     news_items: list[dict],
     ticker: str,
@@ -3356,6 +3379,7 @@ def analyze_news_sentiment_llm(
 ) -> dict:
     """
     뉴스 감성 분석: 1순위 Gemini → 2순위 Groq(쿼터 초과 시) → 3순위 키워드 분석.
+    - api_key(Gemini)와 groq_api_key 모두 없을 때만 키워드 분석으로 즉시 폴백
     - [선 필터링] 종목명 미포함·노이즈 과다 뉴스 사전 제거
     - [캐싱] 제목 해시 기반 1시간 인메모리 캐시 (중복 API 호출 제거)
     - 중복 제거 → 상위 10개 배치 처리 → API 1회 호출로 0~100 투자 심리 지수 도출
@@ -3364,7 +3388,7 @@ def analyze_news_sentiment_llm(
               "summary": str, "individual_score": float, "sector_score": float,
               "event_flags": list[dict]}
     """
-    if not api_key or not news_items:
+    if (not api_key and not groq_api_key) or not news_items:
         return analyze_news_sentiment_keywords(news_items, ticker, company_name)
 
     # ── 캐시 확인 ────────────────────────────────────────────────────────────
@@ -3416,39 +3440,34 @@ def analyze_news_sentiment_llm(
         # ── 1순위: Gemini ──────────────────────────────────────────────────────
         raw = None
         _provider = "Gemini"
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            from langchain_core.messages import HumanMessage
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
-                google_api_key=api_key,
-                temperature=0.0,
-            )
-            raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
-        except Exception as _gemini_exc:
-            _msg = str(_gemini_exc)
-            _is_quota = (
-                "429" in _msg
-                or "quota" in _msg.lower()
-                or "ResourceExhausted" in type(_gemini_exc).__name__
-            )
-            # ── 2순위: Groq (쿼터 초과이고 Groq 키가 있을 때만) ────────────
-            if _is_quota and groq_api_key:
-                try:
-                    from groq import Groq as _Groq
-                    _client = _Groq(api_key=groq_api_key)
-                    _resp = _client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.0,
-                        max_tokens=512,
-                    )
-                    raw = _resp.choices[0].message.content.strip()
-                    _provider = "Groq"
-                except Exception:
-                    raise _gemini_exc  # Groq도 실패하면 원래 Gemini 에러로 폴백
-            else:
-                raise
+        if api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                from langchain_core.messages import HumanMessage
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash",
+                    google_api_key=api_key,
+                    temperature=0.0,
+                )
+                raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+            except Exception as _gemini_exc:
+                # ── 2순위: Groq (쿼터/속도 초과이고 Groq 키가 있을 때) ────
+                if _is_quota_error(_gemini_exc) and groq_api_key:
+                    try:
+                        raw = _call_groq_api(prompt, groq_api_key)
+                        _provider = "Groq"
+                    except Exception:
+                        raise _gemini_exc
+                else:
+                    raise
+
+        # ── Gemini 키 없이 Groq만 있는 경우 직행 ──────────────────────────
+        if raw is None and groq_api_key:
+            raw = _call_groq_api(prompt, groq_api_key)
+            _provider = "Groq"
+
+        if raw is None:
+            raise RuntimeError("사용 가능한 LLM API 키가 없습니다.")
 
         # ── JSON 파싱 (Gemini/Groq 공통) ──────────────────────────────────────
         json_match = _re_global.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})', raw)
