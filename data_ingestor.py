@@ -15,10 +15,12 @@ data_ingestor.py - 실시간 데이터 수집기 (Producer)
 import asyncio
 import json
 import logging
+import os
 import time
 import signal
 from datetime import datetime
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, asdict
 
 try:
@@ -58,21 +60,36 @@ REDIS_PORT = 6379
 REDIS_DB = 0
 MARKET_UPDATES_CHANNEL = "market_updates"
 
-# 모니터링할 주요 종목 (종목 코드)
-WATCH_TICKERS = [
+# app.py와 동일한 경로의 관심종목 파일
+WATCHLIST_FILE = Path(__file__).parent / "watchlist.json"
+WATCHLIST_RELOAD_SEC = 60  # 1분마다 재로드
+
+# 관심종목 없을 때 기본 종목
+WATCH_TICKERS_DEFAULT = [
     "005930.KS",  # 삼성전자
     "000660.KS",  # SK하이닉스
     "005380.KS",  # 현대차
     "035720.KS",  # 카카오
-    "AAPL",       # Apple
-    "MSFT",       # Microsoft
-    "NVDA",       # NVIDIA
 ]
 
 # WebSocket 재접속 설정
 MAX_RETRIES = 10
 RETRY_DELAY = 5  # seconds
 HEARTBEAT_INTERVAL = 30  # seconds
+
+
+def load_watchlist_tickers(path: Path = WATCHLIST_FILE) -> List[str]:
+    """watchlist.json에서 ticker 목록 로드. 없으면 기본 종목 반환."""
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                wl = json.load(f)
+            tickers = [item["ticker"] for item in wl if item.get("ticker")]
+            if tickers:
+                return tickers
+    except Exception as e:
+        logger.warning(f"watchlist.json 로드 실패: {e}")
+    return list(WATCH_TICKERS_DEFAULT)
 
 
 @dataclass
@@ -100,10 +117,32 @@ class DataIngestor:
     ):
         self.redis_host = redis_host
         self.redis_port = redis_port
-        self.watch_tickers = watch_tickers or WATCH_TICKERS
+        # watch_tickers가 명시적으로 전달되면 사용, 없으면 watchlist.json 우선
+        self._override_tickers = watch_tickers
+        self.watch_tickers = watch_tickers or load_watchlist_tickers()
         self.redis = None
         self.running = False
         self._retry_count = 0
+        self._last_reload = time.monotonic()
+
+    def _maybe_reload_watchlist(self):
+        """WATCHLIST_RELOAD_SEC마다 watchlist.json을 다시 읽어 종목 목록 갱신."""
+        if self._override_tickers:
+            return  # 명시적으로 지정된 경우 갱신 안 함
+        now = time.monotonic()
+        if now - self._last_reload < WATCHLIST_RELOAD_SEC:
+            return
+        self._last_reload = now
+        new_tickers = load_watchlist_tickers()
+        if new_tickers != self.watch_tickers:
+            added = set(new_tickers) - set(self.watch_tickers)
+            removed = set(self.watch_tickers) - set(new_tickers)
+            self.watch_tickers = new_tickers
+            if added:
+                logger.info(f"관심종목 추가: {sorted(added)}")
+            if removed:
+                logger.info(f"관심종목 제거: {sorted(removed)}")
+            logger.info(f"현재 감시 종목 ({len(self.watch_tickers)}개): {self.watch_tickers}")
 
     async def connect(self):
         """Redis 연결"""
@@ -207,10 +246,12 @@ class DataIngestor:
     async def poll_data(self, interval: float = 5.0):
         """주기적으로 데이터 수집 및 발행 (시뮬레이션)"""
         logger.info(f"📊 데이터 폴링 시작 (간격: {interval}초)")
+        logger.info(f"감시 종목 ({len(self.watch_tickers)}개): {self.watch_tickers}")
         self.running = True
 
         try:
             while self.running:
+                self._maybe_reload_watchlist()
                 for ticker in self.watch_tickers:
                     update = await self.fetch_yfinance_update(ticker)
                     if update:
@@ -236,12 +277,18 @@ class DataIngestor:
         import random
 
         logger.info("🔄 WebSocket 시뮬레이션 시작")
+        logger.info(f"감시 종목 ({len(self.watch_tickers)}개): {self.watch_tickers}")
         self.running = True
 
         try:
             base_prices = {ticker: random.uniform(10, 500) for ticker in self.watch_tickers}
 
             while self.running:
+                self._maybe_reload_watchlist()
+                # 새로 추가된 종목에 초기 가격 부여
+                for ticker in self.watch_tickers:
+                    if ticker not in base_prices:
+                        base_prices[ticker] = random.uniform(10, 500)
                 for ticker in self.watch_tickers:
                     # 가격 변동 시뮬레이션
                     base_prices[ticker] += random.uniform(-2, 2)
@@ -309,9 +356,23 @@ async def main():
 
     redis_host = os.getenv("REDIS_HOST", REDIS_HOST)
     redis_port = int(os.getenv("REDIS_PORT", REDIS_PORT))
+    interval = float(os.getenv("POLLING_INTERVAL", "60"))
+
+    # 우선순위: watchlist.json > WATCH_TICKERS 환경변수 > 기본값
+    tickers_from_wl = load_watchlist_tickers()
     watch_tickers_env = os.getenv("WATCH_TICKERS", "")
-    watch_tickers = [t.strip() for t in watch_tickers_env.split(",") if t.strip()] or None
-    interval = float(os.getenv("POLLING_INTERVAL", "5"))
+    env_tickers = [t.strip() for t in watch_tickers_env.split(",") if t.strip()]
+
+    if tickers_from_wl != list(WATCH_TICKERS_DEFAULT):
+        # watchlist.json에 실제 관심종목이 있는 경우
+        watch_tickers = None  # DataIngestor가 직접 로드하게 놔둠
+        logger.info(f"watchlist.json 사용 ({len(tickers_from_wl)}개)")
+    elif env_tickers:
+        watch_tickers = env_tickers
+        logger.info(f"WATCH_TICKERS 환경변수 사용 ({len(env_tickers)}개)")
+    else:
+        watch_tickers = None
+        logger.info(f"기본 종목 사용 ({len(WATCH_TICKERS_DEFAULT)}개)")
 
     ingestor = DataIngestor(
         redis_host=redis_host,
