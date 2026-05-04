@@ -14,12 +14,6 @@ import numpy as np
 import pandas as pd
 from typing import Union
 
-try:
-    import pandas_ta as ta
-    HAS_PANDAS_TA = True
-except ImportError:
-    HAS_PANDAS_TA = False
-
 logger = logging.getLogger(__name__)
 
 ArrayLike = Union[np.ndarray, pd.Series, list]
@@ -304,7 +298,7 @@ class TradingStrategy:
         period: int | None = None,
     ) -> float:
         """
-        pandas_ta를 사용한 ATR(Average True Range) 계산.
+        ATR(Average True Range) 계산 — 순수 pandas 구현 (외부 라이브러리 불필요).
 
         Parameters
         ----------
@@ -316,12 +310,8 @@ class TradingStrategy:
         Returns
         -------
         float
-            최신 ATR 값. 데이터 부족·라이브러리 미설치 시 -1.0 반환.
+            최신 ATR 값. 데이터 부족 시 -1.0 반환.
         """
-        if not HAS_PANDAS_TA:
-            logger.error("pandas_ta 미설치. pip install pandas_ta")
-            return -1.0
-
         n = period if period is not None else self.atr_period
 
         try:
@@ -332,13 +322,17 @@ class TradingStrategy:
             }).dropna()
 
             if len(df) < n + 1:
-                logger.warning(
-                    f"compute_atr: 데이터 부족 ({len(df)} < {n + 1})"
-                )
+                logger.warning(f"compute_atr: 데이터 부족 ({len(df)} < {n + 1})")
                 return -1.0
 
-            atr_series = ta.atr(df["high"], df["low"], df["close"], length=n)
-            latest = float(atr_series.iloc[-1])
+            prev_close = df["close"].shift(1)
+            tr = pd.concat([
+                df["high"] - df["low"],
+                (df["high"] - prev_close).abs(),
+                (df["low"]  - prev_close).abs(),
+            ], axis=1).max(axis=1)
+
+            latest = float(tr.ewm(span=n, adjust=False).mean().iloc[-1])
 
             if np.isnan(latest):
                 logger.warning("compute_atr: NaN 반환됨")
