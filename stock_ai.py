@@ -3451,8 +3451,8 @@ def analyze_news_sentiment_llm(
                 )
                 raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
             except Exception as _gemini_exc:
-                # ── 2순위: Groq (쿼터/속도 초과이고 Groq 키가 있을 때) ────
-                if _is_quota_error(_gemini_exc) and groq_api_key:
+                # ── 2순위: Groq — 쿼터 초과·연결 실패 등 모든 Gemini 오류 시 폴백 ──
+                if groq_api_key:
                     try:
                         raw = _call_groq_api(prompt, groq_api_key)
                         _provider = "Groq"
@@ -3525,17 +3525,189 @@ def analyze_news_sentiment_llm(
         return _result
 
     except Exception as _exc:
+        # 여기까지 온 경우: Gemini 실패 + Groq도 실패(또는 키 없음)
         result = kw_result.copy()
         _msg = str(_exc)
-        if "429" in _msg or "quota" in _msg.lower() or "ResourceExhausted" in type(_exc).__name__:
-            if groq_api_key:
-                result["summary"] = "(Gemini 쿼터 초과 + Groq 실패 — 키워드+섹터 분석으로 대체)"
-            else:
-                result["summary"] = "(Gemini API 일일 쿼터 초과 — 키워드+섹터 분석으로 대체)"
-        elif "rate" in _msg.lower() or "limit" in _msg.lower():
-            result["summary"] = "(Gemini API 요청 한도 초과 — 키워드+섹터 분석으로 대체)"
+        result["summary"] = f"(LLM 분석 실패: {type(_exc).__name__}: {_msg[:120]} — 키워드+섹터 분석으로 대체)"
+        return result
+
+
+def analyze_news_quant_llm(
+    news_items: list[dict],
+    ticker: str,
+    api_key: str,
+    groq_api_key: str = "",
+    company_name: str = "",
+    price_change_pct: float | None = None,
+    net_foreign_buy: float | None = None,
+    net_institution_buy: float | None = None,
+    dart_confirmed: bool = False,
+) -> dict:
+    """
+    전문 퀀트 분석가·뉴스 검증 에이전트 역할의 LLM 분석.
+
+    analyze_news_sentiment_llm 대비 추가 기능:
+      - Recency 가중치 — 최신(1h) 최대, 12h+ 선반영 경고
+      - 재료 질적 분석 — 공시/루머 구분, CB·증자·신규사업 해석
+      - 선반영(Priced-in) 검토 — 주가 역행 시 경고
+      - YouTube 노이즈 필터 — 수치·날짜 없는 단순 추천 신뢰도 하향
+      - 삼각 검증 — 뉴스 톤 + 수급 + 주가 교차
+
+    반환: {score, label, analysis, event_flags, summary,
+           individual_score, sector_score, detail}  ← 기존 필드 포함
+    """
+    if (not api_key and not groq_api_key) or not news_items:
+        return analyze_news_sentiment_llm(
+            news_items, ticker, api_key, groq_api_key, company_name
+        )
+
+    filtered = _prefilter_news(news_items, company_name)
+    effective = filtered if filtered else news_items
+    kw_result = analyze_news_sentiment_keywords(effective, ticker, company_name)
+    sector_score = kw_result.get("sector_score", 0.0)
+
+    try:
+        import json as _json
+
+        deduped  = _deduplicate_news(effective)
+        top_news = _select_top_news(deduped, n=10)
+
+        ticker_display = ticker.replace(".KS", "").replace(".KQ", "")
+        display_name   = company_name or ticker_display
+
+        def _recency_label(decay: float) -> str:
+            if decay >= 1.0: return "🔴 최신(1h이내)"
+            if decay >= 0.7: return "🟡 최근(4h이내)"
+            if decay >= 0.5: return "🔵 당일(12h이내)"
+            return "⚪ 구형(12h+)"
+
+        lines = []
+        for i, it in enumerate(top_news):
+            decay   = _news_time_decay(it.get("pub_date", ""))
+            src     = it.get("source_type", "naver")
+            src_tag = "[YouTube⚠노이즈주의]" if src == "youtube_transcript" else f"[{src}]"
+            lines.append(
+                f"{i+1}. {_recency_label(decay)} {src_tag} "
+                f"{_extract_news_snippet(it)} ({it.get('pub_date', '날짜미상')})"
+            )
+        headlines = "\n".join(lines)
+
+        supply_parts: list[str] = []
+        if price_change_pct is not None:
+            supply_parts.append(f"당일 주가 변동: {price_change_pct:+.2f}%")
+        if net_foreign_buy is not None:
+            supply_parts.append(f"외국인 순매수: {net_foreign_buy:+,.0f}주")
+        if net_institution_buy is not None:
+            supply_parts.append(f"기관 순매수: {net_institution_buy:+,.0f}주")
+        supply_block = (
+            "\n[수급/가격 데이터]\n" + "\n".join(supply_parts)
+            if supply_parts else ""
+        )
+        dart_block = (
+            "\n[DART 공시] ✅ 최근 30일 내 수주/계약 공시 확인됨"
+            if dart_confirmed else ""
+        )
+
+        prompt = f"""당신은 전문 퀀트 투자 분석가 겸 뉴스 검증 에이전트입니다.
+아래 뉴스를 분석하여 종목 '{display_name}'({ticker})의 투자 가치와 신뢰도를 정밀 평가하세요.
+
+[뉴스 목록]
+{headlines}
+{supply_block}
+{dart_block}
+
+[분석 지침]
+1. 시간 가중치: 🔴 최신은 영향력 최대, ⚪ 구형(12h+)은 선반영 가능성 고려.
+2. 재료 질적 분석: 공식 공시(수주·계약·증자) 기반은 고신뢰도. CB/BW 발행·최대주주 변경은 불확실성. 단순 루머는 저신뢰도.
+3. 선반영 검토: 호재 뉴스인데 주가가 이미 수일 전 급등했다면 '재료 소멸' 경고.
+4. YouTube 노이즈: [YouTube⚠노이즈주의]는 수치/날짜 없는 단순 추천이면 신뢰도 하향.
+5. 삼각 검증: 뉴스 긍정인데 외국인·기관 순매도 또는 주가 하락이면 '개미 꼬시기' 가능성 언급.
+
+[출력 형식] JSON만 출력하세요:
+{{
+  "score": <-5.0~5.0 소수점 1자리>,
+  "label": <"매우 긍정"|"긍정"|"중립"|"부정"|"매우 부정">,
+  "analysis": {{
+    "core_event": "<핵심 사건 한 줄 요약>",
+    "reliability": <0~100 신뢰도 정수>,
+    "market_reaction": "<선반영 여부 및 수급 일치 판단>"
+  }},
+  "event_flags": [<"수급_주의"|"재료_선반영"|"공시_확인"|"신규_사업"|"CB_불확실"|"개미_꼬시기"|"YouTube_노이즈" 중 해당 항목>],
+  "summary": "<투자자 주의사항 300자 이내>"
+}}"""
+
+        raw = None
+        _provider = "Gemini"
+        if api_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                from langchain_core.messages import HumanMessage
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash",
+                    google_api_key=api_key,
+                    temperature=0.0,
+                )
+                raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+            except Exception as _gemini_exc:
+                if groq_api_key:
+                    try:
+                        raw = _call_groq_api(prompt, groq_api_key, max_tokens=600)
+                        _provider = "Groq"
+                    except Exception:
+                        raise _gemini_exc
+                else:
+                    raise
+
+        if raw is None and groq_api_key:
+            raw = _call_groq_api(prompt, groq_api_key, max_tokens=600)
+            _provider = "Groq"
+
+        if raw is None:
+            raise RuntimeError("사용 가능한 LLM API 키 없음")
+
+        json_match = _re_global.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})', raw)
+        if not json_match:
+            raise ValueError("JSON not found in response")
+        json_str = json_match.group(1) or json_match.group(2)
+        parsed, _ = _json.JSONDecoder().raw_decode(json_str.strip())
+
+        score       = max(-5.0, min(5.0, float(parsed.get("score", 0.0))))
+        analysis    = parsed.get("analysis", {})
+        flags_raw   = list(parsed.get("event_flags", []))
+        summary     = parsed.get("summary", "")
+
+        if _provider != "Gemini":
+            summary = f"[{_provider}] {summary}"
+        if dart_confirmed and "공시_확인" not in flags_raw:
+            flags_raw.append("공시_확인")
+
+        if sector_score != 0.0:
+            blended = round(max(-5.0, min(5.0, 0.7 * score + 0.3 * sector_score)), 2)
         else:
-            result["summary"] = f"(AI 분석 실패: {type(_exc).__name__}: {_msg[:120]} — 키워드+섹터 분석으로 대체)"
+            blended = round(score, 2)
+
+        if   blended >= 3:  label = "매우 긍정"
+        elif blended >= 1:  label = "긍정"
+        elif blended >= -1: label = "중립"
+        elif blended >= -3: label = "부정"
+        else:               label = "매우 부정"
+
+        return {
+            "score":            blended,
+            "individual_score": round(score, 2),
+            "sector_score":     sector_score,
+            "label":            label,
+            "analysis":         analysis,
+            "detail":           kw_result.get("detail", []),
+            "event_flags":      flags_raw,
+            "summary":          summary,
+        }
+
+    except Exception as _exc:
+        result = kw_result.copy()
+        result["summary"] = (
+            f"(Quant LLM 실패: {type(_exc).__name__}: {str(_exc)[:100]} — 키워드 분석 대체)"
+        )
         return result
 
 

@@ -679,7 +679,7 @@ def analyze_news_fast(
     """
     from stock_ai import (  # 지연 import — 순환 참조 방지
         analyze_news_sentiment_keywords,
-        analyze_news_sentiment_llm,
+        analyze_news_quant_llm,
     )
 
     _t_total = time.perf_counter()
@@ -776,6 +776,7 @@ def analyze_news_fast(
     )
 
     # ── Step 3.5: DART 공시 교차 검증 ────────────────────────────────────────
+    dart_confirmed = False
     if dart_api_key and pre_scored and any(
         any(kw in item.get("title", "") for kw in _CONTRACT_KW)
         for item in pre_scored
@@ -799,13 +800,17 @@ def analyze_news_fast(
                 boosted.append(item)
             pre_scored = boosted
 
-    # ── Step 4: Stage3 LLM 정밀분석 (상위 deep_n건) ──────────────────────────
+    # ── Step 4: Stage3 퀀트 LLM 정밀분석 (상위 deep_n건) ────────────────────
     t0 = time.perf_counter()
     top_for_deep = stage3_select_for_deep(deep_candidates, n=deep_n)
 
     if (api_key or groq_api_key) and top_for_deep:
-        deep_result = analyze_news_sentiment_llm(
-            top_for_deep, ticker, api_key, groq_api_key, company_name
+        deep_result = analyze_news_quant_llm(
+            top_for_deep, ticker, api_key, groq_api_key, company_name,
+            price_change_pct=price_change_pct,
+            net_foreign_buy=net_foreign_buy,
+            net_institution_buy=net_institution_buy,
+            dart_confirmed=dart_confirmed,
         )
     elif top_for_deep:
         deep_result = analyze_news_sentiment_keywords(
