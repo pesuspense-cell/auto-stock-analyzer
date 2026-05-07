@@ -3653,8 +3653,11 @@ def analyze_news_quant_llm(
                     try:
                         raw = _call_groq_api(prompt, groq_api_key, max_tokens=600)
                         _provider = "Groq"
-                    except Exception:
-                        raise _gemini_exc
+                    except Exception as _groq_exc:
+                        raise RuntimeError(
+                            f"Gemini 실패({type(_gemini_exc).__name__}: {str(_gemini_exc)[:80]})"
+                            f" → Groq 폴백도 실패({type(_groq_exc).__name__}: {str(_groq_exc)[:80]})"
+                        ) from _groq_exc
                 else:
                     raise
 
@@ -3856,27 +3859,16 @@ def summarize_article_llm(
             )
             raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
         except Exception as _gemini_exc:
-            _msg = str(_gemini_exc)
-            _is_quota = (
-                "429" in _msg
-                or "quota" in _msg.lower()
-                or "ResourceExhausted" in type(_gemini_exc).__name__
-            )
-            # ── 2순위: Groq (쿼터 초과이고 Groq 키가 있을 때만) ────────────
-            if _is_quota and groq_api_key:
+            # ── 2순위: Groq (모든 Gemini 오류 시 폴백) ─────────────────────
+            if groq_api_key:
                 try:
-                    from groq import Groq as _Groq
-                    _client = _Groq(api_key=groq_api_key)
-                    _resp = _client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.1,
-                        max_tokens=512,
-                    )
-                    raw = _resp.choices[0].message.content.strip()
+                    raw = _call_groq_api(prompt, groq_api_key, max_tokens=512)
                     _provider = "Groq"
-                except Exception:
-                    raise _gemini_exc
+                except Exception as _groq_exc:
+                    raise RuntimeError(
+                        f"Gemini 실패({type(_gemini_exc).__name__}: {str(_gemini_exc)[:80]})"
+                        f" → Groq 폴백도 실패({type(_groq_exc).__name__}: {str(_groq_exc)[:80]})"
+                    ) from _groq_exc
             else:
                 raise
 
