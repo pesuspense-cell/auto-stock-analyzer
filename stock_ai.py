@@ -3532,6 +3532,12 @@ def analyze_news_sentiment_llm(
         return result
 
 
+def _detect_market_mode(ticker: str) -> str:
+    """티커 형식으로 KR/US 시장 자동 구분. 숫자 → KR, 영문 → US."""
+    base = ticker.split(".")[0]
+    return "KR" if base.isdigit() else "US"
+
+
 def analyze_news_quant_llm(
     news_items: list[dict],
     ticker: str,
@@ -3544,22 +3550,23 @@ def analyze_news_quant_llm(
     dart_confirmed: bool = False,
 ) -> dict:
     """
-    전문 퀀트 분석가·뉴스 검증 에이전트 역할의 LLM 분석.
+    Global Multi-Asset Research Analyst 역할의 LLM 뉴스 분석.
 
-    analyze_news_sentiment_llm 대비 추가 기능:
-      - Recency 가중치 — 최신(1h) 최대, 12h+ 선반영 경고
-      - 재료 질적 분석 — 공시/루머 구분, CB·증자·신규사업 해석
-      - 선반영(Priced-in) 검토 — 주가 역행 시 경고
-      - YouTube 노이즈 필터 — 수치·날짜 없는 단순 추천 신뢰도 하향
-      - 삼각 검증 — 뉴스 톤 + 수급 + 주가 교차
+    - 티커 형식으로 KR / US 시장 모드 자동 전환
+    - KR: 코스피/코스닥·외국인기관수급·DART 공시 맥락
+    - US: S&P500/NASDAQ·Fed·13F·SEC 공시 맥락, 한국 전용 용어 사용 금지
+    - Recency 가중치, 선반영(Priced-in), 삼각검증, YouTube 노이즈 필터 포함
 
-    반환: {score, label, analysis, event_flags, summary,
-           individual_score, sector_score, detail}  ← 기존 필드 포함
+    반환: {score, label, market_mode, analysis, event_flags, summary,
+           individual_score, sector_score, detail}
     """
     if (not api_key and not groq_api_key) or not news_items:
         return analyze_news_sentiment_llm(
             news_items, ticker, api_key, groq_api_key, company_name
         )
+
+    market_mode = _detect_market_mode(ticker)
+    market_hint = f"[{'US Market Mode' if market_mode == 'US' else 'KR Market Mode'}]"
 
     filtered = _prefilter_news(news_items, company_name)
     effective = filtered if filtered else news_items
@@ -3592,48 +3599,89 @@ def analyze_news_quant_llm(
             )
         headlines = "\n".join(lines)
 
+        # ── 수급/가격 블록 (시장별 레이블 분기) ─────────────────────────────
         supply_parts: list[str] = []
         if price_change_pct is not None:
             supply_parts.append(f"당일 주가 변동: {price_change_pct:+.2f}%")
         if net_foreign_buy is not None:
-            supply_parts.append(f"외국인 순매수: {net_foreign_buy:+,.0f}주")
+            label_buy = (
+                "Institutional Net Buy" if market_mode == "US" else "외국인 순매수"
+            )
+            supply_parts.append(f"{label_buy}: {net_foreign_buy:+,.0f}주")
         if net_institution_buy is not None:
-            supply_parts.append(f"기관 순매수: {net_institution_buy:+,.0f}주")
+            label_inst = (
+                "Fund Net Buy" if market_mode == "US" else "기관 순매수"
+            )
+            supply_parts.append(f"{label_inst}: {net_institution_buy:+,.0f}주")
         supply_block = (
             "\n[수급/가격 데이터]\n" + "\n".join(supply_parts)
             if supply_parts else ""
         )
-        dart_block = (
-            "\n[DART 공시] ✅ 최근 30일 내 수주/계약 공시 확인됨"
-            if dart_confirmed else ""
-        )
 
-        prompt = f"""당신은 전문 퀀트 투자 분석가 겸 뉴스 검증 에이전트입니다.
+        # ── 공시 블록 (시장별 분기) ───────────────────────────────────────────
+        if dart_confirmed:
+            disclosure_block = (
+                "\n[SEC Filing] ✅ Recent 8-K/10-K filing confirmed (contract/order)"
+                if market_mode == "US"
+                else "\n[DART 공시] ✅ 최근 30일 내 수주/계약 공시 확인됨"
+            )
+        else:
+            disclosure_block = ""
+
+        # ── 시장별 분석 지침 ─────────────────────────────────────────────────
+        if market_mode == "US":
+            market_guidelines = """\
+[시장 모드: US Market]
+- S&P 500 / NASDAQ 지수 향방, 미 연준(Fed) 금리, 국채 수익률을 거시 맥락으로 고려하세요.
+- 기관 보유 비중(13F 자료) 변화와 Sector Rotation 흐름을 분석에 반영하세요.
+- SEC 공시(8-K 계약·수주, 10-K 연간 실적) 기반 뉴스는 고신뢰도로 처리하세요.
+- 금지 용어: '코스피', '코스닥', '개미', '외인/기관 수급' — 절대 사용 금지.
+- 대체 표현: 'Institutional Investors', 'Market Alpha', 'Sector Rotation'."""
+            event_flag_examples = (
+                '"Priced-in", "SEC_filing_confirmed", "Sector_Rotation", '
+                '"Supply_Mismatch", "Fed_Risk", "Buy_the_Rumor"'
+            )
+        else:
+            market_guidelines = """\
+[시장 모드: KR Market]
+- 코스피 / 코스닥 지수 동향, 외국인·기관 순매매, DART 공시를 우선 고려하세요.
+- 테마주 여부, 수급 쏠림, 시간외 단일가 등 한국 시장 특유의 변동성을 반영하세요.
+- DART 공시(수주·계약·유상증자) 확인 시 신뢰도를 높게 부여하세요."""
+            event_flag_examples = (
+                '"수급_주의", "재료_선반영", "공시_확인", "신규_사업", '
+                '"CB_불확실", "개미_꼬시기", "YouTube_노이즈", "테마_과열"'
+            )
+
+        prompt = f"""{market_hint}
+당신은 Global Multi-Asset Research Analyst입니다.
 아래 뉴스를 분석하여 종목 '{display_name}'({ticker})의 투자 가치와 신뢰도를 정밀 평가하세요.
+
+{market_guidelines}
 
 [뉴스 목록]
 {headlines}
 {supply_block}
-{dart_block}
+{disclosure_block}
 
-[분석 지침]
-1. 시간 가중치: 🔴 최신은 영향력 최대, ⚪ 구형(12h+)은 선반영 가능성 고려.
-2. 재료 질적 분석: 공식 공시(수주·계약·증자) 기반은 고신뢰도. CB/BW 발행·최대주주 변경은 불확실성. 단순 루머는 저신뢰도.
-3. 선반영 검토: 호재 뉴스인데 주가가 이미 수일 전 급등했다면 '재료 소멸' 경고.
-4. YouTube 노이즈: [YouTube⚠노이즈주의]는 수치/날짜 없는 단순 추천이면 신뢰도 하향.
-5. 삼각 검증: 뉴스 긍정인데 외국인·기관 순매도 또는 주가 하락이면 '개미 꼬시기' 가능성 언급.
+[공통 분석 지침]
+1. 시간 가중치: 🔴 최신은 영향력 최대, ⚪ 구형(12h+)은 Priced-in 가능성 고려.
+2. 신뢰도 검증: 확정된 공시/계약인지, 단순 기대감(Expectation)인지 구분하세요.
+3. 선반영 판단: 호재 뉴스인데 주가가 이미 급등했다면 "Buy the Rumor, Sell the News" 경고.
+4. 삼각 검증: 뉴스 톤·당일 변동률·수급이 불일치하면 원인을 거시경제 또는 수급 이탈 관점에서 분석.
+5. YouTube 노이즈: [YouTube⚠노이즈주의]에 수치/날짜 없는 단순 추천이면 신뢰도 하향.
 
 [출력 형식] JSON만 출력하세요:
 {{
   "score": <-5.0~5.0 소수점 1자리>,
   "label": <"매우 긍정"|"긍정"|"중립"|"부정"|"매우 부정">,
+  "market_mode": <"US"|"KR">,
   "analysis": {{
     "core_event": "<핵심 사건 한 줄 요약>",
-    "reliability": <0~100 신뢰도 정수>,
-    "market_reaction": "<선반영 여부 및 수급 일치 판단>"
+    "market_context": "<현재 시장 지수와 종목 간 연관성>",
+    "risk_factor": "<선반영 여부 및 재료 소멸 가능성 진단>"
   }},
-  "event_flags": [<"수급_주의"|"재료_선반영"|"공시_확인"|"신규_사업"|"CB_불확실"|"개미_꼬시기"|"YouTube_노이즈" 중 해당 항목>],
-  "summary": "<투자자 주의사항 300자 이내>"
+  "event_flags": [<{event_flag_examples} 중 해당 항목>],
+  "summary": "<최종 투자 의견 300자 이내>"
 }}"""
 
         raw = None
@@ -3651,7 +3699,7 @@ def analyze_news_quant_llm(
             except Exception as _gemini_exc:
                 if groq_api_key:
                     try:
-                        raw = _call_groq_api(prompt, groq_api_key, max_tokens=600)
+                        raw = _call_groq_api(prompt, groq_api_key, max_tokens=700)
                         _provider = "Groq"
                     except Exception as _groq_exc:
                         raise RuntimeError(
@@ -3662,7 +3710,7 @@ def analyze_news_quant_llm(
                     raise
 
         if raw is None and groq_api_key:
-            raw = _call_groq_api(prompt, groq_api_key, max_tokens=600)
+            raw = _call_groq_api(prompt, groq_api_key, max_tokens=700)
             _provider = "Groq"
 
         if raw is None:
@@ -3678,11 +3726,16 @@ def analyze_news_quant_llm(
         analysis    = parsed.get("analysis", {})
         flags_raw   = list(parsed.get("event_flags", []))
         summary     = parsed.get("summary", "")
+        parsed_mode = parsed.get("market_mode", market_mode)
 
         if _provider != "Gemini":
             summary = f"[{_provider}] {summary}"
-        if dart_confirmed and "공시_확인" not in flags_raw:
+
+        # KR 전용 공시 확인 플래그
+        if dart_confirmed and market_mode == "KR" and "공시_확인" not in flags_raw:
             flags_raw.append("공시_확인")
+        if dart_confirmed and market_mode == "US" and "SEC_filing_confirmed" not in flags_raw:
+            flags_raw.append("SEC_filing_confirmed")
 
         if sector_score != 0.0:
             blended = round(max(-5.0, min(5.0, 0.7 * score + 0.3 * sector_score)), 2)
@@ -3700,6 +3753,7 @@ def analyze_news_quant_llm(
             "individual_score": round(score, 2),
             "sector_score":     sector_score,
             "label":            label,
+            "market_mode":      parsed_mode,
             "analysis":         analysis,
             "detail":           kw_result.get("detail", []),
             "event_flags":      flags_raw,
@@ -3708,6 +3762,7 @@ def analyze_news_quant_llm(
 
     except Exception as _exc:
         result = kw_result.copy()
+        result["market_mode"] = market_mode
         result["summary"] = (
             f"(Quant LLM 실패: {type(_exc).__name__}: {str(_exc)[:100]} — 키워드 분석 대체)"
         )
