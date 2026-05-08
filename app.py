@@ -7,7 +7,6 @@ import os
 import queue
 import concurrent.futures
 import time
-import requests
 import streamlit as st
 from fundamental_db import load_settings_db, save_settings_db
 import yfinance as yf
@@ -61,26 +60,17 @@ except Exception as _import_err:
     )
     st.stop()
 
-# ─── Flask API 연동 ───────────────────────────────────────────────────────────
-_API_BASE = "http://localhost:5000"
-
-
-def _api(method: str, path: str, *, json=None, token: str | None = None, timeout: int = 6):
-    """Flask API 호출 헬퍼. (status_code, body_dict) 반환. 연결 실패 시 (None, {error})."""
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    try:
-        resp = requests.request(
-            method, _API_BASE + path, json=json, headers=headers, timeout=timeout
-        )
-        try:
-            body = resp.json()
-        except Exception:
-            body = {}
-        return resp.status_code, body
-    except requests.exceptions.ConnectionError:
-        return None, {"error": "Flask API 서버에 연결할 수 없습니다 — python flask_api.py 를 먼저 실행하세요"}
-    except Exception as _e:
-        return None, {"error": str(_e)}
+# ─── 포트폴리오 DB 직접 연동 ─────────────────────────────────────────────────
+from src.database import (
+    init_db as _db_init,
+    register_user as _db_register,
+    login_user as _db_login,
+    logout_user as _db_logout,
+    add_portfolio as _db_add_portfolio,
+    get_portfolio as _db_get_portfolio,
+    delete_portfolio_item as _db_delete_portfolio,
+)
+_db_init()  # 앱 시작 시 테이블 자동 생성
 
 
 # ─── 페이지 설정 ──────────────────────────────────────────────────────────────
@@ -3686,16 +3676,11 @@ with tab_chart:
                 with _add_col:
                     if st.button("💼 포트폴리오에 추가", use_container_width=True,
                                  key=f"pf_add_{ticker}"):
-                        _sc, _bd = _api(
-                            "POST", "/portfolio/add",
-                            json={"ticker": ticker, "avg_price": avg_price_input,
-                                  "quantity": _qty_input},
-                            token=_pf_token,
+                        _db_add_portfolio(
+                            st.session_state["auth_user_id"],
+                            ticker, avg_price_input, _qty_input,
                         )
-                        if _sc == 201:
-                            st.success(f"{ticker} 포트폴리오에 추가되었습니다.")
-                        else:
-                            st.error(_bd.get("error", "추가 실패"))
+                        st.success(f"{ticker} 포트폴리오에 추가되었습니다.")
             else:
                 st.caption("💼 포트폴리오에 추가하려면 **내 포트폴리오** 탭에서 로그인하세요.")
 
@@ -3752,7 +3737,7 @@ with tab_portfolio:
         _hdr_col.markdown(f"**💼 내 포트폴리오** — `{_mail}`")
         with _out_col:
             if st.button("로그아웃", use_container_width=True, key="pf_logout"):
-                _api("POST", "/logout", token=_tok)
+                _db_logout(_tok)
                 st.session_state["auth_token"]   = None
                 st.session_state["auth_user_id"] = None
                 st.session_state["auth_email"]   = None
@@ -3781,40 +3766,36 @@ with tab_portfolio:
 
         if _pf_submit:
             if _auth_mode == "회원가입":
-                _sc, _bd = _api("POST", "/register",
-                                json={"email": _pf_email, "password": _pf_pw})
-                if _sc == 201:
-                    st.success("회원가입 완료! 로그인해 주세요.")
-                elif _sc is None:
-                    st.error(_bd["error"])
+                if len(_pf_pw) < 6:
+                    st.error("비밀번호는 6자 이상이어야 합니다.")
                 else:
-                    st.error(_bd.get("error", "회원가입 실패"))
+                    _r = _db_register(_pf_email, _pf_pw)
+                    if _r["ok"]:
+                        st.success("회원가입 완료! 로그인해 주세요.")
+                    else:
+                        st.error(_r["error"])
             else:
-                _sc, _bd = _api("POST", "/login",
-                                json={"email": _pf_email, "password": _pf_pw})
-                if _sc == 200 and _bd.get("ok"):
-                    st.session_state["auth_token"]   = _bd["token"]
-                    st.session_state["auth_user_id"] = _bd["user_id"]
-                    st.session_state["auth_email"]   = _bd["email"]
+                _r = _db_login(_pf_email, _pf_pw)
+                if _r["ok"]:
+                    st.session_state["auth_token"]   = _r["token"]
+                    st.session_state["auth_user_id"] = _r["user_id"]
+                    st.session_state["auth_email"]   = _r["email"]
                     st.rerun()
-                elif _sc is None:
-                    st.error(_bd["error"])
                 else:
-                    st.error(_bd.get("error", "로그인 실패"))
+                    st.error(_r["error"])
         st.stop()
 
     # ── 로그인 완료: 포트폴리오 조회 ─────────────────────────────────────────
-    _sc, _items = _api("GET", "/portfolio", token=_tok)
-    if _sc is None:
-        st.error(_items["error"])
-        st.stop()
-    if _sc == 401:
+    from src.database import get_user_by_token as _db_get_user
+    if not _db_get_user(_tok):
         # 토큰 만료 처리
         st.session_state["auth_token"]   = None
         st.session_state["auth_user_id"] = None
         st.session_state["auth_email"]   = None
         st.warning("세션이 만료되었습니다. 다시 로그인해 주세요.")
         st.rerun()
+
+    _items = _db_get_portfolio(_uid)
 
     # ── 수익률 계산을 위한 현재가 일괄 조회 ──────────────────────────────────
     _pf_tickers = list({it["ticker"] for it in _items}) if _items else []
@@ -3851,17 +3832,9 @@ with tab_portfolio:
                 if not _fa_ticker.strip():
                     st.error("티커를 입력하세요.")
                 else:
-                    _sc2, _bd2 = _api(
-                        "POST", "/portfolio/add",
-                        json={"ticker": _fa_ticker.strip().upper(),
-                              "avg_price": _fa_price, "quantity": _fa_qty},
-                        token=_tok,
-                    )
-                    if _sc2 == 201:
-                        st.success(_bd2.get("message", "추가 완료"))
-                        st.rerun()
-                    else:
-                        st.error(_bd2.get("error", "추가 실패"))
+                    _db_add_portfolio(_uid, _fa_ticker.strip().upper(), _fa_price, _fa_qty)
+                    st.success(f"{_fa_ticker.upper()} 포트폴리오에 추가되었습니다.")
+                    st.rerun()
 
     # ── 보유 종목 테이블 ──────────────────────────────────────────────────────
     if not _items:
@@ -3925,10 +3898,8 @@ with tab_portfolio:
                 )
             with _row_right:
                 if st.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
-                    _sc3, _bd3 = _api(
-                        "DELETE", f"/portfolio/{_it['id']}", token=_tok
-                    )
-                    if _sc3 == 200:
+                    _r3 = _db_delete_portfolio(_it["id"], _uid)
+                    if _r3["ok"]:
                         st.rerun()
                     else:
-                        st.error(_bd3.get("error", "삭제 실패"))
+                        st.error(_r3.get("error", "삭제 실패"))
