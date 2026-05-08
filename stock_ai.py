@@ -13,6 +13,7 @@ stock_ai.py - 주식 분석 핵심 알고리즘 엔진
   src/news_logic.py  — 뉴스 수집·필터링·감성 분석 (비동기 배치, 캐싱)
   src/utils.py       — 종목 사전·지수 상수·시장 데이터
 """
+import asyncio
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
@@ -90,22 +91,20 @@ INDICES = {
 
 # ─── 데이터 로드 및 지표 계산 ─────────────────────────────────────────────────
 
-def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
+def _add_indicators(data: pd.DataFrame) -> pd.DataFrame:
     """
-    주식 데이터 로드 및 기술적 지표 계산 (pandas-TA 벡터화 엔진).
+    OHLCV DataFrame에 기술적 지표 컬럼 추가 (공통 엔진).
+    get_stock_data / 배치 처리 / get_recommendations_v2 에서 공용 사용.
     지표 목록:
       이동평균 : SMA 5/20/60, EMA 20/50/200
       모멘텀   : RSI(14), 스토캐스틱(14,3), CCI(20), Williams %R(14), ROC(12)
       추세     : MACD(12/26/9), ADX±DI(14), 일목균형표
       변동성   : 볼린저밴드(20,2σ), ATR(14), Z-Score(20)
       거래량   : Volume MA20, OBV, OBV MA20, MFI(14)
+      VWAP    : 주간(5), 월간(20), 분기(60)
     """
-    data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
     if data.empty or len(data) < 20:
         return data
-
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.droplevel(1)
 
     close  = data["Close"]
     high   = data["High"]
@@ -229,6 +228,16 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
         data[_col] = _cum_pv / _cum_v
 
     return data
+
+
+def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
+    """주식 데이터 로드 및 기술적 지표 계산. 지표 계산은 _add_indicators()에 위임."""
+    data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+    if data.empty or len(data) < 20:
+        return data
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.droplevel(1)
+    return _add_indicators(data)
 
 
 # ─── 매매 신호 알고리즘 ───────────────────────────────────────────────────────
@@ -627,6 +636,15 @@ def generate_signals(data: pd.DataFrame) -> dict:
         "badge":   badge,
         "reasons": reasons,
     }
+
+
+def _calculate_technical_score(df: pd.DataFrame) -> dict:
+    """
+    _add_indicators()가 적용된 DataFrame으로 기술적 점수 계산.
+    generate_signals()의 래퍼 — 단일 종목 분석과 배치 스캐닝이 동일 수식 공유.
+    반환: {"score": float, "label": str, "badge": str, "reasons": list}
+    """
+    return generate_signals(df)
 
 
 # ─── 거래량 이상 감지 ─────────────────────────────────────────────────────────
@@ -1169,6 +1187,101 @@ def get_investor_trading_naver(ticker: str) -> dict:
     return result
 
 
+# ─── 배치 데이터 수집 + L1 스크리닝 ──────────────────────────────────────────
+
+_BATCH_SIZE = 50  # yf.download 1회 호출당 최대 티커 수
+
+
+def _batch_fetch_ohlcv(tickers: list, period: str = "3mo") -> dict:
+    """
+    yf.download 배치 호출로 여러 종목 OHLCV를 한 번에 수집.
+    50개 단위로 나눠 호출하며, 개별 오류 시 해당 티커만 건너뜀.
+    반환: {ticker: ohlcv_df}  (데이터 부족 종목 제외)
+
+    KR(.KS/.KQ) / US 티커를 구분 없이 처리 — yfinance가 내부적으로 처리.
+    """
+    result: dict = {}
+    for i in range(0, len(tickers), _BATCH_SIZE):
+        batch = tickers[i : i + _BATCH_SIZE]
+        try:
+            raw = yf.download(
+                batch,
+                period=period,
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=True,
+            )
+        except Exception:
+            continue
+
+        if len(batch) == 1:
+            # 단일 티커는 MultiIndex 없는 flat DataFrame 반환
+            df = raw.copy()
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(1)
+            df = df.dropna(how="all")
+            if not df.empty and len(df) >= 20:
+                result[batch[0]] = df
+        else:
+            for ticker in batch:
+                try:
+                    df = raw[ticker].copy().dropna(how="all")
+                    if not df.empty and len(df) >= 20:
+                        result[ticker] = df
+                except Exception:
+                    continue
+
+    return result
+
+
+def _l1_screen(ohlcv_map: dict, top_ratio: float = 0.30) -> list:
+    """
+    L1 초고속 스크리닝 — 판다스 벡터 연산만 사용.
+    기준: 현재가의 SMA20/SMA60 대비 위치 + 5일 모멘텀 + 거래량 비율.
+    상위 top_ratio(기본 30%)만 반환.
+
+    SMA60 데이터가 없는 단기 종목은 SMA20으로 대체하여 탈락 방지.
+    """
+    scores: dict = {}
+    for ticker, df in ohlcv_map.items():
+        if df.empty or len(df) < 20:
+            continue
+        try:
+            close    = df["Close"].astype(float)
+            volume   = df["Volume"].astype(float)
+            price    = float(close.iloc[-1])
+
+            sma20    = float(close.rolling(20).mean().iloc[-1])
+            sma60    = float(close.rolling(60).mean().iloc[-1]) if len(df) >= 60 else sma20
+            vol_ma20 = float(volume.rolling(20).mean().iloc[-1])
+            vol_cur  = float(volume.iloc[-1])
+
+            s = 0.0
+            if price > sma20: s += 1.0
+            if price > sma60: s += 1.0
+            # 5일 모멘텀 (스케일 10배)
+            if len(close) >= 5:
+                s += (price / float(close.iloc[-5]) - 1) * 10.0
+            # 거래량 가중
+            if vol_ma20 > 0:
+                vr = vol_cur / vol_ma20
+                if vr > 1.5:   s += 0.8
+                elif vr > 1.2: s += 0.4
+                elif vr < 0.5: s -= 0.5
+
+            scores[ticker] = s
+        except Exception:
+            continue
+
+    if not scores:
+        return []
+
+    sorted_tickers = sorted(scores, key=lambda t: scores[t], reverse=True)
+    keep_n = max(1, int(len(sorted_tickers) * top_ratio))
+    return sorted_tickers[:keep_n]
+
+
 # ─── 추천 종목 종합 분석 ──────────────────────────────────────────────────────
 
 def _composite_score(tech: float, ret_pct: float, sharpe: float) -> float:
@@ -1202,82 +1315,142 @@ def _composite_label(score: float) -> tuple[str, str]:
     else:           return "강력비추", "🔴🔴"
 
 
-def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
-    """
-    여러 종목을 분석하여 종합 점수 순으로 추천 목록 생성.
-    종합점수 = get_hybrid_signal 동일 공식 — 기술점수(70%) + 뉴스감성(30%)
-    범위: -10 ~ +10
-    """
-    rows = []
-    for name, ticker in tickers_dict.items():
+def _q_put(q, payload: dict) -> None:
+    """queue.Queue가 주어진 경우에만 put_nowait 호출 (None-safe)."""
+    if q is not None:
         try:
-            data = get_stock_data(ticker, "3mo")
-            if data.empty:
-                continue
-            sig  = generate_signals(data)
-            exp  = calculate_expected_return(data, sig)
-            close = data["Close"]
+            q.put_nowait(payload)
+        except Exception:
+            pass
 
-            price   = float(close.iloc[-1])
-            chg_1d  = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) >= 2 else 0.0
-            tech    = float(sig.get("score", 0))
-            ret_pct = float(exp.get("expected_return_pct", 0))
-            sharpe  = float(exp.get("sharpe", 0))
 
-            # 뉴스 감성 키워드 분석 (yfinance 뉴스 활용, 실패 시 중립 0.0)
+async def get_recommendations_v2(tickers_dict: dict, _progress_q=None) -> pd.DataFrame:
+    """
+    3단계 깔때기 추천 분석 (고정밀 + 고속):
+
+      L1 (초고속 스크리닝) : SMA/거래량 벡터 연산으로 하위 70% 즉시 탈락.
+      L2 (정밀 차트 분석) : L1 통과 종목에 _calculate_technical_score 실행.
+                           12개 지표 채점 엔진 — generate_signals와 동일 수식.
+      L3 (심층 분석)      : 차트 점수 상위 10개만 뉴스 감성 + Dead-time을
+                           asyncio.gather로 병렬 처리.
+
+    진행 보고 (_progress_q):
+      queue.Queue 객체를 전달하면 각 단계 완료 시 dict를 put_nowait.
+      {"stage": 1, "fetched": N, "total": M}   — 배치 수집 완료
+      {"stage": 2, "l1_count": N}              — L1 통과 종목 수
+      {"stage": 3, "l2_count": N}              — L2 차트 분석 완료
+      {"stage": 4, "final_count": N}           — 최종 결과 확정
+
+    결과 컬럼:
+      기존 컬럼 모두 유지 + chart_precision_score (L2 차트 점수 명시).
+
+    KR(.KS/.KQ) / US 티커 혼재 가능 — yfinance가 내부 처리.
+    """
+    ticker_to_name = {v: k for k, v in tickers_dict.items()}
+    tickers = list(tickers_dict.values())
+
+    # ── Phase 0: 배치 OHLCV 수집 (50개 단위 yf.download) ────────────────
+    ohlcv_map = await asyncio.to_thread(_batch_fetch_ohlcv, tickers)
+    if not ohlcv_map:
+        return pd.DataFrame()
+    _q_put(_progress_q, {"stage": 1, "fetched": len(ohlcv_map), "total": len(tickers)})
+
+    # ── L1: 벡터 스크리닝 — 하위 70% 탈락 ──────────────────────────────
+    l1_passed = _l1_screen(ohlcv_map, top_ratio=0.30)
+    if not l1_passed:
+        return pd.DataFrame()
+    _q_put(_progress_q, {"stage": 2, "l1_count": len(l1_passed)})
+
+    # ── L2: 정밀 차트 분석 — L1 통과 종목만 지표 계산 ─────────────────
+    l2_results = []
+    for ticker in l1_passed:
+        try:
+            df = _add_indicators(ohlcv_map[ticker].copy())
+            sig = _calculate_technical_score(df)
+            if sig:
+                l2_results.append((ticker, df, sig))
+        except Exception:
+            continue
+
+    if not l2_results:
+        return pd.DataFrame()
+
+    l2_results.sort(key=lambda x: x[2].get("score", -99.0), reverse=True)
+    l3_candidates = l2_results[:10]  # 차트 점수 상위 10개만 L3 진입
+    _q_put(_progress_q, {"stage": 3, "l2_count": len(l3_candidates)})
+
+    # ── L3: 뉴스 감성 + Dead-time 비동기 병렬 처리 ───────────────────────
+    async def _deep_analyze(ticker: str, df: pd.DataFrame, sig: dict):
+        name    = ticker_to_name.get(ticker, ticker)
+        exp     = calculate_expected_return(df, sig)
+        close   = df["Close"]
+        price   = float(close.iloc[-1])
+        chg_1d  = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) >= 2 else 0.0
+        tech    = float(sig.get("score", 0))
+        ret_pct = float(exp.get("expected_return_pct", 0))
+        sharpe  = float(exp.get("sharpe", 0))
+
+        async def _fetch_news():
             try:
-                raw_news = yf.Ticker(ticker).news or []
-                news_items = []
+                raw_news = await asyncio.to_thread(lambda: yf.Ticker(ticker).news or [])
+                items = []
                 for it in raw_news[:10]:
                     c = it.get("content", it)
-                    news_items.append({
+                    items.append({
                         "title":     c.get("title", it.get("title", "")),
                         "summary":   c.get("description", ""),
                         "pub_date":  "",
                         "publisher": (c.get("provider", {}).get("displayName") or it.get("publisher", "")),
                     })
-                news_result = analyze_news_sentiment_keywords(news_items, ticker, name)
+                return analyze_news_sentiment_keywords(items, ticker, name)
             except Exception:
-                news_result = {"score": 0.0}
-            news_score = float(news_result.get("score", 0.0))
+                return {"score": 0.0}
 
-            hybrid     = get_hybrid_signal(tech, news_score)
-            comp       = hybrid["hybrid_score"]
-            comp_label = hybrid["label"]
-            comp_badge = hybrid["badge"]
+        async def _fetch_dead_time():
+            try:
+                return await asyncio.to_thread(check_dead_time, ticker)
+            except Exception:
+                return {}
 
-            # ── 샤프 가드: 예상수익률 ≥50% 이지만 샤프지수 < 0.5 → '주의' 강제 ──
-            # 고수익 기대치가 위험 조정 후 실질 매력이 없는 종목을 걸러냄
-            sharpe_warn = False
-            if ret_pct >= 50.0 and sharpe < 0.5:
-                comp_label = "주의"
-                comp_badge = "🟡"
-                sharpe_warn = True
+        news_result, dt = await asyncio.gather(_fetch_news(), _fetch_dead_time())
 
-            # ── Dead-time 거래량 체크 (매수 유보) ────────────────────────────
-            dt = check_dead_time(ticker)
-            buy_hold_flag = dt.get("buy_hold", False)
-            vol_ratio_val = dt.get("vol_ratio", 1.0)
+        news_score  = float(news_result.get("score", 0.0))
+        hybrid      = get_hybrid_signal(tech, news_score)
+        comp        = hybrid["hybrid_score"]
+        comp_label  = hybrid["label"]
+        comp_badge  = hybrid["badge"]
+        sharpe_warn = False
+        if ret_pct >= 50.0 and sharpe < 0.5:
+            comp_label  = "주의"
+            comp_badge  = "🟡"
+            sharpe_warn = True
 
-            rows.append({
-                "종목명":         name,
-                "티커":           ticker,
-                "현재가":         price,
-                "등락률(1일)%":   round(chg_1d, 2),
-                "종합추천":       f"{comp_badge} {comp_label}",
-                "종합점수":       comp,
-                "기술점수":       tech,
-                "뉴스점수":       round(news_score, 2),
-                "예상수익률(%)":  ret_pct,
-                "변동성(%)":      round(float(exp.get("hist_volatility", 0)), 1),
-                "모멘텀(20일)%":  round(float(exp.get("momentum_20d", 0)), 2),
-                "샤프지수":       round(sharpe, 2),
-                "샤프경고":       sharpe_warn,
-                "거래량비율(%)":  round(vol_ratio_val * 100, 1),
-                "매수유보":       buy_hold_flag,
-            })
-        except Exception:
-            continue
+        buy_hold_flag = dt.get("buy_hold", False)
+        vol_ratio_val = dt.get("vol_ratio", 1.0)
+
+        return {
+            "종목명":                name,
+            "티커":                  ticker,
+            "현재가":                price,
+            "등락률(1일)%":          round(chg_1d, 2),
+            "종합추천":              f"{comp_badge} {comp_label}",
+            "종합점수":              comp,
+            "기술점수":              tech,
+            "chart_precision_score": round(tech, 2),
+            "뉴스점수":              round(news_score, 2),
+            "예상수익률(%)":         ret_pct,
+            "변동성(%)":             round(float(exp.get("hist_volatility", 0)), 1),
+            "모멘텀(20일)%":         round(float(exp.get("momentum_20d", 0)), 2),
+            "샤프지수":              round(sharpe, 2),
+            "샤프경고":              sharpe_warn,
+            "거래량비율(%)":         round(vol_ratio_val * 100, 1),
+            "매수유보":              buy_hold_flag,
+        }
+
+    tasks    = [_deep_analyze(t, df, sig) for t, df, sig in l3_candidates]
+    outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+    rows     = [r for r in outcomes if isinstance(r, dict)]
+    _q_put(_progress_q, {"stage": 4, "final_count": len(rows)})
 
     if not rows:
         return pd.DataFrame()
@@ -1286,6 +1459,27 @@ def get_recommendations(tickers_dict: dict) -> pd.DataFrame:
         .sort_values("종합점수", ascending=False)
         .reset_index(drop=True)
     )
+
+
+def get_recommendations(tickers_dict: dict, _progress_q=None) -> pd.DataFrame:
+    """
+    여러 종목을 분석하여 종합 점수 순으로 추천 목록 생성.
+    내부적으로 get_recommendations_v2 (3단계 깔때기)를 호출.
+    종합점수 = get_hybrid_signal 동일 공식 — 기술점수(70%) + 뉴스감성(30%)
+    범위: -10 ~ +10
+
+    _progress_q: 선택적 queue.Queue — app.py 로딩바에 단계별 진행 상태 전달.
+    """
+    coro = get_recommendations_v2(tickers_dict, _progress_q)
+    try:
+        asyncio.get_running_loop()
+        # Streamlit 등 이미 이벤트 루프가 돌고 있는 경우 → 별도 스레드에서 실행
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result(timeout=300)
+    except RuntimeError:
+        # 이벤트 루프 없음 → 직접 실행
+        return asyncio.run(coro)
 
 
 # ─── 유틸 ─────────────────────────────────────────────────────────────────────

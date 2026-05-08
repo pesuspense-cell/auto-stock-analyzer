@@ -4,6 +4,7 @@ app.py - AI 주식 분석 대시보드 v2.0
 """
 import json
 import os
+import queue
 import concurrent.futures
 import time
 import streamlit as st
@@ -268,18 +269,16 @@ def _full_movers():
 def _rates():
     return get_exchange_rates()
 
-@st.cache_data(ttl=600)
-def _recs(market: str, n: int = 100):
-    """시장별 상위 n개 종목 추천 분석"""
+def _get_full_stocks(market: str) -> dict:
+    """시장 전체 종목 사전 반환 — 인위적 상한 없음."""
     if market == "KOSPI":
-        stocks = _top_kospi(n)
+        return _top_kospi(500)
     elif market == "KOSDAQ":
-        stocks = _top_kosdaq(n)
+        return _top_kosdaq(500)
     elif market == "미국 주식 (나스닥)":
-        stocks = _top_nasdaq(n)
+        return _top_nasdaq(500)
     else:
-        stocks = _top_us(n)
-    return get_recommendations(stocks)
+        return _top_us(503)
 
 @st.cache_data(ttl=300)
 def _index_data(sym):
@@ -1262,7 +1261,7 @@ with tab_market:
 with tab_rec:
     st.subheader("⭐ AI 추천 종목 분석")
 
-    col_a, col_b, col_c = st.columns([2, 2, 1])
+    col_a, col_b = st.columns([3, 1])
     with col_a:
         rec_market = st.radio(
             "분석 시장",
@@ -1271,41 +1270,118 @@ with tab_rec:
             key="rec_market_radio",
         )
     with col_b:
-        rec_n = st.select_slider(
-            "분석 종목 수",
-            options=list(range(10, 510, 10)),
-            value=50,
-            key="rec_n_slider",
-            help=(
-                "시가총액 상위 N개 종목을 분석합니다.\n\n"
-                "• 20~50개: 약 30~60초\n"
-                "• 100개: 약 2~3분\n"
-                "• 200개+: 5분 이상 소요될 수 있습니다."
-            ),
-        )
-    with col_c:
-        run_btn = st.button("🔄 분석 실행", type="primary", use_container_width=True)
+        run_btn = st.button("🔄 전수 분석 실행", type="primary", use_container_width=True)
 
-    # 슬라이더·라디오 변경으로 인한 rerun에서 분석이 실행되지 않도록
-    # 버튼 클릭 시에만 session_state 플래그를 세운다.
+    st.caption(
+        "💡 **전수 조사 모드** — 시장 전체 종목(최대 500개)을 L1→L2→L3 깔때기 방식으로 분석합니다.  "
+        "L1 차트 스크리닝으로 하위 70%를 즉시 탈락시키고, 상위 후보만 정밀 분석·뉴스 감성 처리합니다.  "
+        "약 2~5분 소요됩니다."
+    )
+
+    # 라디오 변경으로 인한 rerun에서 분석이 실행되지 않도록 버튼 클릭 시에만 플래그를 세운다.
     if run_btn:
         st.session_state["_rec_run_requested"] = True
 
+    # ── 다단계 로딩바 플레이스홀더 (탭 내부 전용) ─────────────────────────────
+    _rec_ph = st.empty()
+
     if st.session_state.get("_rec_run_requested"):
         st.session_state["_rec_run_requested"] = False
-        spinner_msg = f"AI가 {rec_market} 상위 {rec_n}개 종목 분석 중... (종목 수에 따라 수 분 소요)"
-        with st.spinner(spinner_msg):
-            _recs.clear()
-            rec_df = _recs(rec_market, rec_n)
-            st.session_state["rec_df"]     = rec_df
-            st.session_state["rec_market"] = rec_market
-            st.session_state["rec_n"]      = rec_n
+
+        stocks = _get_full_stocks(rec_market)
+        total_stocks = len(stocks)
+
+        _rec_q     = queue.Queue()
+        _rec_start = time.time()
+
+        # 단계별 아이콘/메시지 매핑
+        _stage_icons = {0: "🔍", 1: "📡", 2: "📊", 3: "🎯", 4: "✅"}
+        _stage_state = {
+            "stage": 0,
+            "icon":  "🔍",
+            "title": "전 종목 AI 분석 준비 중",
+            "msg":   f"시장 전체 {total_stocks}개 종목 데이터 수집 준비 중...",
+        }
+
+        def _render_rec_bar(state: dict, elapsed: int, done: bool = False):
+            bar_style = "animation:none;background:#60a5fa;" if done else ""
+            _rec_ph.markdown(f"""
+<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
+            border:2px solid #3b82f6; border-radius:16px;
+            padding:28px 24px; text-align:center; margin:8px 0 16px;
+            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
+  <div class="loading-icon" style="font-size:40px;">{state["icon"]}</div>
+  <h3 style="color:#60a5fa; margin:12px 0 8px;">{state["title"]}</h3>
+  <p style="color:#94a3b8; margin:0; line-height:1.7;">{state["msg"]}</p>
+  <div class="loading-bar-track">
+    <div class="loading-bar-fill" style="{bar_style}"></div>
+  </div>
+  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">
+    ⏱ <b>{elapsed}s</b> 경과 &nbsp;|&nbsp; 전체 {total_stocks}개 종목 전수 분석
+  </p>
+</div>""", unsafe_allow_html=True)
+
+        _render_rec_bar(_stage_state, 0)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _rec_pool:
+            _rec_future = _rec_pool.submit(get_recommendations, stocks, _rec_q)
+
+            while not _rec_future.done():
+                # 큐에서 단계 업데이트 수신
+                try:
+                    while True:
+                        upd = _rec_q.get_nowait()
+                        s = upd.get("stage", 0)
+                        if s == 1:
+                            _stage_state.update({
+                                "stage": 1, "icon": "📡", "title": "단계 1 · 데이터 수집 완료",
+                                "msg": (
+                                    f"✅ {upd.get('fetched','?')}/{upd.get('total','?')}개 OHLCV 수집 완료 → "
+                                    "L1 차트 스크리닝 진행 중..."
+                                ),
+                            })
+                        elif s == 2:
+                            _stage_state.update({
+                                "stage": 2, "icon": "📊", "title": "단계 2 · 정밀 차트 분석 중",
+                                "msg": (
+                                    f"L1 통과 <b>{upd.get('l1_count','?')}개</b> 종목 — "
+                                    "RSI·MACD·ADX·일목 등 12개 지표 정밀 채점 중..."
+                                ),
+                            })
+                        elif s == 3:
+                            _stage_state.update({
+                                "stage": 3, "icon": "🎯", "title": "단계 3 · 뉴스·재무 심층 분석 중",
+                                "msg": (
+                                    f"차트 상위 <b>{upd.get('l2_count','?')}개</b> 종목 — "
+                                    "뉴스 감성·Dead-time·기대수익률 병렬 분석 중..."
+                                ),
+                            })
+                except queue.Empty:
+                    pass
+
+                _elapsed = int(time.time() - _rec_start)
+                _render_rec_bar(_stage_state, _elapsed)
+                time.sleep(1)
+
+            rec_df = _rec_future.result()
+
+        _total_elapsed = int(time.time() - _rec_start)
+        _stage_state.update({
+            "stage": 4, "icon": "✅", "title": "분석 완료",
+            "msg": f"최종 추천 종목 <b>{len(rec_df) if rec_df is not None else 0}개</b> 선정 완료.",
+        })
+        _render_rec_bar(_stage_state, _total_elapsed, done=True)
+        time.sleep(0.8)
+        _rec_ph.empty()
+
+        st.session_state["rec_df"]     = rec_df
+        st.session_state["rec_market"] = rec_market
 
     rec_df = st.session_state.get("rec_df", None)
 
     if rec_df is not None and not rec_df.empty:
         # 구버전 세션 캐시 호환 — 새로 추가된 컬럼이 없으면 기본값으로 채움
-        for _col, _default in [("뉴스점수", 0.0), ("기술점수", 0.0)]:
+        for _col, _default in [("뉴스점수", 0.0), ("기술점수", 0.0), ("chart_precision_score", 0.0)]:
             if _col not in rec_df.columns:
                 rec_df[_col] = _default
 
