@@ -3140,6 +3140,7 @@ with tab_chart:
                 _m_desc     = _bt["mode_desc"]
                 _m_color    = _bt["mode_color"]
                 _detail     = _bt["detail_line"]
+                _bt_comment = _bt.get("comment", "")
 
                 # 세일/종합/vwap: 양수 gap = 현재가가 목표보다 높음(비쌈) → 빨강
                 # 추격 모드: 양수 gap = 목표가가 현재가보다 높음(올라야 진입) → 노랑
@@ -3162,6 +3163,7 @@ with tab_chart:
   <div style="border-top:1px solid #1e2130;padding-top:5px;margin-top:6px;font-size:0.75rem;color:#555;line-height:1.7;">
     {_detail}
   </div>
+  {'<div style="margin-top:5px;font-size:0.75rem;color:#ffb74d;">⚠️ ' + _bt_comment + '</div>' if _bt_comment else ''}
 </div>"""
 
             if _st_data:

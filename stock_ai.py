@@ -2750,7 +2750,26 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
         except Exception:
             sma20 = current
 
+    # SMA5 / SMA10 (단기 눌림목)
+    sma5 = _f(data["SMA_5"].iloc[-1]) if "SMA_5" in data.columns else None
+    if sma5 is None:
+        try:
+            v = float(close.rolling(5).mean().iloc[-1])
+            sma5 = current if pd.isna(v) else v
+        except Exception:
+            sma5 = current
+
+    sma10 = _f(data["SMA_10"].iloc[-1]) if "SMA_10" in data.columns else None
+    if sma10 is None:
+        try:
+            v = float(close.rolling(10).mean().iloc[-1])
+            sma10 = current if pd.isna(v) else v
+        except Exception:
+            sma10 = current
+
     # ── 모드별 계산 ──────────────────────────────────────────────────────────
+
+    comment = ""  # 모드별로 덮어씀; 기본값 빈 문자열
 
     if mode == "sale":
         # 세일 모드: BB 하단 — 안전하게 밑에서 기다리기
@@ -2839,13 +2858,17 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
         detail_line = f"{vwap_label} {buy_target}{extra}"
 
     else:
-        # classic (기본): 지지선 가중 평균
-        buy_target = round(bb_lower * 0.50 + sma20 * 0.30 + low5 * 0.20, 2)
+        # classic (기본): 지지선 가중 평균 (BB하단 40% + SMA20 25% + 눌림목 20% + 5일저 15%)
+        pullback   = (sma5 + sma10) / 2          # 단기 눌림목: 5일/10일선 평균
+        buy_target = round(bb_lower * 0.40 + sma20 * 0.25 + pullback * 0.20 + low5 * 0.15, 2)
         gap_pct    = (current - buy_target) / buy_target * 100
 
         if bb_lower and current <= bb_lower * 1.005:
             timing       = "⚡ 과매도 — 지금이 매수 타이밍"
             timing_color = "#69f0ae"
+        elif sma10 and current <= sma10 * 1.01:
+            timing       = "🔵 10일선 눌림목 — 분할매수 적합"
+            timing_color = "#82b1ff"
         elif sma20 and current <= sma20 * 1.01:
             timing       = "🔵 SMA20 지지 — 분할매수 적합"
             timing_color = "#82b1ff"
@@ -2856,14 +2879,22 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
             timing       = f"⏳ 대기 중 ({gap_pct:+.1f}% 고평가)"
             timing_color = "#aaa"
 
+        # 현재가와 매수 목표가 괴리 15% 이상이면 추세 매매 코멘트
+        comment = "추세 매매 시 10일선 근처 분할 매수" if gap_pct >= 15.0 else ""
+
         mode_label  = "🎯 종합 모드"
         mode_desc   = "지지선 가중 평균 기준"
         mode_color  = "#e0e0e0"
-        detail_line = f"BB하단 {round(bb_lower, 2)} · SMA20 {round(sma20, 2)} · 5일저 {round(low5, 2)}"
+        detail_line = (
+            f"BB하단 {round(bb_lower, 2)} · SMA10 {round(sma10, 2)} "
+            f"· SMA20 {round(sma20, 2)} · 5일저 {round(low5, 2)}"
+        )
 
     return {
         "buy_target":   buy_target,
         "bb_lower":     round(bb_lower, 2),
+        "sma5":         round(sma5, 2),
+        "sma10":        round(sma10, 2),
         "sma20":        round(sma20, 2),
         "low5":         round(low5, 2),
         "gap_pct":      round(gap_pct, 2),
@@ -2876,6 +2907,7 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
         "mode_desc":    mode_desc,
         "mode_color":   mode_color,
         "detail_line":  detail_line,
+        "comment":      comment,
     }
 
 
@@ -2975,14 +3007,30 @@ def get_sell_target_price(data: pd.DataFrame) -> dict:
     high_52w    = float(close.rolling(min(252, len(close))).max().iloc[-1])
     is_new_high = current >= high_52w * 0.98
 
-    # ── 보수적 목표가: BB상단 vs 현재가 위 매물대 저항 중 낮은 값 ─────────
-    candidates_cons = [bb_upper]
-    if resistance_level and resistance_level > current:
-        candidates_cons.append(resistance_level)
-    conservative_target = round(min(candidates_cons), 2)
+    # BB 상단 돌파 여부
+    above_bb = current >= bb_upper * 0.995
 
-    # ── 공격적 목표가: 신고가 영역이면 피보 1.618, 아니면 최대 저항 × 1.05 ──
-    if is_new_high and fib_1618 and fib_1618 > current * 1.01:
+    # 모든 저항선 돌파 여부 (추세 홀딩 판정용)
+    all_resistance_broken = above_bb and (
+        resistance_level is None or current >= resistance_level * 0.99
+    )
+
+    # ── 보수적 목표가: BB돌파 시 현재가+3%, 아니면 BB상단 vs 매물대 저항 중 낮은 값 ──
+    if above_bb:
+        conservative_target = round(current * 1.03, 2)
+    else:
+        candidates_cons = [bb_upper]
+        if resistance_level and resistance_level > current:
+            candidates_cons.append(resistance_level)
+        conservative_target = round(min(candidates_cons), 2)
+
+    # ── 공격적 목표가: BB돌파 시 피보 0.618 확장(=fib_1618) 또는 전고점+10% ──
+    if above_bb:
+        if fib_1618 and fib_1618 > current * 1.02:
+            aggressive_target = fib_1618
+        else:
+            aggressive_target = round(swing_high * 1.10, 2)
+    elif is_new_high and fib_1618 and fib_1618 > current * 1.01:
         aggressive_target = fib_1618
     elif resistance_level and resistance_level > current:
         aggressive_target = round(max(bb_upper, resistance_level) * 1.05, 2)
@@ -2994,13 +3042,16 @@ def get_sell_target_price(data: pd.DataFrame) -> dict:
     aggr_gap = (aggressive_target - current) / current * 100
 
     # 매도 타이밍 신호
-    if current >= bb_upper * 0.995:
+    if is_new_high and all_resistance_broken:
+        sell_timing = "🚀 추세 홀딩 — 신고가 돌파, 트레일링 스탑 유지"
+        sell_color  = "#b9f6ca"
+    elif above_bb:
         sell_timing = "🔴 BB상단 돌파 — 즉시 분할매도 고려"
         sell_color  = "#ef9a9a"
     elif resistance_level and current >= resistance_level * 0.98:
         sell_timing = "🟠 매물대 저항 근접 — 부분 익절 고려"
         sell_color  = "#ffab91"
-    elif cons_gap <= 3.0:
+    elif 0 < cons_gap <= 3.0:
         sell_timing = "🟡 보수적 목표가 근접 — 매도 준비"
         sell_color  = "#fff176"
     else:
