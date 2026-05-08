@@ -7,6 +7,7 @@ import os
 import queue
 import concurrent.futures
 import time
+import requests
 import streamlit as st
 from fundamental_db import load_settings_db, save_settings_db
 import yfinance as yf
@@ -59,6 +60,28 @@ except Exception as _import_err:
         f"```\n{_tb.format_exc()}\n```"
     )
     st.stop()
+
+# ─── Flask API 연동 ───────────────────────────────────────────────────────────
+_API_BASE = "http://localhost:5000"
+
+
+def _api(method: str, path: str, *, json=None, token: str | None = None, timeout: int = 6):
+    """Flask API 호출 헬퍼. (status_code, body_dict) 반환. 연결 실패 시 (None, {error})."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        resp = requests.request(
+            method, _API_BASE + path, json=json, headers=headers, timeout=timeout
+        )
+        try:
+            body = resp.json()
+        except Exception:
+            body = {}
+        return resp.status_code, body
+    except requests.exceptions.ConnectionError:
+        return None, {"error": "Flask API 서버에 연결할 수 없습니다 — python flask_api.py 를 먼저 실행하세요"}
+    except Exception as _e:
+        return None, {"error": str(_e)}
+
 
 # ─── 페이지 설정 ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -214,6 +237,11 @@ def save_watchlist(wl: list) -> None:
 
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist()
+
+# 포트폴리오 인증 세션
+for _sk in ("auth_token", "auth_user_id", "auth_email"):
+    if _sk not in st.session_state:
+        st.session_state[_sk] = None
 
 _saved_settings = load_settings()
 
@@ -794,12 +822,13 @@ st.markdown("# 📈 AI 주식 분석 대시보드")
 _loading_ph = st.empty()
 
 # ─── 탭 레이아웃 (데이터 로딩 전 정의 — 탭 내 로딩 상태 표시용) ─────────────────
-tab_market, tab_chart, tab_rec, tab_news, tab_fund = st.tabs([
+tab_market, tab_chart, tab_rec, tab_news, tab_fund, tab_portfolio = st.tabs([
     "🌐 시장 현황",
     "📊 차트 분석",
     "⭐ 추천 종목",
     "📰 뉴스 & 관련 종목",
     "🏛️ 펀더멘털 & 기관",
+    "💼 내 포트폴리오",
 ])
 
 # 분석 완료 직후 차트 탭으로 자동 이동
@@ -3641,6 +3670,35 @@ with tab_chart:
                     else:
                         st.info(_d, icon="🔷")
 
+        # ── 포트폴리오 추가 버튼 ───────────────────────────────────────────────
+        if avg_price_input > 0:
+            _pf_token = st.session_state.get("auth_token")
+            if _pf_token:
+                _qty_col, _add_col = st.columns([2, 3])
+                with _qty_col:
+                    _qty_input = st.number_input(
+                        "수량",
+                        min_value=0.01, value=1.0, step=0.01,
+                        format="%.2f",
+                        label_visibility="collapsed",
+                        key=f"qty_input_{ticker}",
+                    )
+                with _add_col:
+                    if st.button("💼 포트폴리오에 추가", use_container_width=True,
+                                 key=f"pf_add_{ticker}"):
+                        _sc, _bd = _api(
+                            "POST", "/portfolio/add",
+                            json={"ticker": ticker, "avg_price": avg_price_input,
+                                  "quantity": _qty_input},
+                            token=_pf_token,
+                        )
+                        if _sc == 201:
+                            st.success(f"{ticker} 포트폴리오에 추가되었습니다.")
+                        else:
+                            st.error(_bd.get("error", "추가 실패"))
+            else:
+                st.caption("💼 포트폴리오에 추가하려면 **내 포트폴리오** 탭에서 로그인하세요.")
+
     # ── 투자자별 매매 동향 (Naver Finance) ──────────────────────────────────────
     _is_krx_chart = _aticker and (_aticker.endswith(".KS") or _aticker.endswith(".KQ"))
     if _data_ready and _is_krx_chart:
@@ -3681,3 +3739,196 @@ with tab_chart:
         else:
             st.caption("투자자 매매 동향 데이터를 불러올 수 없습니다.")
 
+
+# ─── 내 포트폴리오 탭 ─────────────────────────────────────────────────────────
+with tab_portfolio:
+    _tok  = st.session_state.get("auth_token")
+    _uid  = st.session_state.get("auth_user_id")
+    _mail = st.session_state.get("auth_email")
+
+    # ── 로그인 상태 헤더 ──────────────────────────────────────────────────────
+    if _tok:
+        _hdr_col, _out_col = st.columns([5, 1])
+        _hdr_col.markdown(f"**💼 내 포트폴리오** — `{_mail}`")
+        with _out_col:
+            if st.button("로그아웃", use_container_width=True, key="pf_logout"):
+                _api("POST", "/logout", token=_tok)
+                st.session_state["auth_token"]   = None
+                st.session_state["auth_user_id"] = None
+                st.session_state["auth_email"]   = None
+                st.rerun()
+    else:
+        st.markdown("**💼 내 포트폴리오** — 로그인이 필요합니다")
+
+    st.divider()
+
+    # ── 미로그인: 로그인 / 회원가입 폼 ──────────────────────────────────────
+    if not _tok:
+        _auth_mode = st.radio(
+            "모드 선택",
+            ["로그인", "회원가입"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        with st.form("pf_auth_form"):
+            _pf_email = st.text_input("이메일", placeholder="you@example.com")
+            _pf_pw    = st.text_input("비밀번호", type="password",
+                                      placeholder="6자 이상")
+            _pf_submit = st.form_submit_button(
+                _auth_mode, use_container_width=True, type="primary"
+            )
+
+        if _pf_submit:
+            if _auth_mode == "회원가입":
+                _sc, _bd = _api("POST", "/register",
+                                json={"email": _pf_email, "password": _pf_pw})
+                if _sc == 201:
+                    st.success("회원가입 완료! 로그인해 주세요.")
+                elif _sc is None:
+                    st.error(_bd["error"])
+                else:
+                    st.error(_bd.get("error", "회원가입 실패"))
+            else:
+                _sc, _bd = _api("POST", "/login",
+                                json={"email": _pf_email, "password": _pf_pw})
+                if _sc == 200 and _bd.get("ok"):
+                    st.session_state["auth_token"]   = _bd["token"]
+                    st.session_state["auth_user_id"] = _bd["user_id"]
+                    st.session_state["auth_email"]   = _bd["email"]
+                    st.rerun()
+                elif _sc is None:
+                    st.error(_bd["error"])
+                else:
+                    st.error(_bd.get("error", "로그인 실패"))
+        st.stop()
+
+    # ── 로그인 완료: 포트폴리오 조회 ─────────────────────────────────────────
+    _sc, _items = _api("GET", "/portfolio", token=_tok)
+    if _sc is None:
+        st.error(_items["error"])
+        st.stop()
+    if _sc == 401:
+        # 토큰 만료 처리
+        st.session_state["auth_token"]   = None
+        st.session_state["auth_user_id"] = None
+        st.session_state["auth_email"]   = None
+        st.warning("세션이 만료되었습니다. 다시 로그인해 주세요.")
+        st.rerun()
+
+    # ── 수익률 계산을 위한 현재가 일괄 조회 ──────────────────────────────────
+    _pf_tickers = list({it["ticker"] for it in _items}) if _items else []
+    _pf_prices: dict[str, float] = {}
+    if _pf_tickers:
+        try:
+            _pf_raw = yf.download(
+                _pf_tickers, period="2d", auto_adjust=True,
+                progress=False, threads=True,
+            )
+            for _t in _pf_tickers:
+                try:
+                    if isinstance(_pf_raw.columns, pd.MultiIndex):
+                        _s = _pf_raw["Close"][_t].dropna()
+                    else:
+                        _s = _pf_raw["Close"].dropna()
+                    if not _s.empty:
+                        _pf_prices[_t] = float(_s.iloc[-1])
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # ── 종목 추가 폼 ──────────────────────────────────────────────────────────
+    with st.expander("➕ 종목 수동 추가", expanded=False):
+        with st.form("pf_add_form"):
+            _fa_c1, _fa_c2, _fa_c3 = st.columns([2, 2, 1])
+            _fa_ticker = _fa_c1.text_input("티커", placeholder="005930.KS / AAPL")
+            _fa_price  = _fa_c2.number_input("평단가", min_value=0.01, value=1.0,
+                                              step=0.01, format="%.2f")
+            _fa_qty    = _fa_c3.number_input("수량", min_value=0.01, value=1.0,
+                                              step=0.01, format="%.2f")
+            if st.form_submit_button("추가", use_container_width=True, type="primary"):
+                if not _fa_ticker.strip():
+                    st.error("티커를 입력하세요.")
+                else:
+                    _sc2, _bd2 = _api(
+                        "POST", "/portfolio/add",
+                        json={"ticker": _fa_ticker.strip().upper(),
+                              "avg_price": _fa_price, "quantity": _fa_qty},
+                        token=_tok,
+                    )
+                    if _sc2 == 201:
+                        st.success(_bd2.get("message", "추가 완료"))
+                        st.rerun()
+                    else:
+                        st.error(_bd2.get("error", "추가 실패"))
+
+    # ── 보유 종목 테이블 ──────────────────────────────────────────────────────
+    if not _items:
+        st.info("보유 종목이 없습니다. 차트 분석 탭에서 평단가를 입력한 뒤 '포트폴리오에 추가' 버튼을 눌러보세요.", icon="💡")
+    else:
+        # 요약 메트릭
+        _total_cost = sum(it["avg_price"] * it["quantity"] for it in _items)
+        _total_val  = sum(
+            _pf_prices.get(it["ticker"], it["avg_price"]) * it["quantity"]
+            for it in _items
+        )
+        _total_pnl  = _total_val - _total_cost
+        _total_pnl_pct = (_total_pnl / _total_cost * 100) if _total_cost else 0.0
+
+        _m1, _m2, _m3 = st.columns(3)
+        _m1.metric("총 매수 금액",  f"{_total_cost:,.0f}")
+        _m2.metric("총 평가 금액",  f"{_total_val:,.0f}")
+        _pnl_delta = f"{_total_pnl:+,.0f} ({_total_pnl_pct:+.2f}%)"
+        _m3.metric("총 손익", _pnl_delta,
+                   delta=f"{_total_pnl_pct:+.2f}%",
+                   delta_color="normal")
+
+        st.divider()
+
+        # 종목별 카드
+        for _it in _items:
+            _it_ticker  = _it["ticker"]
+            _it_avg     = _it["avg_price"]
+            _it_qty     = _it["quantity"]
+            _it_cur     = _pf_prices.get(_it_ticker, _it_avg)
+            _it_cost    = _it_avg * _it_qty
+            _it_val     = _it_cur * _it_qty
+            _it_pnl     = _it_val - _it_cost
+            _it_pnl_pct = (_it_pnl / _it_cost * 100) if _it_cost else 0.0
+            _it_pfmt    = "{:,.0f}" if _it_avg > 500 else "{:,.2f}"
+            _it_pnl_clr = "#a5d6a7" if _it_pnl_pct >= 0 else "#ef9a9a"
+            _it_pnl_sgn = "▲" if _it_pnl_pct >= 0 else "▼"
+            _cur_avail  = _it_ticker in _pf_prices
+
+            _row_left, _row_right = st.columns([6, 1])
+            with _row_left:
+                st.markdown(
+                    f'<div style="background:#1e2130;border-radius:8px;padding:10px 14px;margin-bottom:4px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'  <div>'
+                    f'    <span style="font-size:1.0rem;font-weight:bold;color:#e0e0e0;">{_it_ticker}</span>'
+                    f'    <span style="font-size:0.8rem;color:#666;margin-left:8px;">{_it_qty:g}주</span>'
+                    f'  </div>'
+                    f'  <div style="text-align:right;">'
+                    f'    <div style="font-size:0.9rem;color:#aaa;">'
+                    f'      평단 {_it_pfmt.format(_it_avg)}'
+                    + (f' → 현재 {_it_pfmt.format(_it_cur)}' if _cur_avail else '') +
+                    f'    </div>'
+                    f'    <div style="font-size:1.0rem;font-weight:bold;color:{_it_pnl_clr};">'
+                    f'      {_it_pnl_sgn} {_it_pfmt.format(abs(_it_pnl))} ({_it_pnl_pct:+.2f}%)'
+                    f'    </div>'
+                    f'  </div>'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with _row_right:
+                if st.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
+                    _sc3, _bd3 = _api(
+                        "DELETE", f"/portfolio/{_it['id']}", token=_tok
+                    )
+                    if _sc3 == 200:
+                        st.rerun()
+                    else:
+                        st.error(_bd3.get("error", "삭제 실패"))
