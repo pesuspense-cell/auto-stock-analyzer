@@ -31,6 +31,12 @@ from stock_ai import (
     # ── ETF 유틸리티 ─────────────────────────────────────────────────────────
     is_etf_ticker,
     _ETF_PORTFOLIO_MAP,
+
+    # ── 전체 종목 메타데이터 & 한글 검색 엔진 ────────────────────────────────
+    _US_KR_ALIASES,
+    get_stock_metadata,
+    resolve_ticker,
+    _load_all_stock_metadata,
 )
 
 __all__ = [
@@ -52,4 +58,8 @@ __all__ = [
     "get_top_nasdaq_stocks",
     "is_etf_ticker",
     "_ETF_PORTFOLIO_MAP",
+    "_US_KR_ALIASES",
+    "get_stock_metadata",
+    "resolve_ticker",
+    "_load_all_stock_metadata",
 ]

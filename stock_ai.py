@@ -14,6 +14,8 @@ stock_ai.py - 주식 분석 핵심 알고리즘 엔진
   src/utils.py       — 종목 사전·지수 상수·시장 데이터
 """
 import asyncio
+import json
+import os
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
@@ -88,6 +90,256 @@ INDICES = {
     "나스닥": "^IXIC",
     "S&P500": "^GSPC",
 }
+
+# ─── 전체 종목 메타데이터 캐시 & 한글 검색 엔진 ─────────────────────────────────
+
+# 주요 미국 종목 한글명 정적 매핑 (FDR English-only 보완)
+_US_KR_ALIASES: dict = {
+    # 반도체·AI
+    "NVDA": "엔비디아",   "AMD": "AMD",          "INTC": "인텔",
+    "QCOM": "퀄컴",       "AVGO": "브로드컴",    "TXN": "텍사스인스트루먼트",
+    "MU":   "마이크론",   "AMAT": "어플라이드머티리얼즈",
+    "LRCX": "램리서치",   "KLAC": "KLA",         "ASML": "ASML",
+    "ARM":  "ARM홀딩스",  "MRVL": "마벨테크놀로지",
+    "ON":   "온세미컨덕터","SWKS": "스카이웍스",  "QRVO": "코르보",
+    # 빅테크
+    "AAPL": "애플",       "MSFT": "마이크로소프트","GOOGL": "알파벳(A)",
+    "GOOG": "알파벳(C)",  "AMZN": "아마존",       "META": "메타",
+    "NFLX": "넷플릭스",   "TSLA": "테슬라",       "CRM": "세일즈포스",
+    "ORCL": "오라클",     "IBM": "IBM",           "DELL": "델테크놀로지스",
+    "NOW":  "서비스나우", "SNOW": "스노우플레이크","PLTR": "팔란티어",
+    "UBER": "우버",       "LYFT": "리프트",       "ABNB": "에어비앤비",
+    "SPOT": "스포티파이", "SHOP": "쇼피파이",     "ADBE": "어도비",
+    "INTU": "인튜이트",   "PANW": "팔로알토네트웍스","CRWD": "크라우드스트라이크",
+    "ZS":   "지스케일러", "DDOG": "데이터독",     "HUBS": "허브스팟",
+    # 금융
+    "JPM":  "JP모건",     "BAC": "뱅크오브아메리카","WFC": "웰스파고",
+    "GS":   "골드만삭스", "MS": "모건스탠리",     "C": "씨티그룹",
+    "BLK":  "블랙록",     "V": "비자",            "MA": "마스터카드",
+    "AXP":  "아메리칸익스프레스","PYPL": "페이팔","SQ": "블록(스퀘어)",
+    "COF":  "캐피털원",   "USB": "US뱅코프",
+    # 헬스케어
+    "LLY":  "일라이릴리", "JNJ": "존슨앤존슨",   "PFE": "화이자",
+    "MRNA": "모더나",     "ABBV": "애브비",       "UNH": "유나이티드헬스",
+    "CVS":  "CVS헬스",    "AMGN": "암젠",         "GILD": "길리어드사이언스",
+    "BIIB": "바이오젠",   "REGN": "리제네론",
+    # 소비재·리테일·미디어
+    "WMT":  "월마트",     "COST": "코스트코",     "TGT": "타깃",
+    "NKE":  "나이키",     "SBUX": "스타벅스",     "MCD": "맥도날드",
+    "DIS":  "월트디즈니", "CMCSA": "컴캐스트",
+    # 에너지
+    "XOM":  "엑슨모빌",   "CVX": "셰브런",        "COP": "코노코필립스",
+    "OXY":  "옥시덴탈",   "SLB": "슐럼버거",
+    # 인프라·통신
+    "T":    "AT&T",       "VZ": "버라이즌",       "TMUS": "T모바일",
+    # 전기차·모빌리티
+    "RIVN": "리비안",     "LCID": "루시드",       "F": "포드",
+    "GM":   "제너럴모터스",
+    # 주요 ETF
+    "SPY":  "S&P500ETF(SPY)",       "QQQ": "나스닥100ETF(QQQ)",
+    "SOXL": "반도체레버리지ETF",    "SOXS": "반도체인버스ETF",
+    "TQQQ": "나스닥3배ETF",         "SQQQ": "나스닥인버스3배ETF",
+    "ARKK": "ARK혁신ETF",           "IWM": "러셀2000ETF",
+    "GLD":  "금ETF(GLD)",           "SLV": "은ETF(SLV)",
+    "TLT":  "미장기국채ETF(TLT)",   "HYG": "하이일드채권ETF",
+}
+
+_METADATA_CACHE_PATH     = os.path.join(os.path.dirname(__file__), "stock_metadata.json")
+_METADATA_CACHE_TTL_DAYS = 7
+_STOCK_META_CACHE: "dict | None" = None  # 모듈 레벨 싱글턴
+
+
+def _load_all_stock_metadata(force_refresh: bool = False) -> dict:
+    """
+    전체 종목 메타데이터 로드 (KR + US) with 7일 파일 캐시.
+
+    반환:
+      {ticker: {"name": str, "name_kr": str|None, "market": str}, ...}
+
+    소스 우선순위: 파일 캐시 → FDR 실시간 → 정적 폴백
+    티커를 Key로 사용하므로 지수 간 중복 자동 제거.
+    중복 시 우선순위: S&P500 > NASDAQ > NYSE.
+    """
+    global _STOCK_META_CACHE
+
+    # ── 파일 캐시 유효 여부 확인 ──────────────────────────────────────────
+    if not force_refresh and os.path.exists(_METADATA_CACHE_PATH):
+        try:
+            with open(_METADATA_CACHE_PATH, "r", encoding="utf-8") as _f:
+                _cached = json.load(_f)
+            _generated = datetime.fromisoformat(_cached.get("generated_at", "2000-01-01"))
+            if (datetime.now() - _generated).days < _METADATA_CACHE_TTL_DAYS:
+                _STOCK_META_CACHE = _cached["stocks"]
+                return _STOCK_META_CACHE
+        except Exception:
+            pass
+
+    stocks: dict = {}
+
+    # ── KR 시장 (KOSPI + KOSDAQ) ─────────────────────────────────────────
+    try:
+        import FinanceDataReader as fdr
+        for _mkt, _sfx in [("KOSPI", "KS"), ("KOSDAQ", "KQ")]:
+            try:
+                _df = fdr.StockListing(_mkt)
+                _df = _df.dropna(subset=["Code", "Name"])
+                _df["Code"] = _df["Code"].astype(str).str.strip()
+                _df["Name"] = _df["Name"].astype(str).str.strip()
+                _mask = (
+                    _df["Code"].str.len().eq(6) &
+                    _df["Code"].str.isdigit() &
+                    _df["Name"].ne("")
+                )
+                for _, _row in _df[_mask].iterrows():
+                    _ticker = f"{_row['Code']}.{_sfx}"
+                    stocks[_ticker] = {"name": _row["Name"], "market": _mkt}
+            except Exception:
+                continue
+    except ImportError:
+        pass
+
+    # KR 정적 폴백 (FDR 실패 보장)
+    for _name, _ticker in {**KOSPI_STOCKS, **KOSDAQ_STOCKS}.items():
+        if _ticker not in stocks:
+            _mkt2 = "KOSPI" if _ticker.endswith(".KS") else "KOSDAQ"
+            stocks[_ticker] = {"name": _name, "market": _mkt2}
+
+    # ── US 시장 (S&P500 우선 → NASDAQ → NYSE) ────────────────────────────
+    _us_priority = {"S&P500": 0, "NASDAQ": 1, "NYSE": 2}
+    _us_seen: dict = {}  # sym → priority
+
+    try:
+        import FinanceDataReader as fdr
+        for _mkt_tag, _listing_key in [("S&P500", "S&P500"), ("NASDAQ", "NASDAQ"), ("NYSE", "NYSE")]:
+            try:
+                _df2 = fdr.StockListing(_listing_key).dropna(subset=["Symbol", "Name"])
+                _df2["Symbol"] = _df2["Symbol"].astype(str).str.strip()
+                _df2["Name"]   = _df2["Name"].astype(str).str.strip()
+                _mask2 = (
+                    _df2["Symbol"].ne("") & _df2["Name"].ne("") &
+                    _df2["Symbol"].str.replace(".", "", regex=False).str.isalpha()
+                )
+                _prio = _us_priority.get(_mkt_tag, 9)
+                for _, _row2 in _df2[_mask2].iterrows():
+                    _sym = _row2["Symbol"]
+                    # 이미 더 높은 우선순위 출처에서 로드했으면 스킵
+                    if _us_seen.get(_sym, 9) <= _prio:
+                        continue
+                    _entry: dict = {"name": _row2["Name"], "market": _mkt_tag}
+                    if _sym in _US_KR_ALIASES:
+                        _entry["name_kr"] = _US_KR_ALIASES[_sym]
+                    stocks[_sym]        = _entry
+                    _us_seen[_sym]      = _prio
+            except Exception:
+                continue
+    except ImportError:
+        pass
+
+    # US 정적 폴백
+    for _name2, _sym2 in US_STOCKS.items():
+        if _sym2 not in stocks:
+            _e: dict = {"name": _name2, "market": "US"}
+            if _sym2 in _US_KR_ALIASES:
+                _e["name_kr"] = _US_KR_ALIASES[_sym2]
+            stocks[_sym2] = _e
+
+    # ── 파일 캐시 저장 ────────────────────────────────────────────────────
+    try:
+        _payload = {"generated_at": datetime.now().isoformat(), "stocks": stocks}
+        with open(_METADATA_CACHE_PATH, "w", encoding="utf-8") as _fw:
+            json.dump(_payload, _fw, ensure_ascii=False)
+    except Exception:
+        pass
+
+    _STOCK_META_CACHE = stocks
+    return stocks
+
+
+def get_stock_metadata() -> dict:
+    """모듈 레벨 싱글턴으로 메타데이터 반환. 최초 1회만 로드."""
+    global _STOCK_META_CACHE
+    if _STOCK_META_CACHE is None:
+        _STOCK_META_CACHE = _load_all_stock_metadata()
+    return _STOCK_META_CACHE
+
+
+def _has_korean(text: str) -> bool:
+    """문자열에 한글 자모/음절이 포함되면 True."""
+    return bool(_re_global.search(r"[가-힣ᄀ-ᇿ㄰-㆏]", text))
+
+
+def resolve_ticker(query: str, top_n: int = 10) -> list:
+    """
+    한글·영문·티커 코드로 종목 검색 → 후보 목록 반환.
+
+    검색 우선순위:
+      1. 티커 정확 일치 (대소문자 무시)
+      2. 이름 또는 한글명 정확 일치
+      3. 이름/한글명/티커 contains 부분 일치
+
+    반환:
+      [{"ticker": str, "name": str, "name_kr": str|None, "market": str}, ...]
+
+    예)  resolve_ticker("엔비")    → [{"ticker":"NVDA","name_kr":"엔비디아",...}]
+         resolve_ticker("삼성전자") → [{"ticker":"005930.KS","name":"삼성전자",...}]
+         resolve_ticker("AAPL")    → [{"ticker":"AAPL","name":"Apple Inc",...}]
+    """
+    q = query.strip()
+    if not q:
+        return []
+
+    meta    = get_stock_metadata()
+    q_lower = q.lower()
+    is_kor  = _has_korean(q)
+
+    exact_ticker:  list = []
+    exact_name:    list = []
+    partial_match: list = []
+
+    for _t, _info in meta.items():
+        _name    = _info.get("name", "")
+        _name_kr = _info.get("name_kr", "")
+        _market  = _info.get("market", "")
+        _entry   = {
+            "ticker":  _t,
+            "name":    _name,
+            "name_kr": _name_kr or None,
+            "market":  _market,
+        }
+
+        # 1. 티커 정확 일치 (KR 코드 숫자부분도 허용: "005930" → "005930.KS")
+        _t_base = _t.split(".")[0].upper()
+        if _t.upper() == q.upper() or _t_base == q.upper():
+            exact_ticker.append(_entry)
+            continue
+
+        # 2. 이름/한글명 정확 일치
+        if is_kor:
+            if q == _name_kr or q == _name:
+                exact_name.append(_entry)
+                continue
+        else:
+            if q_lower == _name.lower():
+                exact_name.append(_entry)
+                continue
+
+        # 3. 부분 일치 (contains)
+        if is_kor:
+            if (_name_kr and q in _name_kr) or q in _name:
+                partial_match.append(_entry)
+        else:
+            if q_lower in _name.lower() or q_lower in _t.lower():
+                partial_match.append(_entry)
+
+    # 합산 후 중복 제거
+    _seen: set = set()
+    _dedup: list = []
+    for _r in (exact_ticker + exact_name + partial_match):
+        if _r["ticker"] not in _seen:
+            _seen.add(_r["ticker"])
+            _dedup.append(_r)
+
+    return _dedup[:top_n]
 
 # ─── 데이터 로드 및 지표 계산 ─────────────────────────────────────────────────
 
@@ -1897,12 +2149,14 @@ def get_top_nasdaq_stocks(n: int = 500) -> dict:
 
 def get_us_stock_list() -> dict:
     """
-    S&P500 + 나스닥 통합 종목 이름→티커 매핑 (이름 검색용)
-    반환 형태: {"Apple (AAPL) [S&P500]": "AAPL", ...}
+    S&P500 → NASDAQ 순으로 통합. 티커 기준 중복 제거 후 반환.
+    한글명이 있는 종목은 "한글명 / 영문명 (티커) [시장]" 형식으로 표시.
+    반환 형태: {"애플 / Apple Inc (AAPL) [S&P500]": "AAPL", ...}
     """
     try:
         import FinanceDataReader as fdr
-        combined: dict[str, str] = {}
+        combined: dict = {}
+        seen_symbols: set = set()  # 중복 제거
 
         for market_tag, listing_key in [("S&P500", "S&P500"), ("NASDAQ", "NASDAQ")]:
             try:
@@ -1914,16 +2168,27 @@ def get_us_stock_list() -> dict:
                     df["Symbol"].str.replace(".", "", regex=False).str.isalpha()
                 )
                 df = df[mask]
-                df["_display"] = df["Name"] + " (" + df["Symbol"] + ") [" + market_tag + "]"
-                combined.update(dict(zip(df["_display"], df["Symbol"])))
+                for _, row in df.iterrows():
+                    sym = row["Symbol"]
+                    if sym in seen_symbols:
+                        continue  # 이미 높은 우선순위 지수(S&P500)에서 로드됨
+                    seen_symbols.add(sym)
+                    kr = _US_KR_ALIASES.get(sym, "")
+                    prefix = f"{kr} / " if kr else ""
+                    display = f"{prefix}{row['Name']} ({sym}) [{market_tag}]"
+                    combined[display] = sym
             except Exception:
                 continue
 
         return combined if combined else {
-            f"{n} ({s}) [기본]": s for n, s in US_STOCKS.items()
+            f"{_US_KR_ALIASES.get(s, n)} / {n} ({s}) [기본]": s
+            for n, s in US_STOCKS.items()
         }
     except Exception:
-        return {f"{n} ({s}) [기본]": s for n, s in US_STOCKS.items()}
+        return {
+            f"{_US_KR_ALIASES.get(s, n)} / {n} ({s}) [기본]": s
+            for n, s in US_STOCKS.items()
+        }
 
 
 # ─── KRX 전체 종목 리스트 (이름 검색용) ──────────────────────────────────────

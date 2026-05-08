@@ -31,6 +31,12 @@ Thumbs.db
 # 로컬 DB 캐시
 *.db
 
+# 종목 메타데이터 캐시 (7일 TTL, 로컬 자동 재생성)
+stock_metadata.json
+
+# 로그
+logs/
+
 # Redis 포터블 바이너리
 redis/
 
