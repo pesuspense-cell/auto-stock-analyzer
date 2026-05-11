@@ -959,7 +959,9 @@ if _data_ready:
         st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
         st.stop()
 
-    close = data["Close"]
+    # data["Close"] 가 중복 컬럼으로 DataFrame 반환될 수 있으므로 Series로 보장
+    _close_raw = data["Close"]
+    close = _close_raw.iloc[:, 0] if isinstance(_close_raw, pd.DataFrame) else _close_raw
 
     def _compute_signals_and_fund():
         try:
@@ -982,9 +984,9 @@ if _data_ready:
             _last = float(close.iloc[-1]) if not close.empty else 0.0
             _fsd = calculate_fundamental_score(fund_info, _last)
             return _va, _sig, _adv, _exp, _fsd
-        except (IndexError, KeyError) as _e:
+        except (IndexError, KeyError, TypeError, ValueError) as _e:
             import logging
-            logging.getLogger(__name__).warning(f"[compute] {_aticker}: {_e}")
+            logging.getLogger(__name__).warning(f"[compute] {_aticker}: {type(_e).__name__}: {_e}")
             return {}, {"score": 0, "label": "분석 오류", "badge": "⚠️", "reasons": []}, {}, {}, {}
 
     # ── 신호 연산 + 뉴스 감성을 병렬 실행, 완료까지 타이머 갱신 ─────────────────
@@ -2707,8 +2709,12 @@ def generate_signal(data, advanced, hybrid, news_result, expected, signals):
     if data.empty or len(data) < 2:
         return "WAIT", "데이터가 부족합니다. 관망을 권장합니다.", ["데이터 부족"]
 
-    close   = data["Close"]
-    current = float(close.iloc[-1])
+    _close_raw = data["Close"]
+    close   = _close_raw.iloc[:, 0] if isinstance(_close_raw, pd.DataFrame) else _close_raw
+    try:
+        current = float(close.iloc[-1])
+    except (IndexError, TypeError, ValueError):
+        return "WAIT", "데이터가 부족합니다. 관망을 권장합니다.", ["데이터 부족"]
 
     trend_score  = advanced.get("trend_score",  50.0)
     volume_score = advanced.get("volume_score", 50.0)

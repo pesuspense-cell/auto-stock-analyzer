@@ -486,15 +486,18 @@ def _flatten_columns(data: pd.DataFrame) -> pd.DataFrame:
     """
     yfinance MultiIndex 컬럼을 단순 컬럼으로 평탄화.
     (field, ticker) 또는 (ticker, field) 양쪽 형식 모두 처리.
+    평탄화 후 중복 컬럼이 생기면 첫 번째만 남긴다.
     """
-    if not isinstance(data.columns, pd.MultiIndex):
-        return data
-    _ohlcv = {"Open", "High", "Low", "Close", "Volume"}
-    lvl0 = set(data.columns.get_level_values(0))
-    if _ohlcv & lvl0:          # level 0 에 Close 등이 있으면 → (field, ticker)
-        data.columns = data.columns.get_level_values(0)
-    else:                       # level 1 에 있으면 → (ticker, field)
-        data.columns = data.columns.get_level_values(1)
+    if isinstance(data.columns, pd.MultiIndex):
+        _ohlcv = {"Open", "High", "Low", "Close", "Volume"}
+        lvl0 = set(data.columns.get_level_values(0))
+        if _ohlcv & lvl0:      # level 0 에 Close 등이 있으면 → (field, ticker)
+            data.columns = data.columns.get_level_values(0)
+        else:                   # level 1 에 있으면 → (ticker, field)
+            data.columns = data.columns.get_level_values(1)
+    # 중복 컬럼 제거 — 첫 번째 유지 (data["Close"] 가 DataFrame 반환되는 것 방지)
+    if data.columns.duplicated().any():
+        data = data.loc[:, ~data.columns.duplicated()]
     return data
 
 
