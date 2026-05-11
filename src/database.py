@@ -28,8 +28,9 @@ def _db_url() -> str:
     if not url:
         try:
             import streamlit as st
-            url = st.secrets.get("SUPABASE_DB_URL", "")
-        except Exception:
+            # st.secrets는 dict-like; KeyError 방어
+            url = st.secrets["SUPABASE_DB_URL"]
+        except (KeyError, AttributeError, Exception):
             pass
     if not url:
         raise RuntimeError(
@@ -42,16 +43,35 @@ def _db_url() -> str:
 def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     global _pool
     if _pool is None:
-        _pool = psycopg2.pool.ThreadedConnectionPool(1, 10, dsn=_db_url())
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            1, 10,
+            dsn=_db_url(),
+            connect_timeout=10,   # 타임아웃 10초 — Cannot assign requested address 방어
+        )
     return _pool
 
 
 @contextmanager
 def _conn():
-    """스레드 안전 커넥션 풀에서 연결을 대여하고 반납한다."""
+    """스레드 안전 커넥션 풀에서 연결을 대여하고 반납한다.
+
+    pool_pre_ping 동등 로직: 커넥션을 꺼낼 때 SELECT 1로 생존 여부를 확인하고,
+    죽은 연결이면 해당 연결을 폐기하고 풀 전체를 재생성한 뒤 새 연결을 반환한다.
+    """
+    global _pool
     pool = _get_pool()
     con = pool.getconn()
     try:
+        # ── pre-ping: 연결 유효성 검사 ──────────────────────────────────────
+        try:
+            with con.cursor() as _cur:
+                _cur.execute("SELECT 1")
+        except psycopg2.OperationalError:
+            # 죽은 연결 폐기 → 풀 재생성 → 새 연결
+            pool.putconn(con, close=True)
+            _pool = None
+            pool = _get_pool()
+            con = pool.getconn()
         yield con
     finally:
         pool.putconn(con)
