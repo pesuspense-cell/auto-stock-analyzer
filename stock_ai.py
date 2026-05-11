@@ -2255,9 +2255,9 @@ def get_krx_etf_list() -> dict:
         if df.empty:
             raise ValueError("empty")
         code_col = "Symbol" if "Symbol" in df.columns else "Code"
-        df[code_col] = df[code_col].astype(str).str.strip().str.zfill(6)
+        df[code_col] = df[code_col].astype(str).str.strip()
         df["Name"]   = df["Name"].astype(str).str.strip()
-        mask = df["Name"].ne("") & df[code_col].str.len().eq(6) & df[code_col].str.isdigit()
+        mask = df["Name"].ne("") & df[code_col].str.len().eq(6)
         df = df[mask]
         result = {}
         for _, row in df.iterrows():

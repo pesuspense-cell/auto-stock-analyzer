@@ -2808,7 +2808,7 @@ with tab_chart:
                 st.rerun()
 
     if data.empty:
-        st.stop()  # 시장 현황 탭은 이미 렌더링됨, 이후 탭은 독립 컨테이너
+        _data_ready = False  # 데이터 없음 — 이후 차트 분석은 _data_ready 가드로 건너뜀
 
     # ── 거래 정지/주의 경고 배너 ─────────────────────────────────────────────
     if vol_anomaly.get("is_halted"):
