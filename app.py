@@ -4518,6 +4518,156 @@ def _render_portfolio_tab():
                     else:
                         st.error(_r3.get("error", "삭제 실패"))
 
+        st.divider()
+
+        # ── AI의 이번 주 제안 ─────────────────────────────────────────────────
+        _ai_h, _ai_btn = st.columns([5, 1])
+        _ai_h.markdown("#### 🤖 AI의 이번 주 제안")
+        _opt_result: dict = st.session_state.get("pf_opt_result", {})
+        if _ai_btn.button("섹터 분석", key="pf_opt_run", type="primary",
+                          use_container_width=True):
+            from src.portfolio_optimizer import (
+                classify_sectors, scan_sector_etfs, build_rebalancing_guide,
+            )
+            with st.spinner("섹터 분석 및 시장 주도주 스캔 중..."):
+                _sd  = classify_sectors(_items, _pf_prices)
+                _es  = scan_sector_etfs()
+                _opt_result = {
+                    "sector_data": _sd,
+                    "etf_scan":    _es,
+                    "guide":       build_rebalancing_guide(_sd, _es, _pf_nm),
+                }
+            st.session_state["pf_opt_result"] = _opt_result
+
+        if not _opt_result:
+            st.caption("'섹터 분석' 버튼으로 포트폴리오 섹터 편중도와 리밸런싱 제안을 확인하세요.")
+        else:
+            _sd_r   = _opt_result["sector_data"]
+            _es_r   = _opt_result["etf_scan"]
+            _guide  = _opt_result["guide"]
+            _sctrs  = _sd_r.get("sectors", {})
+
+            # ── 섹터 비중 바 차트 ──────────────────────────────────────────
+            if _sctrs:
+                st.markdown("**📊 섹터 비중**")
+                _bar_sorted = sorted(_sctrs.items(), key=lambda x: x[1]["weight"], reverse=True)
+                _bar_max    = max(v["weight"] for _, v in _bar_sorted) or 1
+                _bar_html   = '<div style="display:grid;gap:5px;margin-bottom:12px">'
+                for _sn, _sv in _bar_sorted:
+                    _sw   = _sv["weight"]
+                    _bc   = "#ef4444" if _sw > 30 else ("#ffd93d" if _sw > 20 else "#4fc3f7")
+                    _bpct = _sw / _bar_max * 100
+                    _tks  = ", ".join(
+                        _pf_nm.get(t, t) or t for t in _sv["tickers"]
+                    )
+                    _bar_html += (
+                        f'<div style="display:flex;align-items:center;gap:8px">'
+                        f'<div style="width:80px;font-size:.8rem;color:#ccc;text-align:right">{_sn}</div>'
+                        f'<div style="flex:1;background:#252836;border-radius:4px;height:18px;overflow:hidden">'
+                        f'<div style="width:{_bpct:.0f}%;height:100%;background:{_bc};'
+                        f'border-radius:4px;transition:.3s"></div></div>'
+                        f'<div style="width:44px;font-size:.8rem;font-weight:700;color:{_bc}">'
+                        f'{_sw:.1f}%</div>'
+                        f'<div style="font-size:.75rem;color:#666">{_tks}</div>'
+                        f'</div>'
+                    )
+                _bar_html += "</div>"
+                st.markdown(_bar_html, unsafe_allow_html=True)
+
+            # ── 4개 카드 그리드 ────────────────────────────────────────────
+            _gc1, _gc2 = st.columns(2)
+
+            # 카드 공통 CSS
+            _card_css = """<style>
+.opt-card{background:#1e2130;border-radius:12px;padding:16px;margin-bottom:8px;min-height:100px}
+.opt-card-title{font-size:.8rem;font-weight:700;color:#9e9e9e;margin-bottom:10px;letter-spacing:.5px}
+.opt-item{font-size:.85rem;line-height:1.7;padding:6px 10px;background:#252836;
+          border-radius:8px;margin:4px 0;word-break:keep-all}
+.opt-empty{color:#555;font-size:.82rem;font-style:italic}
+</style>"""
+            st.markdown(_card_css, unsafe_allow_html=True)
+
+            # 카드 1 — 섹터 집중 위험
+            _warn = _guide.get("concentration_warnings", [])
+            _warn_body = ""
+            for _w in _warn:
+                _wc  = "#ef4444" if _w["weight"] > 40 else "#ff8a65"
+                _wtk = ", ".join(_pf_nm.get(t, t) or t for t in _w["tickers"])
+                _warn_body += (
+                    f'<div class="opt-item" style="border-left:3px solid {_wc}">'
+                    f'<b style="color:{_wc}">{_w["sector"]} {_w["weight"]:.1f}%</b> 집중 — '
+                    f'<span style="color:#aaa">{_wtk}</span>'
+                    f'<br><span style="font-size:.75rem;color:#888">30% 초과: 비중 분산 권고</span>'
+                    f'</div>'
+                )
+            if not _warn_body:
+                _warn_body = '<span class="opt-empty">집중 위험 없음 — 양호한 분산</span>'
+            _gc1.markdown(
+                f'<div class="opt-card">'
+                f'<div class="opt-card-title">⚠️ 섹터 집중 위험</div>'
+                f'{_warn_body}</div>',
+                unsafe_allow_html=True,
+            )
+
+            # 카드 2 — 신규 편입 후보
+            _cands = _guide.get("new_candidates", [])
+            _cand_body = ""
+            for _cd in _cands:
+                _cand_body += (
+                    f'<div class="opt-item" style="border-left:3px solid #4fc3f7">'
+                    f'<b style="color:#4fc3f7">{_cd["name"]}</b> '
+                    f'<span style="color:#81c784">+{_cd["return_5d"]:.1f}%</span>'
+                    f'<br><span style="font-size:.75rem;color:#888">{_cd["reason"]}</span>'
+                    f'</div>'
+                )
+            if not _cand_body:
+                _cand_body = '<span class="opt-empty">현재 추천 섹터 없음</span>'
+            _gc2.markdown(
+                f'<div class="opt-card">'
+                f'<div class="opt-card-title">🎯 신규 편입 후보</div>'
+                f'{_cand_body}</div>',
+                unsafe_allow_html=True,
+            )
+
+            # 카드 3 — 수익 확정 권고
+            _pt = _guide.get("profit_take", [])
+            _pt_body = ""
+            for _p in _pt:
+                _pt_body += (
+                    f'<div class="opt-item" style="border-left:3px solid #ffd93d">'
+                    f'<b style="color:#e0e0e0">{_p["name"]}</b> '
+                    f'<span style="color:#4caf50;font-weight:700">+{_p["pnl_pct"]:.1f}%</span>'
+                    f'<br><span style="font-size:.75rem;color:#888">{_p["reason"]}</span>'
+                    f'</div>'
+                )
+            if not _pt_body:
+                _pt_body = '<span class="opt-empty">수익 확정 기준(+15%) 도달 종목 없음</span>'
+            _gc1.markdown(
+                f'<div class="opt-card">'
+                f'<div class="opt-card-title">💰 수익 확정 권고</div>'
+                f'{_pt_body}</div>',
+                unsafe_allow_html=True,
+            )
+
+            # 카드 4 — 추가 매수 권고
+            _ab = _guide.get("add_buy", [])
+            _ab_body = ""
+            for _a in _ab:
+                _ab_body += (
+                    f'<div class="opt-item" style="border-left:3px solid #81c784">'
+                    f'<b style="color:#e0e0e0">{_a["name"]}</b>'
+                    f'<br><span style="font-size:.75rem;color:#888">{_a["reason"]}</span>'
+                    f'</div>'
+                )
+            if not _ab_body:
+                _ab_body = '<span class="opt-empty">추가 매수 후보 없음</span>'
+            _gc2.markdown(
+                f'<div class="opt-card">'
+                f'<div class="opt-card-title">📈 추가 매수 권고</div>'
+                f'{_ab_body}</div>',
+                unsafe_allow_html=True,
+            )
+
 
 with tab_portfolio:
     _render_portfolio_tab()
