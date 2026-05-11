@@ -1274,37 +1274,67 @@ with tab_market:
         except Exception:
             pass
 
-    # ── 주요 섹터 ETF 실시간 등락표 ──────────────────────────────────────────
+    # ── 주요 섹터 ETF 실시간 등락표 (35종목) ────────────────────────────────
     st.divider()
     st.markdown("### 🗺️ 주요 섹터 ETF 실시간 등락표")
-    st.caption("각 섹터를 대표하는 20개 ETF의 전일 대비 등락률 · 1시간 캐시 적용")
+    st.caption("미국 ETF 15개 + 국내 ETF 20개 · 전일 대비 등락률 · 10분 캐시")
 
+    # (ticker, ETF명, 국가, 태그)  ← 국내 KS 접미사 누락 방지를 위해 리스트에서 명시
     _SECTOR_ETF_LIST = (
-        ("SPY",       "S&P 500",            "지수"),
-        ("QQQ",       "나스닥 100",          "지수"),
-        ("DIA",       "다우존스",            "지수"),
-        ("SCHD",      "배당성장",            "지수"),
-        ("SOXX",      "반도체 (SOX)",        "테크"),
-        ("VGT",       "기술주",              "테크"),
-        ("BOTZ",      "AI/로봇",             "테크"),
-        ("XLV",       "헬스케어",            "헬스케어/금융"),
-        ("XLF",       "금융",                "헬스케어/금융"),
-        ("XLE",       "에너지",              "원자재"),
-        ("GDX",       "금광주",              "원자재"),
-        ("LIT",       "2차전지/리튬",        "원자재"),
-        ("TLT",       "미국채 20년",         "채권"),
-        ("BIL",       "미국채 단기",         "채권"),
-        ("VNQ",       "리츠",                "채권"),
-        ("069500.KS", "KODEX 200",           "국내"),
-        ("102110.KS", "TIGER 200",           "국내"),
-        ("371460.KS", "TIGER 차이나전기차",  "국내"),
-        ("266360.KS", "KODEX iSelect반도체", "국내"),
-        ("229200.KS", "KODEX 코스닥150",     "국내"),
+        # ── 미국 ETF 15개 ─────────────────────────────────────────────────────
+        ("SPY",  "S&P 500",         "미국", "📊 지수"),
+        ("QQQ",  "나스닥 100",       "미국", "📊 지수"),
+        ("DIA",  "다우존스",         "미국", "📊 지수"),
+        ("SCHD", "배당성장",         "미국", "💰 배당"),
+        ("SOXX", "반도체 (SOX)",     "미국", "💻 반도체"),
+        ("VGT",  "기술주",           "미국", "🤖 테크"),
+        ("BOTZ", "AI/로봇",          "미국", "🤖 AI/로봇"),
+        ("XLV",  "헬스케어",         "미국", "🏥 헬스케어"),
+        ("XLF",  "금융",             "미국", "🏦 금융"),
+        ("XLE",  "에너지",           "미국", "⚡ 에너지"),
+        ("GDX",  "금광주",           "미국", "⛏ 원자재"),
+        ("LIT",  "2차전지/리튬",     "미국", "🔋 2차전지"),
+        ("TLT",  "미국채 20년",      "미국", "📋 채권"),
+        ("BIL",  "미국채 단기",      "미국", "📋 채권"),
+        ("VNQ",  "리츠",             "미국", "🏢 리츠"),
+        # ── 국내 ETF 20개 ─────────────────────────────────────────────────────
+        # 지수/대형주
+        ("069500.KS", "KODEX 200",                        "국내", "📊 지수"),
+        ("102110.KS", "TIGER 200",                        "국내", "📊 지수"),
+        ("122630.KS", "KODEX 레버리지",                   "국내", "⚡ 레버리지"),
+        ("211210.KS", "KODEX 현대차그룹+",                "국내", "🏢 대형주"),
+        # 2차전지/에너지
+        ("371460.KS", "TIGER 차이나전기차",               "국내", "🔋 2차전지"),
+        ("305720.KS", "KODEX 2차전지산업",                "국내", "🔋 2차전지"),
+        ("364980.KS", "TIGER 2차전지테마",                "국내", "🔋 2차전지"),
+        ("395160.KS", "KODEX 2차전지핵심소재10",          "국내", "🔋 2차전지"),
+        # 반도체/IT
+        ("091160.KS", "KODEX 반도체",                     "국내", "💻 반도체"),
+        ("396500.KS", "TIGER Fn반도체TOP10",              "국내", "💻 반도체"),
+        ("381180.KS", "TIGER 미국필라델피아반도체나스닥", "국내", "💻 반도체"),
+        # 헬스케어/바이오
+        ("244580.KS", "KODEX 바이오",                     "국내", "🏥 바이오"),
+        ("143860.KS", "TIGER 헬스케어",                   "국내", "🏥 헬스케어"),
+        ("266410.KS", "KODEX 헬스케어",                   "국내", "🏥 헬스케어"),
+        # 배당/기타
+        ("458760.KS", "TIGER 미국배당다우존스",           "국내", "💰 배당"),
+        ("229200.KS", "KODEX 코스닥150",                  "국내", "📊 지수"),
+        ("133690.KS", "TIGER 미국나스닥100",              "국내", "📊 미국지수"),
+        ("379800.KS", "KODEX 미국S&P500",                 "국내", "📊 미국지수"),
+        ("157450.KS", "TIGER 단기통안채",                 "국내", "📋 채권"),
+        ("340570.KS", "TIGER 글로벌리튬&2차전지",         "국내", "🔋 2차전지"),
     )
 
-    @st.cache_data(ttl=3600, show_spinner=False)
+    @st.cache_data(ttl=600, show_spinner=False)
     def _fetch_sector_etfs(etf_list: tuple) -> pd.DataFrame:
         tickers = [row[0] for row in etf_list]
+        # .KS/.KQ 누락 방지 — 숫자 6자리만 있으면 .KS 자동 보완
+        def _fix_ticker(t: str) -> str:
+            if t.isdigit() and len(t) == 6:
+                return t + ".KS"
+            return t
+        tickers = [_fix_ticker(t) for t in tickers]
+
         try:
             raw = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
         except Exception:
@@ -1320,7 +1350,8 @@ with tab_market:
             if len(close) < 2:
                 return pd.DataFrame()
             rows = []
-            for ticker, name, sector in etf_list:
+            for orig_ticker, name, market, tag in etf_list:
+                ticker = _fix_ticker(orig_ticker)
                 try:
                     if ticker not in close.columns:
                         continue
@@ -1335,11 +1366,12 @@ with tab_market:
                     is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
                     price_str = (f"{curr:,.0f}₩" if is_kr else f"${curr:,.2f}")
                     rows.append({
-                        "섹터":    sector,
-                        "ETF명":   name,
-                        "티커":    ticker,
-                        "현재가":  price_str,
-                        "방향":    "🔺" if chg >= 0 else "🔻",
+                        "국가":      market,
+                        "태그":      tag,
+                        "ETF명":     name,
+                        "티커":      ticker,
+                        "현재가":    price_str,
+                        "방향":      "🔺" if chg >= 0 else "🔻",
                         "등락률(%)": chg,
                     })
                 except Exception:
@@ -1348,53 +1380,72 @@ with tab_market:
         except Exception:
             return pd.DataFrame()
 
-    with st.spinner("섹터 ETF 데이터 로딩 중..."):
+    def _render_etf_table(view: pd.DataFrame) -> None:
+        """등락률 행 색상(빨강/파랑) + ProgressColumn 막대 렌더링"""
+        cols = ["국가", "태그", "ETF명", "티커", "현재가", "방향", "등락률(%)"]
+
+        def _row_style(row):
+            chg = row["등락률(%)"]
+            if isinstance(chg, (int, float)) and chg > 0:
+                bg = "rgba(239,83,80,0.13)"
+            elif isinstance(chg, (int, float)) and chg < 0:
+                bg = "rgba(66,165,245,0.13)"
+            else:
+                bg = "transparent"
+            return [f"background-color:{bg}"] * len(row)
+
+        styled = view[cols].style.apply(_row_style, axis=1)
+        st.dataframe(
+            styled,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "국가":   st.column_config.TextColumn("국가",   width="small"),
+                "태그":   st.column_config.TextColumn("테마",   width="medium"),
+                "ETF명":  st.column_config.TextColumn("ETF명",  width="large"),
+                "티커":   st.column_config.TextColumn("티커",   width="small"),
+                "현재가": st.column_config.TextColumn("현재가", width="small"),
+                "방향":   st.column_config.TextColumn("↕",      width="small"),
+                "등락률(%)": st.column_config.ProgressColumn(
+                    "등락률 (%)",
+                    format="%+.2f%%",
+                    min_value=-15.0,
+                    max_value=15.0,
+                    help="전일 대비 등락률 · 막대 중앙(50%) = 0% 기준",
+                ),
+            },
+        )
+
+    with st.spinner("섹터 ETF 데이터 로딩 중 (35종목)..."):
         _etf_df = _fetch_sector_etfs(_SECTOR_ETF_LIST)
 
     if not _etf_df.empty:
-        # 요약 메트릭 — 상승/하락 개수
-        _etf_up   = int((_etf_df["등락률(%)"] > 0).sum())
-        _etf_down = int((_etf_df["등락률(%)"] < 0).sum())
-        _etf_avg  = float(_etf_df["등락률(%)"].mean())
-        _em1, _em2, _em3 = st.columns(3)
-        _em1.metric("🔺 상승", f"{_etf_up}개")
-        _em2.metric("🔻 하락", f"{_etf_down}개")
-        _em3.metric("평균 등락률", f"{_etf_avg:+.2f}%")
+        # 요약 메트릭 (5열)
+        _etf_up  = int((_etf_df["등락률(%)"] > 0).sum())
+        _etf_dn  = int((_etf_df["등락률(%)"] < 0).sum())
+        _etf_avg = float(_etf_df["등락률(%)"].mean())
+        _us_df   = _etf_df[_etf_df["국가"] == "미국"]["등락률(%)"]
+        _kr_df   = _etf_df[_etf_df["국가"] == "국내"]["등락률(%)"]
+        _us_avg  = float(_us_df.mean()) if not _us_df.empty else 0.0
+        _kr_avg  = float(_kr_df.mean()) if not _kr_df.empty else 0.0
+        _em1, _em2, _em3, _em4, _em5 = st.columns(5)
+        _em1.metric("🔺 상승",       f"{_etf_up}개")
+        _em2.metric("🔻 하락",       f"{_etf_dn}개")
+        _em3.metric("전체 평균",     f"{_etf_avg:+.2f}%")
+        _em4.metric("🇺🇸 미국 평균", f"{_us_avg:+.2f}%")
+        _em5.metric("🇰🇷 국내 평균", f"{_kr_avg:+.2f}%")
 
-        # 섹터별 탭
-        _sector_order = ["전체", "지수", "테크", "헬스케어/금융", "원자재", "채권", "국내"]
-        _avail = [s for s in _sector_order if s == "전체" or s in _etf_df["섹터"].values]
-        _etf_tabs = st.tabs(_avail)
-
-        for _etf_stab, _sname in zip(_etf_tabs, _avail):
-            with _etf_stab:
-                _view = (
-                    _etf_df if _sname == "전체"
-                    else _etf_df[_etf_df["섹터"] == _sname].copy()
-                )
-                if _view.empty:
-                    st.caption("해당 섹터 데이터 없음")
-                    continue
-                _display_cols = ["섹터", "ETF명", "티커", "현재가", "방향", "등락률(%)"]
-                st.dataframe(
-                    _view[_display_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "섹터":   st.column_config.TextColumn("섹터",  width="small"),
-                        "ETF명":  st.column_config.TextColumn("ETF명", width="medium"),
-                        "티커":   st.column_config.TextColumn("티커",  width="small"),
-                        "현재가": st.column_config.TextColumn("현재가", width="small"),
-                        "방향":   st.column_config.TextColumn("↕",     width="small"),
-                        "등락률(%)": st.column_config.ProgressColumn(
-                            "등락률 (%)",
-                            format="%+.2f%%",
-                            min_value=-15.0,
-                            max_value=15.0,
-                            help="전일 대비 등락률 | 막대 기준: -15%~+15%, 중앙(50%)=0%",
-                        ),
-                    },
-                )
+        _etf_t1, _etf_t2, _etf_t3 = st.tabs(
+            ["전체 (35종목)", "🇺🇸 미국 ETF (15종목)", "🇰🇷 국내 ETF (20종목)"]
+        )
+        with _etf_t1:
+            _render_etf_table(_etf_df.sort_values(["국가", "태그", "ETF명"]))
+        with _etf_t2:
+            _us = _etf_df[_etf_df["국가"] == "미국"].sort_values("태그")
+            _render_etf_table(_us) if not _us.empty else st.caption("미국 ETF 데이터 없음")
+        with _etf_t3:
+            _kr = _etf_df[_etf_df["국가"] == "국내"].sort_values("태그")
+            _render_etf_table(_kr) if not _kr.empty else st.caption("국내 ETF 데이터 없음")
     else:
         st.warning("ETF 데이터를 불러올 수 없습니다. (네트워크 오류 또는 장 마감 시간)", icon="⚠️")
 
