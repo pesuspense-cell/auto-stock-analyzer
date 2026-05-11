@@ -475,3 +475,49 @@ def get_expense_ratio(ticker: str) -> Optional[float]:
     """티커 코드로 운용보수(%) 직접 조회 (네트워크 없음)."""
     code = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
     return _EXPENSE_RATIO_MAP.get(code)
+
+
+def get_etf_name_list() -> dict:
+    """
+    KRX 데이터포털에서 전체 상장 ETF 목록 조회 (동기).
+    최근 5 영업일을 순차 시도해 첫 성공한 날짜 데이터를 반환.
+
+    반환: {"TIGER 미국S&P500 (360750)": "360750.KS", ...}
+    """
+    from datetime import datetime, timedelta
+
+    result: dict = {}
+    for delta in range(5):
+        date_str = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
+        payload = {
+            "bld":         "dbms/MDC/STAT/standard/MDCSTAT04301",
+            "locale":      "ko_KR",
+            "trdDd":       date_str,
+            "share":       "1",
+            "money":       "1",
+            "csvxls_isNo": "false",
+        }
+        try:
+            resp = httpx.post(
+                _KRX_BASE, data=payload, headers=_KRX_HEADERS,
+                timeout=15.0, verify=False,
+            )
+            resp.raise_for_status()
+            rows = _extract_rows(resp.json())
+            for row in rows:
+                code = str(
+                    row.get("ISU_SRT_CD", row.get("isuSrtCd", ""))
+                ).strip().zfill(6)
+                name = str(
+                    row.get("ISU_ABBRV",
+                    row.get("isuAbbrv",
+                    row.get("ISU_NM",
+                    row.get("isuNm", ""))))
+                ).strip()
+                if code and name and len(code) == 6 and code.isdigit():
+                    result[f"{name} ({code})"] = f"{code}.KS"
+            if result:
+                return result
+        except Exception:
+            continue
+    return result

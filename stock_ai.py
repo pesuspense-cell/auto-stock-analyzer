@@ -2235,9 +2235,20 @@ def get_krx_stock_list() -> dict:
 
 def get_krx_etf_list() -> dict:
     """
-    국내 ETF 전체 목록 반환 (FinanceDataReader 기반)
+    국내 ETF 전체 목록 반환.
+    우선순위: KRX 데이터포털 직접 → FinanceDataReader → 정적 폴백
     반환 형태: {"KODEX 200 (069500)": "069500.KS", ...}
     """
+    # 1) KRX 데이터포털 직접 호출 (최신 상장 ETF 포함)
+    try:
+        from src.etf_krx import get_etf_name_list
+        krx_result = get_etf_name_list()
+        if krx_result:
+            return krx_result
+    except Exception:
+        pass
+
+    # 2) FinanceDataReader 폴백
     try:
         import FinanceDataReader as fdr
         df = fdr.StockListing("ETF/KR")
@@ -2252,11 +2263,13 @@ def get_krx_etf_list() -> dict:
         for _, row in df.iterrows():
             code    = row[code_col]
             name    = row["Name"]
-            display = f"{name} ({code})"
-            result[display] = f"{code}.KS"
+            result[f"{name} ({code})"] = f"{code}.KS"
         return result if result else _etf_fallback_list()
     except Exception:
-        return _etf_fallback_list()
+        pass
+
+    # 3) 정적 폴백
+    return _etf_fallback_list()
 
 
 def _etf_fallback_list() -> dict:
