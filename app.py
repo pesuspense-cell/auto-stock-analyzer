@@ -1121,6 +1121,8 @@ else:
     dead_time       = {"is_dead": False, "message": ""}
     breakout        = {"status": "wait", "detail": ""}
     risk_adj        = {}
+    hybrid          = {"hybrid_score": 0.0, "label": "중립/관망", "badge": "⚪"}
+    news_result     = {}
 
 # ─── 관심종목 Toast 알림 (우측 하단 팝업) ────────────────────────────────────
 if st.session_state.watchlist:
