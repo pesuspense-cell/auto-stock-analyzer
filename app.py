@@ -465,6 +465,22 @@ def _etf_stocks():
     return get_krx_etf_list()
 
 @st.cache_data(ttl=86400)
+def _ticker_name_map() -> dict:
+    """티커 → 종목명 역방향 맵 (KRX 주식 + ETF + 미국 주식 통합, 일 1회 캐시)."""
+    result: dict[str, str] = {}
+    # KRX 주식: "삼성전자 (005930)" → "005930.KS"
+    for display, ticker in (_krx_stocks() or {}).items():
+        result[ticker] = display.split(" (")[0].strip()
+    # ETF: "KODEX 200 (069500)" → "069500.KS"
+    for display, ticker in (_etf_stocks() or {}).items():
+        result[ticker] = display.split(" (")[0].strip()
+    # 미국: "애플 / Apple Inc (AAPL) [S&P500]" → "AAPL"
+    for display, ticker in (_us_stocks() or {}).items():
+        parts = display.split(" / ")
+        result[ticker] = parts[0].strip() if len(parts) > 1 else display.split(" (")[0].strip()
+    return result
+
+@st.cache_data(ttl=86400)
 def _check_is_etf(ticker: str) -> bool:
     """ETF 여부 — 포트폴리오 맵 우선, FDR 전체 목록은 24h 캐시로 한 번만 호출."""
     if is_etf_ticker(ticker):  # 포트폴리오 맵 빠른 확인 (네트워크 없음)
@@ -4072,6 +4088,7 @@ def _render_portfolio_tab():
         return
 
     _items = _db_get_portfolio(_uid)
+    _pf_nm: dict[str, str] = _ticker_name_map() if _items else {}
 
     # ── 수익률 계산을 위한 현재가 일괄 조회 ──────────────────────────────────
     _pf_tickers = list({it["ticker"] for it in _items}) if _items else []
@@ -4241,13 +4258,15 @@ def _render_portfolio_tab():
             _per_news = _pf_news_result.get("per_ticker", {})
             _bdg = '<div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0">'
             for _bt, _br in _per_news.items():
-                _bs  = _br.get("score", 0.0)
-                _bl  = _br.get("label", "중립")
-                _bc  = "#4caf50" if _bs >= 0.5 else ("#ef4444" if _bs <= -0.5 else "#888")
+                _bs   = _br.get("score", 0.0)
+                _bl   = _br.get("label", "중립")
+                _bc   = "#4caf50" if _bs >= 0.5 else ("#ef4444" if _bs <= -0.5 else "#888")
+                _bnm  = _pf_nm.get(_bt, "")
+                _blbl = f"{_bnm}<br><span style='font-size:.72rem;color:#777'>{_bt}</span>" if _bnm else _bt
                 _bdg += (
                     f'<span style="background:#252836;border-radius:8px;'
-                    f'padding:6px 12px;font-size:.85rem">'
-                    f'<b style="color:#ddd">{_bt}</b> '
+                    f'padding:6px 12px;font-size:.85rem;line-height:1.5">'
+                    f'<b style="color:#ddd">{_blbl}</b> '
                     f'<span style="color:{_bc}">{_bl} ({_bs:+.1f})</span></span>'
                 )
             _bdg += '</div>'
@@ -4298,7 +4317,7 @@ def _render_portfolio_tab():
 
         _tbl_head = (
             '<table class="pf-tbl"><thead><tr>'
-            '<th>티커</th><th>수량</th><th>평단가</th>'
+            '<th>종목</th><th>수량</th><th>평단가</th>'
             '<th>현재가</th><th>수익률(%)</th><th>평가손익</th>'
             '<th>AI 의견</th>'
             '</tr></thead><tbody>'
@@ -4312,6 +4331,7 @@ def _render_portfolio_tab():
             _cur = _pf_prices.get(_t)
             _krw = _t.upper().endswith((".KS", ".KQ"))
             _fp  = (lambda v, k=_krw: f"₩{v:,.0f}" if k else f"${v:,.2f}")
+            _nm  = _pf_nm.get(_t, "")
 
             if _cur is not None:
                 _pnl     = (_cur - _avg) * _qty
@@ -4346,9 +4366,15 @@ def _render_portfolio_tab():
             else:
                 _ai_txt, _ai_c = "중립 — 관망", "#aaa"
 
+            # 종목 셀: 이름(굵게) + 티커(작은 회색)
+            _name_cell = (
+                f"<div style='font-weight:600;color:#e0e0e0'>{_nm}</div>"
+                f"<div style='font-size:.75rem;color:#666'>{_t}</div>"
+            ) if _nm else _t
+
             _tbl_rows_html.append(
                 f"<tr>"
-                f"<td>{_t}</td>"
+                f"<td style='text-align:left'>{_name_cell}</td>"
                 f"<td>{_qty:g}</td>"
                 f"<td>{_fp(_avg)}</td>"
                 f"<td>{_cur_str}</td>"
@@ -4403,6 +4429,7 @@ def _render_portfolio_tab():
                 _cur = _pf_prices.get(_t)
                 _krw = _t.upper().endswith((".KS", ".KQ"))
                 _efmt = (lambda v, k=_krw: f"₩{v:,.0f}" if k else f"${v:,.2f}")
+                _enm  = _pf_nm.get(_t, "")
 
                 _stp   = _exit_result.get(_t, {})
                 _cons  = _stp.get("conservative_target")
@@ -4465,8 +4492,9 @@ def _render_portfolio_tab():
                 st.markdown(
                     f'<div style="background:#1e2130;border-radius:10px;'
                     f'padding:12px 16px;margin:6px 0">'
-                    f'<div style="font-size:.8rem;font-weight:700;color:#9e9e9e;'
-                    f'margin-bottom:6px">{_t}</div>'
+                    f'<div style="margin-bottom:6px">'
+                    + (f'<span style="font-size:.95rem;font-weight:700;color:#e0e0e0">{_enm}</span> ' if _enm else "")
+                    + f'<span style="font-size:.78rem;color:#666">{_t}</span></div>'
                     f'<div style="font-size:.85rem;line-height:1.9">{_card_body}</div>'
                     f'{_alert_html}</div>',
                     unsafe_allow_html=True,
@@ -4480,7 +4508,9 @@ def _render_portfolio_tab():
                 _dc1, _dc2 = st.columns([6, 1])
                 _is_krw_del = _it["ticker"].upper().endswith((".KS", ".KQ"))
                 _price_str  = f"₩{_it['avg_price']:,.0f}" if _is_krw_del else f"${_it['avg_price']:,.2f}"
-                _dc1.markdown(f"`{_it['ticker']}` — {_it['quantity']:g}주 @ {_price_str}")
+                _del_nm = _pf_nm.get(_it["ticker"], "")
+                _del_label = f"**{_del_nm}** `{_it['ticker']}`" if _del_nm else f"`{_it['ticker']}`"
+                _dc1.markdown(f"{_del_label} — {_it['quantity']:g}주 @ {_price_str}")
                 if _dc2.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
                     _r3 = _db_delete_portfolio(_it["id"], _uid)
                     if _r3["ok"]:
