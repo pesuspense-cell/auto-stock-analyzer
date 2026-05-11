@@ -482,13 +482,28 @@ def _add_indicators(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
+def _flatten_columns(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    yfinance MultiIndex 컬럼을 단순 컬럼으로 평탄화.
+    (field, ticker) 또는 (ticker, field) 양쪽 형식 모두 처리.
+    """
+    if not isinstance(data.columns, pd.MultiIndex):
+        return data
+    _ohlcv = {"Open", "High", "Low", "Close", "Volume"}
+    lvl0 = set(data.columns.get_level_values(0))
+    if _ohlcv & lvl0:          # level 0 에 Close 등이 있으면 → (field, ticker)
+        data.columns = data.columns.get_level_values(0)
+    else:                       # level 1 에 있으면 → (ticker, field)
+        data.columns = data.columns.get_level_values(1)
+    return data
+
+
 def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     """주식 데이터 로드 및 기술적 지표 계산. 지표 계산은 _add_indicators()에 위임."""
     data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
     if data.empty or len(data) < 20:
         return data
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.droplevel(1)
+    data = _flatten_columns(data)
     return _add_indicators(data)
 
 
@@ -916,8 +931,11 @@ def check_volume_anomaly(data: pd.DataFrame, low_ratio: float = 0.05) -> dict:
     if data.empty or len(data) < 5:
         return {"is_halted": False, "ratio": 1.0, "recent_vol": 0, "avg_vol": 0.0}
 
-    volume = data["Volume"].fillna(0)
-    recent_vols = volume.iloc[-2:].tolist()
+    volume = data["Volume"]
+    if isinstance(volume, pd.DataFrame):
+        volume = volume.iloc[:, 0]
+    volume = volume.fillna(0)
+    recent_vols = list(volume.iloc[-2:])
     recent_avg  = sum(recent_vols) / max(len(recent_vols), 1)
 
     hist   = volume.iloc[:-2]
@@ -969,8 +987,7 @@ def check_dead_time(ticker: str, days: int = 14) -> dict:
     """
     try:
         raw = yf.download(ticker, period="3mo", auto_adjust=True, progress=False)
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.droplevel(1)
+        raw = _flatten_columns(raw)
     except Exception:
         return {
             "is_dead": False, "buy_hold": False,
@@ -1239,8 +1256,7 @@ def get_market_movers(tickers_dict: dict) -> pd.DataFrame:
     for name, ticker in tickers_dict.items():
         try:
             d = yf.download(ticker, period="5d", auto_adjust=True, progress=False)
-            if isinstance(d.columns, pd.MultiIndex):
-                d.columns = d.columns.droplevel(1)
+            d = _flatten_columns(d)
             if len(d) < 2:
                 continue
             price      = float(d["Close"].iloc[-1])
@@ -1278,8 +1294,7 @@ def _yf_movers_fallback(top_n: int = 10) -> tuple:
     for ticker in tickers:
         try:
             d = raw if single else raw[ticker]
-            if isinstance(d.columns, pd.MultiIndex):
-                d = d.droplevel(1, axis=1)
+            d = _flatten_columns(d)
             d = d.dropna(subset=["Close"])
             if len(d) < 2:
                 continue
@@ -1470,8 +1485,7 @@ def _batch_fetch_ohlcv(tickers: list, period: str = "3mo") -> dict:
         if len(batch) == 1:
             # 단일 티커는 MultiIndex 없는 flat DataFrame 반환
             df = raw.copy()
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
+            df = _flatten_columns(df)
             df = df.dropna(how="all")
             if not df.empty and len(df) >= 20:
                 result[batch[0]] = df
@@ -5007,8 +5021,7 @@ def get_related_sector_performance(ticker: str) -> dict:
     def _fetch_peer(sym: str) -> dict | None:
         try:
             d = yf.download(sym, period="2d", auto_adjust=True, progress=False)
-            if isinstance(d.columns, pd.MultiIndex):
-                d.columns = d.columns.droplevel(1)
+            d = _flatten_columns(d)
             if len(d) < 2:
                 return None
             chg = float((d["Close"].iloc[-1] - d["Close"].iloc[-2]) / d["Close"].iloc[-2] * 100)
