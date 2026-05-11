@@ -51,6 +51,7 @@ try:
         get_top_kospi_stocks, get_top_kosdaq_stocks,
         get_top_us_stocks, get_top_nasdaq_stocks,
         is_etf_ticker, _ETF_PORTFOLIO_MAP,
+        _flatten_columns,
     )
 except Exception as _import_err:
     import traceback as _tb
@@ -312,8 +313,7 @@ def _get_full_stocks(market: str) -> dict:
 @st.cache_data(ttl=300)
 def _index_data(sym):
     d = yf.download(sym, period="2d", auto_adjust=True, progress=False)
-    if isinstance(d.columns, pd.MultiIndex):
-        d.columns = d.columns.droplevel(1)
+    d = _flatten_columns(d)
     return d
 
 @st.cache_data(ttl=3600)
@@ -350,8 +350,7 @@ def _bench_returns(ticker: str) -> "pd.Series":
     sym = "^KS11" if (ticker.endswith(".KS") or ticker.endswith(".KQ")) else "^GSPC"
     try:
         d = yf.download(sym, period="6mo", auto_adjust=True, progress=False)
-        if isinstance(d.columns, pd.MultiIndex):
-            d.columns = d.columns.droplevel(1)
+        d = _flatten_columns(d)
         return d["Close"].pct_change().dropna()
     except Exception:
         return pd.Series(dtype=float)
@@ -794,8 +793,7 @@ with st.sidebar:
             with col_a:
                 try:
                     d2 = yf.download(item["ticker"], period="2d", auto_adjust=True, progress=False)
-                    if isinstance(d2.columns, pd.MultiIndex):
-                        d2.columns = d2.columns.droplevel(1)
+                    d2 = _flatten_columns(d2)
                     if len(d2) >= 2:
                         p2  = float(d2["Close"].iloc[-1])
                         chg2= (p2 - float(d2["Close"].iloc[-2])) / float(d2["Close"].iloc[-2]) * 100
@@ -1268,8 +1266,7 @@ with tab_market:
         st.markdown("### 📈 USD/KRW 추이 (3개월)")
         try:
             fx = yf.download("USDKRW=X", period="3mo", auto_adjust=True, progress=False)
-            if isinstance(fx.columns, pd.MultiIndex):
-                fx.columns = fx.columns.droplevel(1)
+            fx = _flatten_columns(fx)
             if not fx.empty:
                 fig_fx = go.Figure(go.Scatter(
                     x=fx.index, y=fx["Close"],
@@ -1996,8 +1993,7 @@ with tab_news:
         for name, sym in pool.items():
             try:
                 d = yf.download(sym, period="2d", auto_adjust=True, progress=False)
-                if isinstance(d.columns, pd.MultiIndex):
-                    d.columns = d.columns.droplevel(1)
+                d = _flatten_columns(d)
                 if len(d) < 2:
                     continue
                 p   = float(d["Close"].iloc[-1])

@@ -3,6 +3,7 @@ utils.py - 공통 유틸리티 모듈
 종목 사전·지수 상수, 종목 리스트 로딩, 시장 데이터, 추천 분석 등 공용 기능
 """
 from stock_ai import (
+    _flatten_columns,
     # ── 상수 ──────────────────────────────────────────────────────────────────
     KOSPI_STOCKS,
     KOSDAQ_STOCKS,
