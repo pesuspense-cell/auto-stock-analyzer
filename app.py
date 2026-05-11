@@ -4068,45 +4068,76 @@ with tab_portfolio:
 
         st.divider()
 
-        # 종목별 카드
-        for _it in _items:
-            _it_ticker  = _it["ticker"]
-            _it_avg     = _it["avg_price"]
-            _it_qty     = _it["quantity"]
-            _it_cur     = _pf_prices.get(_it_ticker, _it_avg)
-            _it_cost    = _it_avg * _it_qty
-            _it_val     = _it_cur * _it_qty
-            _it_pnl     = _it_val - _it_cost
-            _it_pnl_pct = (_it_pnl / _it_cost * 100) if _it_cost else 0.0
-            _it_pfmt    = "{:,.0f}" if _it_avg > 500 else "{:,.2f}"
-            _it_pnl_clr = "#a5d6a7" if _it_pnl_pct >= 0 else "#ef9a9a"
-            _it_pnl_sgn = "▲" if _it_pnl_pct >= 0 else "▼"
-            _cur_avail  = _it_ticker in _pf_prices
+        # 종목별 수익률 표
+        _tbl_css = """
+<style>
+.pf-tbl{width:100%;border-collapse:collapse;font-size:.9rem}
+.pf-tbl th{background:#1e2130;color:#9e9e9e;padding:10px 14px;text-align:right;
+           font-weight:500;border-bottom:2px solid #333;white-space:nowrap}
+.pf-tbl th:first-child{text-align:left}
+.pf-tbl td{padding:10px 14px;border-bottom:1px solid #252836;text-align:right;color:#ccc}
+.pf-tbl td:first-child{text-align:left;color:#e0e0e0;font-weight:600}
+.pf-tbl tr:last-child td{border-bottom:none}
+.pf-tbl tr:hover td{background:#1a1d2e}
+.pp{color:#ff4d4d;font-weight:700}
+.pn{color:#4d88ff;font-weight:700}
+.pz{color:#888}
+</style>"""
 
-            _row_left, _row_right = st.columns([6, 1])
-            with _row_left:
-                st.markdown(
-                    f'<div style="background:#1e2130;border-radius:8px;padding:10px 14px;margin-bottom:4px;">'
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                    f'  <div>'
-                    f'    <span style="font-size:1.0rem;font-weight:bold;color:#e0e0e0;">{_it_ticker}</span>'
-                    f'    <span style="font-size:0.8rem;color:#666;margin-left:8px;">{_it_qty:g}주</span>'
-                    f'  </div>'
-                    f'  <div style="text-align:right;">'
-                    f'    <div style="font-size:0.9rem;color:#aaa;">'
-                    f'      평단 {_it_pfmt.format(_it_avg)}'
-                    + (f' → 현재 {_it_pfmt.format(_it_cur)}' if _cur_avail else '') +
-                    f'    </div>'
-                    f'    <div style="font-size:1.0rem;font-weight:bold;color:{_it_pnl_clr};">'
-                    f'      {_it_pnl_sgn} {_it_pfmt.format(abs(_it_pnl))} ({_it_pnl_pct:+.2f}%)'
-                    f'    </div>'
-                    f'  </div>'
-                    f'</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-            with _row_right:
-                if st.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
+        _tbl_head = (
+            '<table class="pf-tbl"><thead><tr>'
+            '<th>티커</th><th>수량</th><th>평단가</th>'
+            '<th>현재가</th><th>수익률(%)</th><th>평가손익</th>'
+            '</tr></thead><tbody>'
+        )
+
+        _tbl_rows_html = []
+        for _it in _items:
+            _t   = _it["ticker"]
+            _avg = _it["avg_price"]
+            _qty = _it["quantity"]
+            _cur = _pf_prices.get(_t)
+            _krw = _t.upper().endswith((".KS", ".KQ"))
+            _fp  = (lambda v: f"₩{v:,.0f}") if _krw else (lambda v: f"${v:,.2f}")
+
+            if _cur is not None:
+                _pnl     = (_cur - _avg) * _qty
+                _pnl_pct = (_cur / _avg - 1) * 100 if _avg else 0.0
+                _cls     = "pp" if _pnl_pct > 0 else ("pn" if _pnl_pct < 0 else "pz")
+                _cur_str = _fp(_cur)
+                _pct_str = f"{_pnl_pct:+.2f}%"
+                _pnl_str = (f"+{_fp(abs(_pnl))}" if _pnl >= 0 else f"-{_fp(abs(_pnl))}")
+            else:
+                _cls     = "pz"
+                _cur_str = "-"
+                _pct_str = "-"
+                _pnl_str = "-"
+
+            _tbl_rows_html.append(
+                f"<tr>"
+                f"<td>{_t}</td>"
+                f"<td>{_qty:g}</td>"
+                f"<td>{_fp(_avg)}</td>"
+                f"<td>{_cur_str}</td>"
+                f"<td class='{_cls}'>{_pct_str}</td>"
+                f"<td class='{_cls}'>{_pnl_str}</td>"
+                f"</tr>"
+            )
+
+        st.markdown(
+            _tbl_css + _tbl_head + "".join(_tbl_rows_html) + "</tbody></table>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # 종목 삭제
+        with st.expander("🗑 종목 삭제", expanded=False):
+            for _it in _items:
+                _dc1, _dc2 = st.columns([6, 1])
+                _is_krw_del = _it["ticker"].upper().endswith((".KS", ".KQ"))
+                _price_str  = f"₩{_it['avg_price']:,.0f}" if _is_krw_del else f"${_it['avg_price']:,.2f}"
+                _dc1.markdown(f"`{_it['ticker']}` — {_it['quantity']:g}주 @ {_price_str}")
+                if _dc2.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
                     _r3 = _db_delete_portfolio(_it["id"], _uid)
                     if _r3["ok"]:
                         st.rerun()
