@@ -72,7 +72,12 @@ from src.database import (
     get_portfolio as _db_get_portfolio,
     delete_portfolio_item as _db_delete_portfolio,
 )
-_db_init()  # 앱 시작 시 테이블 자동 생성
+try:
+    _db_init()
+    st.sidebar.success("DB 연결됨", icon="🗄️")
+except Exception as _db_err:
+    st.error(f"Supabase 연결 실패: {_db_err}\n\nStreamlit Secrets에 SUPABASE_DB_URL을 설정하세요.", icon="🚨")
+    st.stop()
 
 
 # ─── 페이지 설정 ──────────────────────────────────────────────────────────────
