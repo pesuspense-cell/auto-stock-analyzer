@@ -3934,7 +3934,8 @@ with tab_chart:
 
 
 # ─── 내 포트폴리오 탭 ─────────────────────────────────────────────────────────
-with tab_portfolio:
+@st.fragment
+def _render_portfolio_tab():
     _tok  = st.session_state.get("auth_token")
     _uid  = st.session_state.get("auth_user_id")
     _mail = st.session_state.get("auth_email")
@@ -3950,7 +3951,7 @@ with tab_portfolio:
                 st.session_state["auth_user_id"] = None
                 st.session_state["auth_email"]   = None
                 save_settings({**load_settings(), "auth_token": ""})
-                st.rerun()
+                st.rerun(scope="fragment")
     else:
         st.markdown("**💼 내 포트폴리오** — 로그인이 필요합니다")
 
@@ -3990,19 +3991,20 @@ with tab_portfolio:
                     st.session_state["auth_user_id"] = _r["user_id"]
                     st.session_state["auth_email"]   = _r["email"]
                     save_settings({**load_settings(), "auth_token": _r["token"]})
-                    st.rerun()
+                    st.rerun(scope="fragment")
                 else:
                     st.error(_r["error"])
-        st.stop()
+        return
 
-    # ── 로그인 완료: 포트폴리오 조회 ─────────────────────────────────────────
+    # ── 토큰 만료 확인 ────────────────────────────────────────────────────────
     if not _db_get_user(_tok):
         st.session_state["auth_token"]   = None
         st.session_state["auth_user_id"] = None
         st.session_state["auth_email"]   = None
         save_settings({**load_settings(), "auth_token": ""})
         st.warning("세션이 만료되었습니다. 다시 로그인해 주세요.")
-        st.rerun()
+        st.rerun(scope="fragment")
+        return
 
     _items = _db_get_portfolio(_uid)
 
@@ -4043,7 +4045,7 @@ with tab_portfolio:
                 else:
                     _db_add_portfolio(_uid, _fa_ticker.strip().upper(), _fa_price, _fa_qty)
                     st.success(f"{_fa_ticker.upper()} 포트폴리오에 추가되었습니다.")
-                    st.rerun()
+                    st.rerun(scope="fragment")
 
     # ── 보유 종목 테이블 ──────────────────────────────────────────────────────
     if not _items:
@@ -4140,6 +4142,10 @@ with tab_portfolio:
                 if _dc2.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
                     _r3 = _db_delete_portfolio(_it["id"], _uid)
                     if _r3["ok"]:
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     else:
                         st.error(_r3.get("error", "삭제 실패"))
+
+
+with tab_portfolio:
+    _render_portfolio_tab()
