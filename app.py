@@ -66,6 +66,7 @@ from src.database import (
     register_user as _db_register,
     login_user as _db_login,
     logout_user as _db_logout,
+    get_user_by_token as _db_get_user,
     add_portfolio as _db_add_portfolio,
     get_portfolio as _db_get_portfolio,
     delete_portfolio_item as _db_delete_portfolio,
@@ -234,6 +235,16 @@ for _sk in ("auth_token", "auth_user_id", "auth_email"):
         st.session_state[_sk] = None
 
 _saved_settings = load_settings()
+
+# 재시작 후 저장된 토큰으로 로그인 세션 복원
+if not st.session_state.get("auth_token"):
+    _boot_auth_token = _saved_settings.get("auth_token", "")
+    if _boot_auth_token:
+        _boot_user = _db_get_user(_boot_auth_token)
+        if _boot_user:
+            st.session_state["auth_token"]   = _boot_auth_token
+            st.session_state["auth_user_id"] = _boot_user["id"]
+            st.session_state["auth_email"]   = _boot_user["email"]
 
 # st.secrets → DB 역방향 동기화 (재시작 후 DB가 비어 있어도 secrets에서 복원)
 _secrets_loaded: dict[str, str] = {}
@@ -3938,6 +3949,7 @@ with tab_portfolio:
                 st.session_state["auth_token"]   = None
                 st.session_state["auth_user_id"] = None
                 st.session_state["auth_email"]   = None
+                save_settings({**load_settings(), "auth_token": ""})
                 st.rerun()
     else:
         st.markdown("**💼 내 포트폴리오** — 로그인이 필요합니다")
@@ -3977,18 +3989,18 @@ with tab_portfolio:
                     st.session_state["auth_token"]   = _r["token"]
                     st.session_state["auth_user_id"] = _r["user_id"]
                     st.session_state["auth_email"]   = _r["email"]
+                    save_settings({**load_settings(), "auth_token": _r["token"]})
                     st.rerun()
                 else:
                     st.error(_r["error"])
         st.stop()
 
     # ── 로그인 완료: 포트폴리오 조회 ─────────────────────────────────────────
-    from src.database import get_user_by_token as _db_get_user
     if not _db_get_user(_tok):
-        # 토큰 만료 처리
         st.session_state["auth_token"]   = None
         st.session_state["auth_user_id"] = None
         st.session_state["auth_email"]   = None
+        save_settings({**load_settings(), "auth_token": ""})
         st.warning("세션이 만료되었습니다. 다시 로그인해 주세요.")
         st.rerun()
 
