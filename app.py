@@ -1274,6 +1274,130 @@ with tab_market:
         except Exception:
             pass
 
+    # ── 주요 섹터 ETF 실시간 등락표 ──────────────────────────────────────────
+    st.divider()
+    st.markdown("### 🗺️ 주요 섹터 ETF 실시간 등락표")
+    st.caption("각 섹터를 대표하는 20개 ETF의 전일 대비 등락률 · 1시간 캐시 적용")
+
+    _SECTOR_ETF_LIST = (
+        ("SPY",       "S&P 500",            "지수"),
+        ("QQQ",       "나스닥 100",          "지수"),
+        ("DIA",       "다우존스",            "지수"),
+        ("SCHD",      "배당성장",            "지수"),
+        ("SOXX",      "반도체 (SOX)",        "테크"),
+        ("VGT",       "기술주",              "테크"),
+        ("BOTZ",      "AI/로봇",             "테크"),
+        ("XLV",       "헬스케어",            "헬스케어/금융"),
+        ("XLF",       "금융",                "헬스케어/금융"),
+        ("XLE",       "에너지",              "원자재"),
+        ("GDX",       "금광주",              "원자재"),
+        ("LIT",       "2차전지/리튬",        "원자재"),
+        ("TLT",       "미국채 20년",         "채권"),
+        ("BIL",       "미국채 단기",         "채권"),
+        ("VNQ",       "리츠",                "채권"),
+        ("069500.KS", "KODEX 200",           "국내"),
+        ("102110.KS", "TIGER 200",           "국내"),
+        ("371460.KS", "TIGER 차이나전기차",  "국내"),
+        ("266360.KS", "KODEX iSelect반도체", "국내"),
+        ("229200.KS", "KODEX 코스닥150",     "국내"),
+    )
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _fetch_sector_etfs(etf_list: tuple) -> pd.DataFrame:
+        tickers = [row[0] for row in etf_list]
+        try:
+            raw = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
+        except Exception:
+            return pd.DataFrame()
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                close = raw["Close"]
+            elif "Close" in raw.columns:
+                close = raw[["Close"]]
+                close.columns = tickers[:1]
+            else:
+                return pd.DataFrame()
+            if len(close) < 2:
+                return pd.DataFrame()
+            rows = []
+            for ticker, name, sector in etf_list:
+                try:
+                    if ticker not in close.columns:
+                        continue
+                    series = close[ticker].dropna()
+                    if len(series) < 2:
+                        continue
+                    prev = float(series.iloc[-2])
+                    curr = float(series.iloc[-1])
+                    if prev == 0:
+                        continue
+                    chg = round((curr - prev) / prev * 100, 2)
+                    is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
+                    price_str = (f"{curr:,.0f}₩" if is_kr else f"${curr:,.2f}")
+                    rows.append({
+                        "섹터":    sector,
+                        "ETF명":   name,
+                        "티커":    ticker,
+                        "현재가":  price_str,
+                        "방향":    "🔺" if chg >= 0 else "🔻",
+                        "등락률(%)": chg,
+                    })
+                except Exception:
+                    continue
+            return pd.DataFrame(rows)
+        except Exception:
+            return pd.DataFrame()
+
+    with st.spinner("섹터 ETF 데이터 로딩 중..."):
+        _etf_df = _fetch_sector_etfs(_SECTOR_ETF_LIST)
+
+    if not _etf_df.empty:
+        # 요약 메트릭 — 상승/하락 개수
+        _etf_up   = int((_etf_df["등락률(%)"] > 0).sum())
+        _etf_down = int((_etf_df["등락률(%)"] < 0).sum())
+        _etf_avg  = float(_etf_df["등락률(%)"].mean())
+        _em1, _em2, _em3 = st.columns(3)
+        _em1.metric("🔺 상승", f"{_etf_up}개")
+        _em2.metric("🔻 하락", f"{_etf_down}개")
+        _em3.metric("평균 등락률", f"{_etf_avg:+.2f}%")
+
+        # 섹터별 탭
+        _sector_order = ["전체", "지수", "테크", "헬스케어/금융", "원자재", "채권", "국내"]
+        _avail = [s for s in _sector_order if s == "전체" or s in _etf_df["섹터"].values]
+        _etf_tabs = st.tabs(_avail)
+
+        for _etf_stab, _sname in zip(_etf_tabs, _avail):
+            with _etf_stab:
+                _view = (
+                    _etf_df if _sname == "전체"
+                    else _etf_df[_etf_df["섹터"] == _sname].copy()
+                )
+                if _view.empty:
+                    st.caption("해당 섹터 데이터 없음")
+                    continue
+                _display_cols = ["섹터", "ETF명", "티커", "현재가", "방향", "등락률(%)"]
+                st.dataframe(
+                    _view[_display_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "섹터":   st.column_config.TextColumn("섹터",  width="small"),
+                        "ETF명":  st.column_config.TextColumn("ETF명", width="medium"),
+                        "티커":   st.column_config.TextColumn("티커",  width="small"),
+                        "현재가": st.column_config.TextColumn("현재가", width="small"),
+                        "방향":   st.column_config.TextColumn("↕",     width="small"),
+                        "등락률(%)": st.column_config.ProgressColumn(
+                            "등락률 (%)",
+                            format="%+.2f%%",
+                            min_value=-15.0,
+                            max_value=15.0,
+                            help="전일 대비 등락률 | 막대 기준: -15%~+15%, 중앙(50%)=0%",
+                        ),
+                    },
+                )
+    else:
+        st.warning("ETF 데이터를 불러올 수 없습니다. (네트워크 오류 또는 장 마감 시간)", icon="⚠️")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3  추천 종목
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2654,18 +2778,28 @@ with tab_chart:
         title_label = f"{sname} ({ticker})" if sname != ticker else ticker
         st.subheader(f"📈 {title_label} 기술적 분석")
 
+        # KOSPI 데이터 사전 수집
+        try:
+            _kospi_raw = yf.download("^KS11", period=_aperiod, auto_adjust=True, progress=False)
+            if isinstance(_kospi_raw.columns, pd.MultiIndex):
+                _kospi_raw.columns = _kospi_raw.columns.get_level_values(0)
+            _kospi_df = _kospi_raw[["Open", "High", "Low", "Close"]].dropna()
+        except Exception:
+            _kospi_df = pd.DataFrame()
+
         fig = make_subplots(
-            rows=5, cols=1,
+            rows=6, cols=1,
             shared_xaxes=True,
-            vertical_spacing=0.04,
+            vertical_spacing=0.03,
             subplot_titles=(
                 "가격 (캔들·EMA·볼린저밴드)",
                 "거래량 + OBV 추세",
                 "RSI (14) + MFI (14)",
                 "MACD (12·26·9)",
                 "ADX (14) + ±DI",
+                "KOSPI 지수",
             ),
-            row_heights=[0.40, 0.12, 0.16, 0.16, 0.16],
+            row_heights=[0.28, 0.084, 0.112, 0.112, 0.112, 0.30],
         )
 
         o = data["Open"]; h = data["High"]; lo = data["Low"]; c = data["Close"]; v = data["Volume"]
@@ -2821,6 +2955,23 @@ with tab_chart:
                 line=dict(color="#ef5350", width=1.3),
             ), row=5, col=1)
 
+        # ── KOSPI 지수 (Row 6) ───────────────────────────────────────────────
+        if not _kospi_df.empty:
+            fig.add_trace(go.Scatter(
+                x=_kospi_df.index,
+                y=_kospi_df["Close"],
+                name="KOSPI",
+                line=dict(color="#80cbc4", width=1.8),
+                fill="tozeroy",
+                fillcolor="rgba(128,203,196,0.10)",
+            ), row=6, col=1)
+        else:
+            fig.add_annotation(
+                text="KOSPI 데이터를 불러올 수 없습니다.",
+                xref="x6", yref="y6", x=0.5, y=0.5, showarrow=False,
+                font=dict(color="#9e9e9e", size=12),
+            )
+
         # ── 레이아웃 ─────────────────────────────────────────────────────────
         fig.update_annotations(font_size=10, font_color="#9e9e9e")
 
@@ -2864,7 +3015,7 @@ with tab_chart:
         fig.update_xaxes(rangeselector=_rangeselector, row=1, col=1)
 
         fig.update_layout(
-            height=900,
+            height=1150,
             template="plotly_dark",
             dragmode=False,                     # 터치 드래그 비활성화
             xaxis_rangeslider_visible=False,    # 기본 rangeslider 숨김
