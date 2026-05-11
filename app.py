@@ -553,15 +553,25 @@ with st.sidebar:
             krx = _krx_stocks()
 
         if krx:
-            options = list(krx.keys())
+            _krx_q = st.text_input(
+                "종목 검색",
+                key="_krx_q",
+                placeholder="종목명 또는 코드 입력 (예: 삼성전자, 005930)",
+            )
+            _krx_opts = (
+                {k: v for k, v in krx.items() if _krx_q.lower() in k.lower()}
+                if _krx_q else krx
+            )
+            if not _krx_opts:
+                st.caption("검색 결과 없음 — 전체 목록 표시")
+                _krx_opts = krx
             selected = st.selectbox(
-                "종목 검색 (이름·코드 입력)",
-                options,
+                f"종목 선택 ({len(_krx_opts):,}개)",
+                list(_krx_opts.keys()),
                 key="_krx_selected",
                 on_change=_clear_analysis,
-                help="회사 이름이나 종목 코드(6자리)를 입력하면 자동으로 필터링됩니다.",
             )
-            ticker = krx[selected]
+            ticker = _krx_opts[selected]
             sname  = selected.split(" (")[0]
         else:
             st.warning("종목 목록 로드 실패 — 기본 목록 사용")
@@ -574,15 +584,25 @@ with st.sidebar:
             etf_list = _etf_stocks()
 
         if etf_list:
-            etf_options = list(etf_list.keys())
+            _etf_q = st.text_input(
+                "ETF 검색",
+                key="_etf_q",
+                placeholder="ETF명 또는 코드 입력 (예: KODEX 200, 069500)",
+            )
+            _etf_opts = (
+                {k: v for k, v in etf_list.items() if _etf_q.lower() in k.lower()}
+                if _etf_q else etf_list
+            )
+            if not _etf_opts:
+                st.caption("검색 결과 없음 — 전체 목록 표시")
+                _etf_opts = etf_list
             etf_selected = st.selectbox(
-                "ETF 검색 (이름·코드 입력)",
-                etf_options,
+                f"ETF 선택 ({len(_etf_opts):,}개)",
+                list(_etf_opts.keys()),
                 key="_etf_selected",
                 on_change=_clear_analysis,
-                help="ETF 이름이나 6자리 코드를 입력하면 자동 필터링됩니다. 예) KODEX 200, 069500",
             )
-            ticker = etf_list[etf_selected]
+            ticker = _etf_opts[etf_selected]
             sname  = etf_selected.split(" (")[0]
         else:
             st.warning("ETF 목록 로드 실패 — 기본 목록 사용")
@@ -599,15 +619,25 @@ with st.sidebar:
             us_list = _us_stocks()
 
         if us_list:
-            us_options = list(us_list.keys())
+            _us_q = st.text_input(
+                "종목 검색",
+                key="_us_q",
+                placeholder="회사명 또는 티커 입력 (예: Apple, AAPL, 애플)",
+            )
+            _us_opts = (
+                {k: v for k, v in us_list.items() if _us_q.lower() in k.lower()}
+                if _us_q else us_list
+            )
+            if not _us_opts:
+                st.caption("검색 결과 없음 — 전체 목록 표시")
+                _us_opts = us_list
             us_selected = st.selectbox(
-                "종목 검색 (이름·티커 입력)",
-                us_options,
+                f"종목 선택 ({len(_us_opts):,}개)",
+                list(_us_opts.keys()),
                 key="_us_selected",
                 on_change=_clear_analysis,
-                help="S&P500 + 나스닥 전체 종목. 회사명 또는 티커(예: AAPL)를 입력하면 자동 필터링됩니다.",
             )
-            ticker = us_list[us_selected]
+            ticker = _us_opts[us_selected]
             sname  = us_selected.split(" (")[0]
         else:
             st.warning("미국 종목 목록 로드 실패 — 기본 목록 사용")
@@ -3132,9 +3162,9 @@ with tab_chart:
         st.subheader("🎯 AI 매매 신호")
 
         # 사전 계산 (아래 섹션에서 재사용)
-        h_score = hybrid["hybrid_score"]
-        h_label = hybrid["label"]
-        h_badge = hybrid["badge"]
+        h_score = hybrid.get("hybrid_score", 0.0)
+        h_label = hybrid.get("label", "중립/관망")
+        h_badge = hybrid.get("badge", "⚪")
         fs      = fund_score_data.get("fund_score", 0)
         f_label = fund_score_data.get("fund_label", "N/A")
 
@@ -4065,12 +4095,19 @@ def _render_portfolio_tab():
             with st.spinner("종목 목록 로딩 중..."):
                 _fa_list = _krx_stocks()
             if _fa_list:
-                _fa_sel = st.selectbox(
-                    "종목 검색 (이름·코드 입력)", list(_fa_list.keys()),
-                    key="pf_add_krx",
-                    help="이름이나 종목 코드를 입력하면 자동 필터링됩니다.",
+                _pf_krx_q = st.text_input(
+                    "종목 검색", key="pf_add_krx_q",
+                    placeholder="종목명 또는 코드 (예: 삼성전자, 005930)",
                 )
-                _fa_ticker_val = _fa_list[_fa_sel]
+                _pf_krx_opts = (
+                    {k: v for k, v in _fa_list.items() if _pf_krx_q.lower() in k.lower()}
+                    if _pf_krx_q else _fa_list
+                ) or _fa_list
+                _fa_sel = st.selectbox(
+                    f"종목 선택 ({len(_pf_krx_opts):,}개)", list(_pf_krx_opts.keys()),
+                    key="pf_add_krx",
+                )
+                _fa_ticker_val = _pf_krx_opts[_fa_sel]
             else:
                 st.warning("국내 종목 목록 로드 실패")
 
@@ -4078,12 +4115,19 @@ def _render_portfolio_tab():
             with st.spinner("ETF 목록 로딩 중..."):
                 _fa_list = _etf_stocks()
             if _fa_list:
-                _fa_sel = st.selectbox(
-                    "ETF 검색 (이름·코드 입력)", list(_fa_list.keys()),
-                    key="pf_add_etf",
-                    help="ETF 이름이나 6자리 코드를 입력하면 자동 필터링됩니다.",
+                _pf_etf_q = st.text_input(
+                    "ETF 검색", key="pf_add_etf_q",
+                    placeholder="ETF명 또는 코드 (예: KODEX 200, 069500)",
                 )
-                _fa_ticker_val = _fa_list[_fa_sel]
+                _pf_etf_opts = (
+                    {k: v for k, v in _fa_list.items() if _pf_etf_q.lower() in k.lower()}
+                    if _pf_etf_q else _fa_list
+                ) or _fa_list
+                _fa_sel = st.selectbox(
+                    f"ETF 선택 ({len(_pf_etf_opts):,}개)", list(_pf_etf_opts.keys()),
+                    key="pf_add_etf",
+                )
+                _fa_ticker_val = _pf_etf_opts[_fa_sel]
             else:
                 st.warning("ETF 목록 로드 실패")
 
@@ -4091,12 +4135,19 @@ def _render_portfolio_tab():
             with st.spinner("미국 종목 목록 로딩 중..."):
                 _fa_list = _us_stocks()
             if _fa_list:
-                _fa_sel = st.selectbox(
-                    "종목 검색 (이름·티커 입력)", list(_fa_list.keys()),
-                    key="pf_add_us",
-                    help="회사명 또는 티커(예: AAPL)를 입력하면 자동 필터링됩니다.",
+                _pf_us_q = st.text_input(
+                    "종목 검색", key="pf_add_us_q",
+                    placeholder="회사명 또는 티커 (예: Apple, AAPL, 애플)",
                 )
-                _fa_ticker_val = _fa_list[_fa_sel]
+                _pf_us_opts = (
+                    {k: v for k, v in _fa_list.items() if _pf_us_q.lower() in k.lower()}
+                    if _pf_us_q else _fa_list
+                ) or _fa_list
+                _fa_sel = st.selectbox(
+                    f"종목 선택 ({len(_pf_us_opts):,}개)", list(_pf_us_opts.keys()),
+                    key="pf_add_us",
+                )
+                _fa_ticker_val = _pf_us_opts[_fa_sel]
             else:
                 st.warning("미국 종목 목록 로드 실패")
 
