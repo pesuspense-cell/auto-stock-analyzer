@@ -3829,12 +3829,17 @@ with tab_chart:
                     ("VWAP 월간",  "VWAP_M",    ",.0f"),
                     ("VWAP 분기",  "VWAP_Q",    ",.0f"),
                 ]
-                last_row = data.iloc[-1]
-                for lbl, col, fmt in indicator_map:
-                    if col in data.columns:
-                        val = last_row[col]
-                        if pd.notna(val):
-                            st.caption(f"**{lbl}:** {float(val):{fmt}}")
+                if data.empty:
+                    st.caption("분석 데이터가 없습니다.")
+                    last_row = None
+                else:
+                    last_row = data.iloc[-1]
+                if last_row is not None:
+                    for lbl, col, fmt in indicator_map:
+                        if col in data.columns:
+                            val = last_row[col]
+                            if pd.notna(val):
+                                st.caption(f"**{lbl}:** {float(val):{fmt}}")
 
         with _tech_right:
             with st.expander("📋 기술 신호 근거", expanded=False):
