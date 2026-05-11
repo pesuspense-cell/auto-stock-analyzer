@@ -1123,6 +1123,8 @@ else:
     risk_adj        = {}
     hybrid          = {"hybrid_score": 0.0, "label": "중립/관망", "badge": "⚪"}
     news_result     = {}
+    tech_score      = 0
+    news_score      = 0.0
 
 # ─── 관심종목 Toast 알림 (우측 하단 팝업) ────────────────────────────────────
 if st.session_state.watchlist:
