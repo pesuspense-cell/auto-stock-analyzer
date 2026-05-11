@@ -1014,7 +1014,7 @@ if _data_ready:
             _last = float(close.iloc[-1]) if not close.empty else 0.0
             _fsd = calculate_fundamental_score(fund_info, _last)
             return _va, _sig, _adv, _exp, _fsd
-        except (IndexError, KeyError, TypeError, ValueError) as _e:
+        except Exception as _e:
             import logging
             logging.getLogger(__name__).warning(f"[compute] {_aticker}: {type(_e).__name__}: {_e}")
             return {}, {"score": 0, "label": "분석 오류", "badge": "⚠️", "reasons": []}, {}, {}, {}
@@ -1045,11 +1045,23 @@ if _data_ready:
 </div>
 """, unsafe_allow_html=True)
             time.sleep(1)
-        vol_anomaly, signals, advanced, expected, fund_score_data = _f_comp.result()
-        news_result = _f_news.result()
+        try:
+            vol_anomaly, signals, advanced, expected, fund_score_data = _f_comp.result()
+        except Exception as _ce:
+            import logging
+            logging.getLogger(__name__).warning(f"[comp.result] {_aticker}: {_ce}")
+            vol_anomaly, signals, advanced, expected, fund_score_data = (
+                {}, {"score": 0, "label": "분석 오류", "badge": "⚠️", "reasons": []}, {}, {}, {}
+            )
+        try:
+            news_result = _f_news.result()
+        except Exception as _ne:
+            import logging
+            logging.getLogger(__name__).warning(f"[news.result] {_aticker}: {_ne}")
+            news_result = {}
 
-    news_score = news_result.get("score", 0.0)
-    tech_score = signals.get("score", 0)
+    news_score = news_result.get("score", 0.0) if isinstance(news_result, dict) else 0.0
+    tech_score = signals.get("score", 0)       if isinstance(signals, dict)     else 0
     hybrid     = get_hybrid_signal(tech_score, news_score)
     dead_time  = _dead_time(_aticker)
 
