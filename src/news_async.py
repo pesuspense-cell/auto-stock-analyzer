@@ -904,3 +904,112 @@ def analyze_news_fast(
         source_types_str,
     )
     return deep_result
+
+
+# ─── 포트폴리오 일괄 뉴스 분석 ────────────────────────────────────────────────
+_IMPORTANT_KW: list[str] = [
+    "공시", "실적", "증자", "계약", "수주", "합병", "인수",
+    "상장폐지", "분할", "배당", "소송", "제재",
+]
+
+
+def analyze_portfolio_news(
+    holdings: list[dict],
+    api_key: str = "",
+    groq_api_key: str = "",
+    dart_api_key: str = "",
+    max_news_per_ticker: int = 8,
+) -> dict:
+    """
+    포트폴리오 보유 종목 전체 뉴스 일괄 분석.
+
+    holdings: [{"ticker": str, "company_name": str}, ...]
+
+    반환:
+      per_ticker               : dict[ticker → sentiment 결과]
+      important_alerts         : list[{ticker, company_name, title, keyword}]
+      portfolio_sentiment_avg  : float  (-5 ~ +5)
+      portfolio_sentiment_label: str
+      news_items_map           : dict[ticker → raw news list]
+    """
+    _empty: dict = {
+        "per_ticker": {},
+        "important_alerts": [],
+        "portfolio_sentiment_avg": 0.0,
+        "portfolio_sentiment_label": "중립",
+        "news_items_map": {},
+    }
+    if not holdings:
+        return _empty
+
+    tickers  = [h["ticker"] for h in holdings]
+    name_map = {h["ticker"]: h.get("company_name", "") for h in holdings}
+
+    # Step 1: 네이버 뉴스 병렬 수집
+    t0 = time.perf_counter()
+    news_map = fetch_multi_news_fast(tickers, max_items=max_news_per_ticker)
+    logger.info("포트폴리오 뉴스 수집: %.2fs (%d종목)", time.perf_counter() - t0, len(tickers))
+
+    # Step 2: 종목별 키워드 감성 분석 + 중요 알림 감지
+    from stock_ai import analyze_news_sentiment_keywords  # 지연 import
+
+    per_ticker: dict[str, dict]  = {}
+    important_alerts: list[dict] = []
+    seen_alerts: set[tuple]      = set()
+
+    for ticker in tickers:
+        items        = news_map.get(ticker, [])
+        company_name = name_map.get(ticker, "")
+
+        if not items:
+            per_ticker[ticker] = {
+                "score": 0.0, "label": "중립",
+                "detail": [], "event_flags": [], "summary": "뉴스 없음",
+            }
+            continue
+
+        # 중요 키워드 스캔
+        for item in items:
+            title = item.get("title", "")
+            for kw in _IMPORTANT_KW:
+                if kw in title:
+                    key = (ticker, title)
+                    if key not in seen_alerts:
+                        seen_alerts.add(key)
+                        important_alerts.append({
+                            "ticker":       ticker,
+                            "company_name": company_name,
+                            "title":        title,
+                            "keyword":      kw,
+                        })
+                    break
+
+        # 감성 분석: stage1+2 로컬 키워드 경로 (LLM 없이 빠른 처리)
+        filtered               = stage1_title_filter(items, company_name)
+        deep_cands, pre_scored = stage2_keyword_filter(filtered)
+        result                 = analyze_news_sentiment_keywords(
+            deep_cands + pre_scored, ticker, company_name
+        )
+        per_ticker[ticker] = result
+
+    # Step 3: 포트폴리오 심리 지수
+    scores    = [v.get("score", 0.0) for v in per_ticker.values()]
+    avg_score = round(sum(scores) / max(len(scores), 1), 2)
+
+    if   avg_score >= 2:     sentiment_label = "긍정적"
+    elif avg_score >= 0.5:   sentiment_label = "약한 긍정"
+    elif avg_score >= -0.5:  sentiment_label = "중립"
+    elif avg_score >= -2:    sentiment_label = "약한 부정"
+    else:                    sentiment_label = "부정적"
+
+    logger.info(
+        "포트폴리오 심리 지수: %.2f (%s) | 중요알림=%d건",
+        avg_score, sentiment_label, len(important_alerts),
+    )
+    return {
+        "per_ticker":                per_ticker,
+        "important_alerts":          important_alerts,
+        "portfolio_sentiment_avg":   avg_score,
+        "portfolio_sentiment_label": sentiment_label,
+        "news_items_map":            news_map,
+    }

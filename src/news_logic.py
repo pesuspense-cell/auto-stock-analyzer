@@ -22,6 +22,8 @@ from stock_ai import (
 from src.news_async import (
     # 파이프라인
     analyze_news_fast,
+    # 포트폴리오 일괄 분석 (신규)
+    analyze_portfolio_news,
     # 수집
     fetch_naver_news_fast,
     fetch_multi_news_fast,
@@ -51,6 +53,7 @@ __all__ = [
     "analyze_etf_news_sentiment",
     # ── 비동기 파이프라인 ─────────────────────────────────────────────────────
     "analyze_news_fast",
+    "analyze_portfolio_news",
     "fetch_naver_news_fast",
     "fetch_multi_news_fast",
     "run_async",

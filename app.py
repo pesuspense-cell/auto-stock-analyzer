@@ -41,7 +41,7 @@ try:
         analyze_news_sentiment_llm, analyze_news_batch, summarize_article_llm,
         get_advanced_sentiment, get_related_sector_performance,
         get_etf_news_with_holdings, analyze_etf_news_sentiment,
-        analyze_news_fast, fetch_naver_news_fast,
+        analyze_news_fast, fetch_naver_news_fast, analyze_portfolio_news,
     )
     from src.utils import (
         KOSPI_STOCKS, US_STOCKS, INDICES,
@@ -4205,13 +4205,87 @@ def _render_portfolio_tab():
 
         st.divider()
 
-        # 종목별 수익률 표
+        # ── Event Watch — AI 뉴스 감성 분석 ──────────────────────────────────
+        _ew_h, _ew_btn_col = st.columns([5, 1])
+        _ew_h.markdown("#### 🎯 Event Watch")
+        _pf_news_result: dict = st.session_state.get("pf_news_result", {})
+        if _ew_btn_col.button("뉴스 분석", key="pf_run_news", type="primary",
+                              use_container_width=True):
+            _pf_holdings = [
+                {"ticker": _it["ticker"],
+                 "company_name": _it["ticker"].split(".")[0]}
+                for _it in _items
+            ]
+            with st.spinner("포트폴리오 뉴스 분석 중..."):
+                _pf_news_result = analyze_portfolio_news(
+                    _pf_holdings,
+                    api_key=st.session_state.get("gemini_api_key", ""),
+                    groq_api_key=st.session_state.get("groq_api_key", ""),
+                    dart_api_key=st.session_state.get("dart_api_key", ""),
+                )
+            st.session_state["pf_news_result"] = _pf_news_result
+
+        if _pf_news_result:
+            _avg_s  = _pf_news_result.get("portfolio_sentiment_avg", 0.0)
+            _avg_l  = _pf_news_result.get("portfolio_sentiment_label", "중립")
+            _s_clr  = "#4caf50" if _avg_s >= 0.5 else ("#ef4444" if _avg_s <= -0.5 else "#888")
+            _ew_c1, _ew_c2 = st.columns([1, 3])
+            _ew_c1.markdown(
+                f'<div style="background:#1e2130;border-radius:10px;padding:18px;text-align:center">'
+                f'<div style="font-size:.75rem;color:#999;margin-bottom:6px">포트폴리오 심리 지수</div>'
+                f'<div style="font-size:2.2rem;font-weight:700;color:{_s_clr}">{_avg_s:+.2f}</div>'
+                f'<div style="font-size:.85rem;color:{_s_clr};margin-top:4px">{_avg_l}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            _per_news = _pf_news_result.get("per_ticker", {})
+            _bdg = '<div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0">'
+            for _bt, _br in _per_news.items():
+                _bs  = _br.get("score", 0.0)
+                _bl  = _br.get("label", "중립")
+                _bc  = "#4caf50" if _bs >= 0.5 else ("#ef4444" if _bs <= -0.5 else "#888")
+                _bdg += (
+                    f'<span style="background:#252836;border-radius:8px;'
+                    f'padding:6px 12px;font-size:.85rem">'
+                    f'<b style="color:#ddd">{_bt}</b> '
+                    f'<span style="color:{_bc}">{_bl} ({_bs:+.1f})</span></span>'
+                )
+            _bdg += '</div>'
+            _ew_c2.markdown(_bdg, unsafe_allow_html=True)
+
+            _alerts = _pf_news_result.get("important_alerts", [])
+            if _alerts:
+                st.markdown("**🔔 중요 알림**")
+                for _al in _alerts:
+                    _akw   = _al["keyword"]
+                    _ak_c  = "#ff6b6b" if _akw in ("증자", "상장폐지", "소송", "제재") else "#ffd93d"
+                    _aname = _al.get("company_name") or _al["ticker"]
+                    st.markdown(
+                        f'<div style="background:#1a1d2e;border-left:4px solid {_ak_c};'
+                        f'padding:10px 16px;border-radius:0 8px 8px 0;margin:3px 0">'
+                        f'<span style="background:{_ak_c};color:#000;font-size:.72rem;'
+                        f'border-radius:4px;padding:2px 6px;margin-right:8px;'
+                        f'font-weight:700">[{_akw}]</span>'
+                        f'<b style="color:#e0e0e0">{_aname}</b> — '
+                        f'<span style="color:#ccc">{_al["title"]}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+        else:
+            st.caption("'뉴스 분석' 버튼을 눌러 포트폴리오 종목의 뉴스 감성을 분석하세요.")
+
+        st.divider()
+
+        # 종목별 수익률 표 (AI 의견 컬럼 포함)
+        _pf_per_news: dict = (
+            st.session_state.get("pf_news_result", {}).get("per_ticker", {})
+        )
+
         _tbl_css = """
 <style>
 .pf-tbl{width:100%;border-collapse:collapse;font-size:.9rem}
 .pf-tbl th{background:#1e2130;color:#9e9e9e;padding:10px 14px;text-align:right;
            font-weight:500;border-bottom:2px solid #333;white-space:nowrap}
-.pf-tbl th:first-child{text-align:left}
+.pf-tbl th:first-child,.pf-tbl th:last-child{text-align:left}
 .pf-tbl td{padding:10px 14px;border-bottom:1px solid #252836;text-align:right;color:#ccc}
 .pf-tbl td:first-child{text-align:left;color:#e0e0e0;font-weight:600}
 .pf-tbl tr:last-child td{border-bottom:none}
@@ -4219,12 +4293,14 @@ def _render_portfolio_tab():
 .pp{color:#ff4d4d;font-weight:700}
 .pn{color:#4d88ff;font-weight:700}
 .pz{color:#888}
+.ai-op{text-align:left!important;font-size:.8rem;max-width:200px;word-break:keep-all;line-height:1.4}
 </style>"""
 
         _tbl_head = (
             '<table class="pf-tbl"><thead><tr>'
             '<th>티커</th><th>수량</th><th>평단가</th>'
             '<th>현재가</th><th>수익률(%)</th><th>평가손익</th>'
+            '<th>AI 의견</th>'
             '</tr></thead><tbody>'
         )
 
@@ -4235,7 +4311,7 @@ def _render_portfolio_tab():
             _qty = _it["quantity"]
             _cur = _pf_prices.get(_t)
             _krw = _t.upper().endswith((".KS", ".KQ"))
-            _fp  = (lambda v: f"₩{v:,.0f}") if _krw else (lambda v: f"${v:,.2f}")
+            _fp  = (lambda v, k=_krw: f"₩{v:,.0f}" if k else f"${v:,.2f}")
 
             if _cur is not None:
                 _pnl     = (_cur - _avg) * _qty
@@ -4250,6 +4326,26 @@ def _render_portfolio_tab():
                 _pct_str = "-"
                 _pnl_str = "-"
 
+            # AI 의견 생성
+            _nr   = _pf_per_news.get(_t)
+            _nsc  = _nr.get("score", 0.0) if _nr else None
+            _nlb  = _nr.get("label", "중립") if _nr else None
+            _pnlp = (_cur / _avg - 1) * 100 if (_cur and _avg) else None
+            if _nsc is None:
+                _ai_txt, _ai_c = "분석 대기", "#666"
+            elif _nsc >= 2 and _pnlp is not None and _pnlp >= 0:
+                _ai_txt, _ai_c = "호재 발생 + 수익 중 — 홀딩 권장", "#81c784"
+            elif _nsc >= 1:
+                _ai_txt, _ai_c = f"뉴스 {_nlb} — 홀딩 유지", "#a5d6a7"
+            elif _nsc <= -2 and _pnlp is not None and _pnlp < -5:
+                _ai_txt, _ai_c = "부정 신호 + 손실 — 손절 검토", "#ef9a9a"
+            elif _nsc <= -1:
+                _ai_txt, _ai_c = f"뉴스 {_nlb} — 비중 축소 검토", "#ffab91"
+            elif _pnlp is not None and _pnlp < -10:
+                _ai_txt, _ai_c = "큰 손실 중 — 손절라인 점검", "#ff8a65"
+            else:
+                _ai_txt, _ai_c = "중립 — 관망", "#aaa"
+
             _tbl_rows_html.append(
                 f"<tr>"
                 f"<td>{_t}</td>"
@@ -4258,6 +4354,7 @@ def _render_portfolio_tab():
                 f"<td>{_cur_str}</td>"
                 f"<td class='{_cls}'>{_pct_str}</td>"
                 f"<td class='{_cls}'>{_pnl_str}</td>"
+                f"<td class='ai-op' style='color:{_ai_c}'>{_ai_txt}</td>"
                 f"</tr>"
             )
 
@@ -4265,6 +4362,116 @@ def _render_portfolio_tab():
             _tbl_css + _tbl_head + "".join(_tbl_rows_html) + "</tbody></table>",
             unsafe_allow_html=True,
         )
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── 트레일링 스탑 추적 (매 렌더마다 최고가 갱신) ────────────────────
+        _trailing: dict = st.session_state.setdefault("pf_trailing_max", {})
+        for _it in _items:
+            _c = _pf_prices.get(_it["ticker"])
+            if _c:
+                _t_key = _it["ticker"]
+                _trailing[_t_key] = max(_trailing.get(_t_key, 0.0), _c)
+
+        # ── 매도 가이드 (Exit Strategy) ──────────────────────────────────────
+        with st.expander("🎯 매도 가이드 (Exit Strategy)", expanded=False):
+            _eg_h, _eg_btn = st.columns([5, 1])
+            _eg_h.markdown(
+                "<small style='color:#999'>평단가 대비 목표가 · 트레일링 스탑 · 목표가 근접 알림</small>",
+                unsafe_allow_html=True,
+            )
+            _exit_result: dict = st.session_state.get("pf_exit_result", {})
+            if _eg_btn.button("계산", key="pf_exit_calc", type="secondary",
+                              use_container_width=True):
+                _exit_result = {}
+                with st.spinner("차트 데이터 로딩 중..."):
+                    for _it in _items:
+                        _t = _it["ticker"]
+                        try:
+                            _cdata = get_stock_data(_t, period="3mo")
+                            if _cdata is not None and not _cdata.empty:
+                                _exit_result[_t] = get_sell_target_price(_cdata)
+                        except Exception:
+                            pass
+                st.session_state["pf_exit_result"] = _exit_result
+
+            if not _exit_result:
+                st.caption("'계산' 버튼으로 보수적/공격적 목표가를 계산하세요.")
+
+            for _it in _items:
+                _t   = _it["ticker"]
+                _avg = _it["avg_price"]
+                _cur = _pf_prices.get(_t)
+                _krw = _t.upper().endswith((".KS", ".KQ"))
+                _efmt = (lambda v, k=_krw: f"₩{v:,.0f}" if k else f"${v:,.2f}")
+
+                _stp   = _exit_result.get(_t, {})
+                _cons  = _stp.get("conservative_target")
+                _aggr  = _stp.get("aggressive_target")
+                _t_max = _trailing.get(_t, 0.0)
+
+                # 알림 계산
+                _exit_alerts: list[tuple[str, str]] = []
+                if _cur and _t_max > 0 and _cur < _t_max * 0.95:
+                    _drop = (_cur / _t_max - 1) * 100
+                    _exit_alerts.append((
+                        f"⚠️ 트레일링 스탑: 최고가 {_efmt(_t_max)} 대비 {_drop:.1f}% — "
+                        "수익 보존을 위한 매도 권장",
+                        "#ff8a65",
+                    ))
+                if _cur and _cons and _cur >= _cons * 0.95:
+                    _prox = _cur / _cons * 100
+                    _exit_alerts.append((
+                        f"🎯 목표가 근접 ({_prox:.0f}%): 보수적 목표가 {_efmt(_cons)} — "
+                        "분할 매도 고려",
+                        "#ffd93d",
+                    ))
+
+                # 카드 본문
+                _cp: list[str] = []
+                if _cur:
+                    _pr  = (_cur / _avg - 1) * 100 if _avg else 0
+                    _prc = "#4caf50" if _pr >= 0 else "#ef4444"
+                    _cp.append(
+                        f'현재가 <b style="color:#ddd">{_efmt(_cur)}</b> '
+                        f'<span style="color:{_prc}">({_pr:+.1f}%)</span>'
+                    )
+                if _avg:
+                    _cp.append(f'평단가 <b style="color:#aaa">{_efmt(_avg)}</b>')
+                if _cons:
+                    _cg = (_cons / _avg - 1) * 100 if _avg else 0
+                    _cp.append(
+                        f'보수적 목표가 <b style="color:#81c784">{_efmt(_cons)}</b> '
+                        f'<span style="color:#81c784">({_cg:+.1f}%)</span>'
+                    )
+                if _aggr:
+                    _ag = (_aggr / _avg - 1) * 100 if _avg else 0
+                    _cp.append(
+                        f'공격적 목표가 <b style="color:#4fc3f7">{_efmt(_aggr)}</b> '
+                        f'<span style="color:#4fc3f7">({_ag:+.1f}%)</span>'
+                    )
+                if _t_max and _cur and _t_max > _cur:
+                    _cp.append(
+                        f'추적 최고가 <b style="color:#ffb74d">{_efmt(_t_max)}</b> '
+                        f'| 스탑라인 <b style="color:#ff8a65">{_efmt(_t_max * 0.95)}</b>'
+                    )
+
+                _card_body = " &nbsp;|&nbsp; ".join(_cp) if _cp else "-"
+                _alert_html = "".join(
+                    f'<div style="margin-top:6px;padding:6px 10px;background:#252836;'
+                    f'border-left:3px solid {_ac};border-radius:0 6px 6px 0;'
+                    f'font-size:.82rem;color:{_ac}">{_amsg}</div>'
+                    for _amsg, _ac in _exit_alerts
+                )
+                st.markdown(
+                    f'<div style="background:#1e2130;border-radius:10px;'
+                    f'padding:12px 16px;margin:6px 0">'
+                    f'<div style="font-size:.8rem;font-weight:700;color:#9e9e9e;'
+                    f'margin-bottom:6px">{_t}</div>'
+                    f'<div style="font-size:.85rem;line-height:1.9">{_card_body}</div>'
+                    f'{_alert_html}</div>',
+                    unsafe_allow_html=True,
+                )
+
         st.markdown("<br>", unsafe_allow_html=True)
 
         # 종목 삭제
