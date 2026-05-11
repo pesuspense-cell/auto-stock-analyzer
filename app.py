@@ -2847,11 +2847,13 @@ with tab_chart:
         # KOSPI 데이터 사전 수집
         try:
             _kospi_raw = yf.download("^KS11", period=_aperiod, auto_adjust=True, progress=False)
-            if isinstance(_kospi_raw.columns, pd.MultiIndex):
-                _kospi_raw.columns = _kospi_raw.columns.get_level_values(0)
+            _kospi_raw = _flatten_columns(_kospi_raw)
             _kospi_df = _kospi_raw[["Open", "High", "Low", "Close"]].dropna()
         except Exception:
             _kospi_df = pd.DataFrame()
+
+        # yfinance MultiIndex 잔존 가능성 방어 — 차트 진입 직전 재보정
+        data = _flatten_columns(data)
 
         fig = make_subplots(
             rows=6, cols=1,
@@ -2868,7 +2870,13 @@ with tab_chart:
             row_heights=[0.28, 0.084, 0.112, 0.112, 0.112, 0.30],
         )
 
-        o = data["Open"]; h = data["High"]; lo = data["Low"]; c = data["Close"]; v = data["Volume"]
+        if not all(col in data.columns for col in ("Open", "High", "Low", "Close", "Volume")):
+            st.warning("차트 데이터 컬럼을 읽을 수 없습니다. 티커를 다시 선택해 주세요.")
+            _data_ready = False
+        else:
+            pass  # 아래 차트 렌더링 진행
+
+        o = data.get("Open"); h = data.get("High"); lo = data.get("Low"); c = data.get("Close"); v = data.get("Volume")
 
         # ── 캔들스틱 ────────────────────────────────────────────────────────
         fig.add_trace(go.Candlestick(
