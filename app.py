@@ -507,13 +507,15 @@ def _get_wl_alerts() -> list:
     for item in wl:
         try:
             data = _stock_data(item["ticker"], "3mo")
-            if data.empty:
+            if data.empty or len(data) < 2 or "Close" not in data.columns:
                 continue
             sig   = generate_signals(data)
             score = sig.get("score", 0)
             if abs(score) >= 3:
                 price = float(data["Close"].iloc[-1])
                 prev  = float(data["Close"].iloc[-2])
+                if prev == 0:
+                    continue
                 alerts.append({
                     "name":   item["name"],
                     "ticker": item["ticker"],
@@ -952,7 +954,7 @@ if _data_ready:
 </div>
 """, unsafe_allow_html=True)
 
-    if data.empty:
+    if data.empty or "Close" not in data.columns:
         st.session_state.pop("analyzed_ticker", None)
         st.error(f"'{_aticker}' 데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
         st.stop()
@@ -960,24 +962,30 @@ if _data_ready:
     close = data["Close"]
 
     def _compute_signals_and_fund():
-        _va  = check_volume_anomaly(data)
-        _sig = generate_signals(data)
-        if _va.get("is_halted"):
-            _sig = {
-                "score":   0,
-                "label":   "거래 정지/주의",
-                "badge":   "⛔",
-                "reasons": [_va.get("reason", "")],
-                "_halted": True,
-            }
-        _adv = get_advanced_analysis(data)
-        _exp = calculate_expected_return(
-            data, _sig,
-            ticker=_aticker,
-            benchmark_returns=_bench_returns(_aticker),
-        )
-        _fsd = calculate_fundamental_score(fund_info, float(close.iloc[-1]))
-        return _va, _sig, _adv, _exp, _fsd
+        try:
+            _va  = check_volume_anomaly(data)
+            _sig = generate_signals(data)
+            if _va.get("is_halted"):
+                _sig = {
+                    "score":   0,
+                    "label":   "거래 정지/주의",
+                    "badge":   "⛔",
+                    "reasons": [_va.get("reason", "")],
+                    "_halted": True,
+                }
+            _adv = get_advanced_analysis(data)
+            _exp = calculate_expected_return(
+                data, _sig,
+                ticker=_aticker,
+                benchmark_returns=_bench_returns(_aticker),
+            )
+            _last = float(close.iloc[-1]) if not close.empty else 0.0
+            _fsd = calculate_fundamental_score(fund_info, _last)
+            return _va, _sig, _adv, _exp, _fsd
+        except (IndexError, KeyError) as _e:
+            import logging
+            logging.getLogger(__name__).warning(f"[compute] {_aticker}: {_e}")
+            return {}, {"score": 0, "label": "분석 오류", "badge": "⚠️", "reasons": []}, {}, {}, {}
 
     # ── 신호 연산 + 뉴스 감성을 병렬 실행, 완료까지 타이머 갱신 ─────────────────
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool2:

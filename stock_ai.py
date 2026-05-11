@@ -531,7 +531,7 @@ def generate_signals(data: pd.DataFrame) -> dict:
          (참고: 라이언 섀넌, 《기술적 분석을 이용한 다중 타임프레임 분석》)
     이론적 최대: ±20 → cap ±10
     """
-    if data.empty or len(data) < 21:
+    if data.empty or len(data) < 21 or "Close" not in data.columns:
         return {}
 
     score   = 0.0
@@ -1052,7 +1052,7 @@ def check_breakout_signal(data: pd.DataFrame) -> dict:
     조건 A: 20일 MA 상향 돌파 (전일 종가 < SMA20, 당일 종가 ≥ SMA20)
     조건 B: 당일 거래량 > 전일 거래량 × 200%
     """
-    if data.empty or len(data) < 22:
+    if data.empty or len(data) < 22 or "Close" not in data.columns:
         return {"status": "wait", "detail": "데이터 부족 — 관망"}
 
     close  = data["Close"]
@@ -1139,7 +1139,7 @@ def calculate_expected_return(
     매물대 저항: 목표가 부근 거래량 집중 시 B 하향 조정
     켈리: 승률·RR비로 추천 투자 비중(%) 산출 (하프-켈리)
     """
-    if data.empty or not signals:
+    if data.empty or not signals or "Close" not in data.columns:
         return {}
 
     close   = data["Close"]
@@ -1257,12 +1257,14 @@ def get_market_movers(tickers_dict: dict) -> pd.DataFrame:
         try:
             d = yf.download(ticker, period="5d", auto_adjust=True, progress=False)
             d = _flatten_columns(d)
-            if len(d) < 2:
+            if d.empty or len(d) < 2 or "Close" not in d.columns:
                 continue
             price      = float(d["Close"].iloc[-1])
             prev_price = float(d["Close"].iloc[-2])
+            if prev_price == 0:
+                continue
             chg        = (price - prev_price) / prev_price * 100
-            volume     = int(d["Volume"].iloc[-1])
+            volume     = int(d["Volume"].iloc[-1]) if "Volume" in d.columns else 0
             rows.append({
                 "종목명": name, "티커": ticker,
                 "현재가": price, "등락률(%)": round(chg, 2), "거래량": volume
@@ -1295,11 +1297,15 @@ def _yf_movers_fallback(top_n: int = 10) -> tuple:
         try:
             d = raw if single else raw[ticker]
             d = _flatten_columns(d)
+            if "Close" not in d.columns:
+                continue
             d = d.dropna(subset=["Close"])
-            if len(d) < 2:
+            if d.empty or len(d) < 2:
                 continue
             price = float(d["Close"].iloc[-1])
             prev  = float(d["Close"].iloc[-2])
+            if prev == 0:
+                continue
             chg   = (price - prev) / prev * 100
             vol   = int(d["Volume"].iloc[-1]) if "Volume" in d.columns else 0
             rows.append({
@@ -1899,7 +1905,7 @@ def get_advanced_analysis(data: pd.DataFrame) -> dict:
         "trend_score": 50.0, "momentum_score": 50.0, "volume_score": 50.0,
         "divergence": {}, "zscore": None, "vpvr": {}, "ichimoku": {}, "summary_items": [],
     }
-    if data.empty or len(data) < 30:
+    if data.empty or len(data) < 30 or "Close" not in data.columns:
         return _empty
 
     last  = data.iloc[-1]
@@ -2733,7 +2739,7 @@ def get_buy_target_price(data: pd.DataFrame, mode: str = "classic") -> dict:
     mode="breakout" : 추격 모드 — 저항선 돌파 확인 후 진입 (현재가 대비 +2~3%)
     mode="vwap"     : 정석 모드 — 시장 참여자 평균가(VWAP) 기준 매수
     """
-    if data.empty or len(data) < 20:
+    if data.empty or len(data) < 20 or "Close" not in data.columns:
         return {}
 
     def _f(val):
@@ -2945,22 +2951,28 @@ def get_stop_loss_targets(data: pd.DataFrame, entry_price: float = None) -> dict
     오닐 7~8% 손절 원칙 + ATR 기반 손절 + 3:1 리스크/리워드 목표가
     참고: 《최고의 주식 최적의 타이밍》(윌리엄 오닐)
     """
-    if data.empty:
+    if data.empty or len(data) < 2 or "Close" not in data.columns:
         return {}
 
     close   = data["Close"]
-    current = float(close.iloc[-1])
+    try:
+        current = float(close.iloc[-1])
+    except (IndexError, KeyError):
+        return {}
     entry   = entry_price or current
 
     # ATR — get_stock_data에서 미리 계산된 값 우선, 없으면 직접 계산
     if "ATR" in data.columns and pd.notna(data["ATR"].iloc[-1]):
         atr_val = float(data["ATR"].iloc[-1])
-    else:
+    elif all(c in data.columns for c in ("High", "Low")) and len(data) >= 14:
         high   = data["High"]
         low    = data["Low"]
         prev_c = close.shift(1)
         tr     = pd.concat([high - low, (high - prev_c).abs(), (low - prev_c).abs()], axis=1).max(axis=1)
-        atr_val = float(tr.rolling(14).mean().iloc[-1])
+        _atr_raw = tr.rolling(14).mean().iloc[-1]
+        atr_val  = float(_atr_raw) if pd.notna(_atr_raw) else current * 0.02
+    else:
+        atr_val = current * 0.02  # 데이터 부족 시 현재가의 2%로 근사
 
     # 손절선
     stop_8pct = round(entry * 0.92, 2)                              # 오닐 8% 손절
@@ -3002,7 +3014,7 @@ def get_sell_target_price(data: pd.DataFrame) -> dict:
     보수적 목표가: BB상단 vs 매물대 저항 중 낮은 값 (50% 분할매도 기준)
     공격적 목표가: 피보나치 1.618 확장선 (전량매도 / 트레일링 스탑 기준)
     """
-    if data.empty or len(data) < 20:
+    if data.empty or len(data) < 20 or "Close" not in data.columns:
         return {}
 
     close   = data["Close"].astype(float)
