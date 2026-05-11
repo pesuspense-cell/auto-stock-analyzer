@@ -51,7 +51,6 @@ try:
         get_top_kospi_stocks, get_top_kosdaq_stocks,
         get_top_us_stocks, get_top_nasdaq_stocks,
         is_etf_ticker, _ETF_PORTFOLIO_MAP,
-        resolve_ticker,
     )
 except Exception as _import_err:
     import traceback as _tb
@@ -4031,36 +4030,58 @@ def _render_portfolio_tab():
         except Exception:
             pass
 
-    # ── 종목 추가 (이름 검색) ─────────────────────────────────────────────────
+    # ── 종목 추가 (목록 검색) ─────────────────────────────────────────────────
     with st.expander("➕ 종목 추가", expanded=False):
-        _fa_query = st.text_input(
-            "종목명 또는 티커 검색",
-            placeholder="삼성전자 / 엔비디아 / AAPL / 005930",
-            key="pf_add_search",
+        _fa_market = st.radio(
+            "시장 선택", ["국내 주식", "국내 ETF", "미국 주식"],
+            horizontal=True, label_visibility="collapsed", key="pf_add_market",
         )
 
         _fa_ticker_val = ""
-        if _fa_query.strip():
-            _fa_candidates = resolve_ticker(_fa_query.strip(), top_n=8)
-            if _fa_candidates:
-                _fa_opts = {
-                    f"{c['name_kr'] or c['name']}  ({c['ticker']})": c["ticker"]
-                    for c in _fa_candidates
-                }
-                _fa_label = st.selectbox(
-                    "종목 선택", list(_fa_opts.keys()), key="pf_add_select"
+        if _fa_market == "국내 주식":
+            with st.spinner("종목 목록 로딩 중..."):
+                _fa_list = _krx_stocks()
+            if _fa_list:
+                _fa_sel = st.selectbox(
+                    "종목 검색 (이름·코드 입력)", list(_fa_list.keys()),
+                    key="pf_add_krx",
+                    help="이름이나 종목 코드를 입력하면 자동 필터링됩니다.",
                 )
-                _fa_ticker_val = _fa_opts[_fa_label]
+                _fa_ticker_val = _fa_list[_fa_sel]
             else:
-                st.warning("검색 결과가 없습니다. 티커를 직접 입력해 주세요.")
-                _fa_ticker_val = _fa_query.strip().upper()
+                st.warning("국내 종목 목록 로드 실패")
+
+        elif _fa_market == "국내 ETF":
+            with st.spinner("ETF 목록 로딩 중..."):
+                _fa_list = _etf_stocks()
+            if _fa_list:
+                _fa_sel = st.selectbox(
+                    "ETF 검색 (이름·코드 입력)", list(_fa_list.keys()),
+                    key="pf_add_etf",
+                    help="ETF 이름이나 6자리 코드를 입력하면 자동 필터링됩니다.",
+                )
+                _fa_ticker_val = _fa_list[_fa_sel]
+            else:
+                st.warning("ETF 목록 로드 실패")
+
+        else:
+            with st.spinner("미국 종목 목록 로딩 중..."):
+                _fa_list = _us_stocks()
+            if _fa_list:
+                _fa_sel = st.selectbox(
+                    "종목 검색 (이름·티커 입력)", list(_fa_list.keys()),
+                    key="pf_add_us",
+                    help="회사명 또는 티커(예: AAPL)를 입력하면 자동 필터링됩니다.",
+                )
+                _fa_ticker_val = _fa_list[_fa_sel]
+            else:
+                st.warning("미국 종목 목록 로드 실패")
 
         if _fa_ticker_val:
             _fa_is_krw = _fa_ticker_val.upper().endswith((".KS", ".KQ"))
             _fa_c1, _fa_c2 = st.columns([2, 1])
             _fa_price = _fa_c1.number_input(
-                "평단가",
-                min_value=0.01, value=1.0,
+                "평단가", min_value=0.01, value=1.0,
                 step=100.0 if _fa_is_krw else 0.01,
                 format="%.0f" if _fa_is_krw else "%.2f",
                 key="pf_add_price",
