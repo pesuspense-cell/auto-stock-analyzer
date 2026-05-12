@@ -532,11 +532,8 @@ def _inv_data(ticker: str) -> dict:
 @st.cache_data(ttl=60)
 def _realtime_price_1m(ticker: str) -> dict:
     """
-    1분봉 데이터로 실시간 현재가 조회 (TTL=60초 — 1분 내 중복 버튼 클릭 시 API 재호출 없음).
+    현재가 조회 — fast_info → 1분봉 → 일봉 순으로 폴백 (TTL=60초).
 
-    - DataFrame 인덱스를 KST(Asia/Seoul)로 변환하여 한국 시각 기준으로 처리
-    - 마지막 행 시각이 현재 KST 기준 15시간 이상 과거이면 장 미개장으로 판단
-    - 한국장 15:30 이후에는 is_realtime=False 반환
     Returns: {"price": float, "ts": str, "is_realtime": bool, "stale": bool, "stale_msg": str}
     """
     _now_k   = _now_kst()
@@ -544,22 +541,36 @@ def _realtime_price_1m(ticker: str) -> dict:
     _is_kr   = ticker.endswith(".KS") or ticker.endswith(".KQ")
     _after_close = _is_kr and (_now_k.hour * 60 + _now_k.minute) >= (15 * 60 + 30)
 
+    # ── 1순위: fast_info.last_price (Quote API — 가장 빠름) ──────────────────
+    try:
+        _fi = yf.Ticker(ticker).fast_info
+        _p  = float(_fi.last_price)
+        if _p > 0:
+            _stale = _after_close
+            return {
+                "price":       _p,
+                "ts":          _ts,
+                "is_realtime": not _stale,
+                "stale":       _stale,
+                "stale_msg":   "장 마감 후 종가입니다." if _stale else "",
+            }
+    except Exception:
+        pass
+
+    # ── 2순위: 1분봉 OHLCV ───────────────────────────────────────────────────
     try:
         _df = yf.download(ticker, period="1d", interval="1m",
                           auto_adjust=True, progress=False)
         _df = _flatten_columns(_df)
         if not _df.empty and "Close" in _df.columns:
-            # 인덱스를 KST로 변환
             if _df.index.tz is None:
                 _df.index = _df.index.tz_localize("UTC").tz_convert("Asia/Seoul")
             else:
                 _df.index = _df.index.tz_convert("Asia/Seoul")
-
             _close_s = _df["Close"].dropna()
             if not _close_s.empty:
                 _p = float(_close_s.iloc[-1])
                 if _p > 0:
-                    # 최신성 검증: 마지막 봉 시각이 현재 KST 대비 15시간 이상 과거면 스테일
                     _last_dt   = _close_s.index[-1]
                     _now_aware = _now_k.replace(tzinfo=_KST) if _now_k.tzinfo is None else _now_k
                     _age_h     = (_now_aware - _last_dt).total_seconds() / 3600
@@ -569,16 +580,16 @@ def _realtime_price_1m(ticker: str) -> dict:
                         "가장 최근 종가를 표시합니다."
                     ) if _stale else ""
                     return {
-                        "price":     _p,
-                        "ts":        _ts,
+                        "price":       _p,
+                        "ts":          _ts,
                         "is_realtime": not (_after_close or _stale),
-                        "stale":     _stale,
-                        "stale_msg": _stale_msg,
+                        "stale":       _stale,
+                        "stale_msg":   _stale_msg,
                     }
     except Exception:
         pass
 
-    # 폴백: 일봉 마지막 종가
+    # ── 3순위: 일봉 종가 ─────────────────────────────────────────────────────
     try:
         _d = yf.download(ticker, period="2d", auto_adjust=True, progress=False)
         _d = _flatten_columns(_d)
@@ -4238,9 +4249,10 @@ def _render_portfolio_tab():
     _pf_tickers = list({it["ticker"] for it in _items}) if _items else []
     _pf_prices: dict[str, float] = {}
     if _pf_tickers:
+        # 1순위: 1분봉 배치 다운로드 (장중 실시간 가격)
         try:
             _pf_raw = yf.download(
-                _pf_tickers, period="2d", auto_adjust=True,
+                _pf_tickers, period="1d", interval="1m", auto_adjust=True,
                 progress=False, threads=True,
             )
             for _t in _pf_tickers:
@@ -4255,6 +4267,37 @@ def _render_portfolio_tab():
                     pass
         except Exception:
             pass
+
+        # 2순위: fast_info.last_price — 1분봉에서 누락된 종목 개별 보완
+        _pf_missing = [t for t in _pf_tickers if not _pf_prices.get(t)]
+        for _t in _pf_missing:
+            try:
+                _lp = float(yf.Ticker(_t).fast_info.last_price)
+                if _lp > 0:
+                    _pf_prices[_t] = _lp
+            except Exception:
+                pass
+
+        # 3순위: 일봉 — 그래도 누락된 종목 최종 보완
+        _pf_still_missing = [t for t in _pf_tickers if not _pf_prices.get(t)]
+        if _pf_still_missing:
+            try:
+                _pf_raw2 = yf.download(
+                    _pf_still_missing, period="2d", auto_adjust=True,
+                    progress=False, threads=True,
+                )
+                for _t in _pf_still_missing:
+                    try:
+                        if isinstance(_pf_raw2.columns, pd.MultiIndex):
+                            _s = _pf_raw2["Close"][_t].dropna()
+                        else:
+                            _s = _pf_raw2["Close"].dropna()
+                        if not _s.empty:
+                            _pf_prices[_t] = float(_s.iloc[-1])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     # USD/KRW 환율 — 미국 주식 원화 환산용
     _usd_krw = 1300.0
