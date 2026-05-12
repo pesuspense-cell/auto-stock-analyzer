@@ -13,9 +13,16 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import warnings
 warnings.filterwarnings("ignore")
+
+# 한국 표준시 (UTC+9) — pytz 불필요
+_KST = timezone(timedelta(hours=9))
+
+def _now_kst() -> datetime:
+    """현재 KST 시각 반환."""
+    return datetime.now(_KST)
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -519,25 +526,48 @@ def _inv_data(ticker: str) -> dict:
 def _realtime_price_1m(ticker: str) -> dict:
     """
     1분봉 데이터로 실시간 현재가 조회 (TTL=60초 — 1분 내 중복 버튼 클릭 시 API 재호출 없음).
-    한국장 15:30 이후에는 장외로 판단하여 is_realtime=False 반환.
-    Returns: {"price": float, "ts": str, "is_realtime": bool}
+
+    - DataFrame 인덱스를 KST(Asia/Seoul)로 변환하여 한국 시각 기준으로 처리
+    - 마지막 행 시각이 현재 KST 기준 15시간 이상 과거이면 장 미개장으로 판단
+    - 한국장 15:30 이후에는 is_realtime=False 반환
+    Returns: {"price": float, "ts": str, "is_realtime": bool, "stale": bool, "stale_msg": str}
     """
-    _ts = datetime.now().strftime("%H:%M:%S")
-    _is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
-    if _is_kr:
-        _now = datetime.now()
-        _after_close = (_now.hour * 60 + _now.minute) >= (15 * 60 + 30)
-    else:
-        _after_close = False
+    _now_k   = _now_kst()
+    _ts      = _now_k.strftime("%H:%M:%S")
+    _is_kr   = ticker.endswith(".KS") or ticker.endswith(".KQ")
+    _after_close = _is_kr and (_now_k.hour * 60 + _now_k.minute) >= (15 * 60 + 30)
 
     try:
         _df = yf.download(ticker, period="1d", interval="1m",
                           auto_adjust=True, progress=False)
         _df = _flatten_columns(_df)
         if not _df.empty and "Close" in _df.columns:
-            _p = float(_df["Close"].dropna().iloc[-1])
-            if _p > 0:
-                return {"price": _p, "ts": _ts, "is_realtime": not _after_close}
+            # 인덱스를 KST로 변환
+            if _df.index.tz is None:
+                _df.index = _df.index.tz_localize("UTC").tz_convert("Asia/Seoul")
+            else:
+                _df.index = _df.index.tz_convert("Asia/Seoul")
+
+            _close_s = _df["Close"].dropna()
+            if not _close_s.empty:
+                _p = float(_close_s.iloc[-1])
+                if _p > 0:
+                    # 최신성 검증: 마지막 봉 시각이 현재 KST 대비 15시간 이상 과거면 스테일
+                    _last_dt   = _close_s.index[-1]
+                    _now_aware = _now_k.replace(tzinfo=_KST) if _now_k.tzinfo is None else _now_k
+                    _age_h     = (_now_aware - _last_dt).total_seconds() / 3600
+                    _stale     = _age_h > 15
+                    _stale_msg = (
+                        f"장이 열리지 않은 상태입니다 (마지막 데이터: {_last_dt.strftime('%m/%d %H:%M')} KST). "
+                        "가장 최근 종가를 표시합니다."
+                    ) if _stale else ""
+                    return {
+                        "price":     _p,
+                        "ts":        _ts,
+                        "is_realtime": not (_after_close or _stale),
+                        "stale":     _stale,
+                        "stale_msg": _stale_msg,
+                    }
     except Exception:
         pass
 
@@ -548,11 +578,12 @@ def _realtime_price_1m(ticker: str) -> dict:
         if not _d.empty and "Close" in _d.columns:
             _p = float(_d["Close"].dropna().iloc[-1])
             if _p > 0:
-                return {"price": _p, "ts": _ts, "is_realtime": False}
+                return {"price": _p, "ts": _ts, "is_realtime": False,
+                        "stale": True, "stale_msg": "장이 열리지 않은 상태입니다. 가장 최근 종가를 표시합니다."}
     except Exception:
         pass
 
-    return {"price": 0.0, "ts": _ts, "is_realtime": False}
+    return {"price": 0.0, "ts": _ts, "is_realtime": False, "stale": False, "stale_msg": ""}
 
 # ─── 관심종목 알림 체크 ───────────────────────────────────────────────────────
 def _get_wl_alerts() -> list:
@@ -943,7 +974,7 @@ _data_ready = bool(_aticker)
 # ── Rerun B: pending 처리 → 로딩 UI 표시 후 analyzed로 전환 ──────────────────
 if _pending and not _aticker:
     _pname = st.session_state.get('_pending_sname', _pending)
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 중: **{_pname}** (`{_pending}`)")
+    st.caption(f"업데이트: {_now_kst().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 중: **{_pname}** (`{_pending}`)")
     _load_start = time.time()
     _loading_ph.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
@@ -972,7 +1003,7 @@ if _data_ready:
     ticker = _aticker
     sname  = _asname
 
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
+    st.caption(f"업데이트: {_now_kst().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
 
     # ── 주가 데이터 + 펀더멘털 병렬 로딩 ────────────────────────────────────
     _load_start = time.time()
@@ -1143,15 +1174,19 @@ if _data_ready:
 
     # ── 실시간 현재가 (1분봉) — 버튼 클릭 직후만 호출, 60초 캐시 ────────────
     _rt = _realtime_price_1m(_aticker)
-    _rt_price    = _rt["price"]
-    _rt_ts       = _rt["ts"]
-    _rt_realtime = _rt["is_realtime"]
+    _rt_price     = _rt["price"]
+    _rt_ts        = _rt["ts"]
+    _rt_realtime  = _rt["is_realtime"]
+    _rt_stale     = _rt.get("stale", False)
+    _rt_stale_msg = _rt.get("stale_msg", "")
 
 else:
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분석을 시작하세요.")
-    _rt_price    = 0.0
-    _rt_ts       = ""
-    _rt_realtime = False
+    st.caption(f"업데이트: {_now_kst().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분석을 시작하세요.")
+    _rt_price     = 0.0
+    _rt_ts        = ""
+    _rt_realtime  = False
+    _rt_stale     = False
+    _rt_stale_msg = ""
     data            = pd.DataFrame()
     vol_anomaly     = {"is_halted": False}
     signals         = {"score": 0, "label": "분석 대기", "badge": "—"}
@@ -3263,7 +3298,9 @@ with tab_chart:
 
         # 실시간 시세 배지 (버튼 클릭 후 분석 완료 시만 표시)
         if _data_ready and _rt_price > 0:
-            _rt_label = "실시간 시세" if _rt_realtime else "장마감 종가"
+            if _rt_stale:
+                st.warning(_rt_stale_msg or "장이 열리지 않은 상태입니다. 가장 최근 종가를 표시합니다.", icon="⏸️")
+            _rt_label = "실시간 시세 (KST)" if _rt_realtime else "장마감 종가 (KST)"
             _rt_color = "#22c55e" if _rt_realtime else "#94a3b8"
             st.markdown(
                 f'<div style="font-size:0.78rem;color:{_rt_color};margin-bottom:6px;">'
@@ -4344,7 +4381,7 @@ def _render_portfolio_tab():
                             _rt_pct_news[_it["ticker"]] = 0.0
             # 조회한 실시간 가격으로 _pf_prices 갱신
             _pf_prices.update(_rt_prices_news)
-            _rt_now = datetime.now().strftime("%H:%M:%S")
+            _rt_now = _now_kst().strftime("%H:%M:%S")
 
             _pf_holdings = [
                 {
@@ -4560,16 +4597,18 @@ def _render_portfolio_tab():
             if _eg_btn.button("매도 가이드 분석", key="pf_exit_calc", type="primary",
                               use_container_width=True):
                 _exit_result = {}
-                _exit_now = datetime.now().strftime("%H:%M:%S")
+                _exit_now = _now_kst().strftime("%H:%M:%S")
 
                 with st.spinner("실시간 현재가 조회 및 차트 분석 중..."):
                     for _it in _items:
                         _t = _it["ticker"]
                         try:
-                            # 실시간 1분봉 현재가 갱신
+                            # 실시간 1분봉 현재가 갱신 (KST 기준)
                             _rt_exit = _realtime_price_1m(_t)
                             if _rt_exit["price"] > 0:
                                 _pf_prices[_t] = _rt_exit["price"]
+                            if _rt_exit.get("stale") and _rt_exit.get("stale_msg"):
+                                st.caption(f"⏸️ {_t}: {_rt_exit['stale_msg']}")
 
                             _cdata = get_stock_data(_t, period="3mo")
                             if _cdata is not None and not _cdata.empty:
