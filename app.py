@@ -88,6 +88,15 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ─── 쿠키 매니저 (브라우저별 독립 세션 저장소) ──────────────────────────────
+try:
+    import extra_streamlit_components as _stx
+    _cookie_mgr = _stx.CookieManager(key="_auth_cm")
+    _HAS_COOKIE_MGR = True
+except Exception:
+    _cookie_mgr = None
+    _HAS_COOKIE_MGR = False
+
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
@@ -242,9 +251,12 @@ for _sk in ("auth_token", "auth_user_id", "auth_email"):
 
 _saved_settings = load_settings()
 
-# 재시작 후 저장된 토큰으로 로그인 세션 복원
+# 재시작 후 브라우저 쿠키로 로그인 세션 복원 (기기별 독립 세션)
 if not st.session_state.get("auth_token"):
-    _boot_auth_token = _saved_settings.get("auth_token", "")
+    try:
+        _boot_auth_token = st.context.cookies.get("auth_token", "")
+    except Exception:
+        _boot_auth_token = ""
     if _boot_auth_token:
         _boot_user = _db_get_user(_boot_auth_token)
         if _boot_user:
@@ -4045,7 +4057,8 @@ def _render_portfolio_tab():
                 st.session_state["auth_token"]   = None
                 st.session_state["auth_user_id"] = None
                 st.session_state["auth_email"]   = None
-                save_settings({**load_settings(), "auth_token": ""})
+                if _HAS_COOKIE_MGR and _cookie_mgr:
+                    _cookie_mgr.delete("auth_token")
                 st.rerun(scope="fragment")
     else:
         st.markdown("**💼 내 포트폴리오** — 로그인이 필요합니다")
@@ -4085,7 +4098,12 @@ def _render_portfolio_tab():
                     st.session_state["auth_token"]   = _r["token"]
                     st.session_state["auth_user_id"] = _r["user_id"]
                     st.session_state["auth_email"]   = _r["email"]
-                    save_settings({**load_settings(), "auth_token": _r["token"]})
+                    if _HAS_COOKIE_MGR and _cookie_mgr:
+                        from datetime import datetime as _dt
+                        _cookie_mgr.set(
+                            "auth_token", _r["token"],
+                            expires_at=_dt(2099, 1, 1),
+                        )
                     st.rerun(scope="fragment")
                 else:
                     st.error(_r["error"])
@@ -4096,7 +4114,8 @@ def _render_portfolio_tab():
         st.session_state["auth_token"]   = None
         st.session_state["auth_user_id"] = None
         st.session_state["auth_email"]   = None
-        save_settings({**load_settings(), "auth_token": ""})
+        if _HAS_COOKIE_MGR and _cookie_mgr:
+            _cookie_mgr.delete("auth_token")
         st.warning("세션이 만료되었습니다. 다시 로그인해 주세요.")
         st.rerun(scope="fragment")
         return

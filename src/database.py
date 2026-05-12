@@ -8,12 +8,15 @@ import logging
 import os
 import secrets
 from contextlib import contextmanager
+from datetime import timedelta
 
 import psycopg2
 import psycopg2.errors
 import psycopg2.extras
 import psycopg2.pool
 from werkzeug.security import check_password_hash, generate_password_hash
+
+SESSION_TIMEOUT_HOURS = 1
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +92,13 @@ def init_db() -> None:
                     email         TEXT        UNIQUE NOT NULL,
                     password_hash TEXT        NOT NULL,
                     session_token TEXT,
+                    last_activity TIMESTAMPTZ,
                     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
+            """)
+            # 기존 테이블에 last_activity 컬럼이 없는 경우 마이그레이션
+            cur.execute("""
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS last_activity TIMESTAMPTZ
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS portfolios (
@@ -140,7 +148,7 @@ def login_user(email: str, password: str) -> dict:
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(
-                "UPDATE users SET session_token = %s WHERE id = %s",
+                "UPDATE users SET session_token = %s, last_activity = NOW() WHERE id = %s",
                 (token, row["id"]),
             )
         con.commit()
@@ -151,24 +159,46 @@ def logout_user(token: str) -> None:
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute(
-                "UPDATE users SET session_token = NULL WHERE session_token = %s",
+                "UPDATE users SET session_token = NULL, last_activity = NULL"
+                " WHERE session_token = %s",
                 (token,),
             )
         con.commit()
 
 
 def get_user_by_token(token: str) -> dict | None:
-    """토큰으로 사용자 조회. 없으면 None."""
+    """토큰으로 사용자 조회. 만료됐거나 없으면 None.
+
+    - last_activity 기준 SESSION_TIMEOUT_HOURS 초과 시 토큰 삭제 후 None 반환
+    - 유효하면 last_activity = NOW() 로 갱신 (Sliding Expiration)
+    """
     if not token:
         return None
     with _conn() as con:
         with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "SELECT id, email FROM users WHERE session_token = %s",
-                (token,),
+                "SELECT id, email,"
+                " (last_activity IS NULL OR last_activity < NOW() - %s) AS expired"
+                " FROM users WHERE session_token = %s",
+                (timedelta(hours=SESSION_TIMEOUT_HOURS), token),
             )
             row = cur.fetchone()
-    return dict(row) if row else None
+            if not row:
+                return None
+            if row["expired"]:
+                cur.execute(
+                    "UPDATE users SET session_token = NULL, last_activity = NULL"
+                    " WHERE id = %s",
+                    (row["id"],),
+                )
+                con.commit()
+                return None
+            cur.execute(
+                "UPDATE users SET last_activity = NOW() WHERE id = %s",
+                (row["id"],),
+            )
+            con.commit()
+    return {"id": row["id"], "email": row["email"]}
 
 
 # ── 포트폴리오 CRUD ───────────────────────────────────────────────────────────
