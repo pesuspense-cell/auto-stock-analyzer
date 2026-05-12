@@ -83,7 +83,7 @@ def _conn():
 # ── 스키마 초기화 ─────────────────────────────────────────────────────────────
 
 def init_db() -> None:
-    """users / portfolios 테이블을 PostgreSQL에 생성한다 (없을 때만)."""
+    """users / portfolios / recommendation_history 테이블을 PostgreSQL에 생성한다 (없을 때만)."""
     with _conn() as con:
         with con.cursor() as cur:
             cur.execute("""
@@ -108,6 +108,16 @@ def init_db() -> None:
                     avg_price DOUBLE PRECISION NOT NULL,
                     quantity  DOUBLE PRECISION NOT NULL DEFAULT 1.0,
                     added_at  TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS recommendation_history (
+                    id              SERIAL      PRIMARY KEY,
+                    user_id         INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    investment_amt  BIGINT      NOT NULL,
+                    risk_profile    TEXT        NOT NULL DEFAULT '중립형',
+                    recommendations JSONB       NOT NULL,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
         con.commit()
@@ -243,3 +253,47 @@ def delete_portfolio_item(item_id: int, user_id: int) -> dict:
             rowcount = cur.rowcount
         con.commit()
     return {"ok": True} if rowcount > 0 else {"ok": False, "error": "항목을 찾을 수 없습니다"}
+
+
+# ── AI 추천 이력 ──────────────────────────────────────────────────────────────
+
+def save_recommendation(
+    user_id: int,
+    investment_amt: int,
+    risk_profile: str,
+    recommendations: list[dict],
+) -> dict:
+    """AI 추천 결과를 recommendation_history 테이블에 저장."""
+    import json as _json
+    with _conn() as con:
+        with con.cursor() as cur:
+            cur.execute(
+                "INSERT INTO recommendation_history"
+                " (user_id, investment_amt, risk_profile, recommendations)"
+                " VALUES (%s, %s, %s, %s)",
+                (user_id, investment_amt, risk_profile,
+                 _json.dumps(recommendations, ensure_ascii=False)),
+            )
+        con.commit()
+    return {"ok": True}
+
+
+def get_recommendation_history(user_id: int, limit: int = 5) -> list[dict]:
+    """최근 추천 이력 조회 (최신순)."""
+    with _conn() as con:
+        with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, investment_amt, risk_profile, recommendations, created_at"
+                " FROM recommendation_history"
+                " WHERE user_id = %s"
+                " ORDER BY created_at DESC LIMIT %s",
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            **dict(r),
+            "created_at": r["created_at"].isoformat() if r.get("created_at") else "",
+        }
+        for r in rows
+    ]

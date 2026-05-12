@@ -78,6 +78,8 @@ from src.database import (
     add_portfolio as _db_add_portfolio,
     get_portfolio as _db_get_portfolio,
     delete_portfolio_item as _db_delete_portfolio,
+    save_recommendation as _db_save_recommendation,
+    get_recommendation_history as _db_get_rec_history,
 )
 try:
     _db_init()
@@ -4965,6 +4967,183 @@ def _render_portfolio_tab():
                 f'{_ab_body}</div>',
                 unsafe_allow_html=True,
             )
+
+        st.divider()
+
+        # ── AI 투자금 기반 종목 추천 ──────────────────────────────────────────
+        st.markdown("#### 💡 AI 종목 추천 — 투자금 기반 최적 포트폴리오")
+        _rec_c1, _rec_c2, _rec_c3 = st.columns([3, 1, 1])
+        _inv_amt = _rec_c1.number_input(
+            "투자 예정 금액 (원)",
+            min_value=100_000,
+            max_value=1_000_000_000,
+            value=5_000_000,
+            step=500_000,
+            format="%d",
+            key="rec_investment_amount",
+            help="실제 매수에 사용할 원화 금액을 입력하세요.",
+        )
+        _risk_profile = _rec_c2.selectbox(
+            "투자 성향",
+            ["중립형", "보수형", "공격형"],
+            key="rec_risk_profile",
+        )
+        _rec_c3.write("")   # 레이블 높이 보정
+        _rec_run = _rec_c3.button(
+            "AI 추천 실행", type="primary", key="rec_run",
+            use_container_width=True,
+        )
+
+        if _rec_run:
+            from src.recommendation_engine import (
+                run_recommendation, recommendation_to_dict,
+            )
+            with st.spinner("후보 종목 뉴스·기술 분석 중... (10~25초 소요)"):
+                _rec_result = run_recommendation(
+                    investment_amount=int(_inv_amt),
+                    risk_profile=_risk_profile,
+                    api_key=st.session_state.get("gemini_api_key", ""),
+                    groq_api_key=st.session_state.get("groq_api_key", ""),
+                )
+            st.session_state["pf_rec_result"] = _rec_result
+
+            # 결과 DB 저장
+            if not _rec_result.get("error") and _rec_result.get("recommendations"):
+                _to_save = [
+                    recommendation_to_dict(r)
+                    for r in _rec_result["recommendations"]
+                ]
+                try:
+                    _db_save_recommendation(_uid, int(_inv_amt), _risk_profile, _to_save)
+                except Exception:
+                    pass
+
+        _rec_result: dict = st.session_state.get("pf_rec_result", {})
+
+        if _rec_result.get("error"):
+            st.warning(_rec_result["error"], icon="⚠️")
+
+        elif _rec_result.get("recommendations"):
+            _recs        = _rec_result["recommendations"]
+            _total_inv   = _rec_result.get("total_invested", 0.0)
+            _remaining   = _rec_result.get("remaining_cash", 0.0)
+
+            # 요약 메트릭 바
+            _rm1, _rm2, _rm3 = st.columns(3)
+            _rm1.metric("투자 예정 금액",  f"₩{int(_inv_amt):,}")
+            _rm2.metric("실제 투자액",     f"₩{_total_inv:,.0f}")
+            _rm3.metric("매수 후 잔금",    f"₩{_remaining:,.0f}",
+                        delta=f"-₩{_total_inv:,.0f}",
+                        delta_color="inverse")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # 종목 카드 (5개 / 열당 최대 3개)
+            _card_css_rec = """<style>
+.rec-card{background:#1e2130;border-radius:12px;padding:16px 18px;margin-bottom:8px;
+          border-top:3px solid #4fc3f7}
+.rec-card-name{font-size:1rem;font-weight:700;color:#e0e0e0}
+.rec-card-sector{font-size:.72rem;background:#252836;color:#9e9e9e;
+                 padding:2px 8px;border-radius:10px;margin-left:6px}
+.rec-card-price{font-size:.85rem;color:#aaa;margin-top:4px}
+.rec-card-reason{font-size:.8rem;color:#7ecfff;font-style:italic;
+                 margin-top:8px;line-height:1.5;border-left:2px solid #4fc3f7;
+                 padding-left:8px}
+.rec-bar-bg{background:#252836;border-radius:4px;height:8px;margin:6px 0}
+.rec-bar-fg{height:8px;border-radius:4px;background:linear-gradient(90deg,#4fc3f7,#81c784)}
+</style>"""
+            st.markdown(_card_css_rec, unsafe_allow_html=True)
+
+            # 3열 + 2열 레이아웃
+            _row1 = _recs[:3]
+            _row2 = _recs[3:]
+
+            def _render_rec_card(r, col):
+                _sent_pct  = round(r.sentiment_score * 100, 1)
+                _weight_pct = round(r.weight * 100, 1)
+                _rsi_clr   = (
+                    "#4caf50" if r.rsi < 50
+                    else "#ffd93d" if r.rsi < 70
+                    else "#ef4444"
+                )
+                col.markdown(
+                    f'<div class="rec-card">'
+                    f'<div style="margin-bottom:6px">'
+                    f'<span class="rec-card-name">{r.name}</span>'
+                    f'<span class="rec-card-sector">{r.sector}</span>'
+                    f'</div>'
+                    f'<div class="rec-card-price">'
+                    f'현재가 <b style="color:#ddd">₩{r.current_price:,.0f}</b>'
+                    f'</div>'
+                    f'<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">'
+                    f'<span style="font-size:.82rem;color:#9e9e9e">비중</span>'
+                    f'<span style="font-size:.9rem;font-weight:700;color:#4fc3f7">{_weight_pct:.1f}%</span>'
+                    f'&nbsp;·&nbsp;'
+                    f'<span style="font-size:.82rem;color:#9e9e9e">수량</span>'
+                    f'<span style="font-size:.9rem;font-weight:700;color:#ffd93d">{r.quantity:,}주</span>'
+                    f'&nbsp;·&nbsp;'
+                    f'<span style="font-size:.82rem;color:#9e9e9e">투자액</span>'
+                    f'<span style="font-size:.9rem;font-weight:700;color:#81c784">₩{r.invested:,.0f}</span>'
+                    f'</div>'
+                    f'<div style="margin-top:8px;display:flex;gap:16px">'
+                    f'<span style="font-size:.78rem;color:#999">뉴스감성 '
+                    f'<b style="color:#4fc3f7">{_sent_pct:.0f}</b>/100</span>'
+                    f'<span style="font-size:.78rem;color:#999">RSI '
+                    f'<b style="color:{_rsi_clr}">{r.rsi:.0f}</b></span>'
+                    f'</div>'
+                    f'<div class="rec-bar-bg">'
+                    f'<div class="rec-bar-fg" style="width:{_weight_pct / 40 * 100:.0f}%"></div>'
+                    f'</div>'
+                    f'<div class="rec-card-reason">{r.reason}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            if _row1:
+                _cols1 = st.columns(min(len(_row1), 3))
+                for _r, _c in zip(_row1, _cols1):
+                    _render_rec_card(_r, _c)
+
+            if _row2:
+                _pad  = (3 - len(_row2)) // 2
+                _cols2 = st.columns([1] * _pad + [1] * len(_row2) + [1] * (3 - len(_row2) - _pad))
+                for _r, _c in zip(_row2, _cols2[_pad: _pad + len(_row2)]):
+                    _render_rec_card(_r, _c)
+
+        elif not _rec_result:
+            st.caption(
+                "'AI 추천 실행' 버튼을 누르면 뉴스 감성·RSI 기반으로 "
+                "투자금에 맞는 최적 종목 5개와 매수 수량을 제안합니다."
+            )
+
+        # ── 추천 이력 조회 ────────────────────────────────────────────────────
+        with st.expander("🕐 지난 추천 이력", expanded=False):
+            try:
+                _hist = _db_get_rec_history(_uid, limit=5)
+            except Exception:
+                _hist = []
+
+            if not _hist:
+                st.caption("저장된 추천 이력이 없습니다.")
+            else:
+                for _h in _hist:
+                    _h_dt   = _h.get("created_at", "")[:16].replace("T", " ")
+                    _h_amt  = _h.get("investment_amt", 0)
+                    _h_prof = _h.get("risk_profile", "중립형")
+                    _h_recs = _h.get("recommendations", [])
+                    _h_names = ", ".join(r.get("name", r.get("ticker", "")) for r in _h_recs)
+                    st.markdown(
+                        f'<div style="background:#1e2130;border-radius:8px;'
+                        f'padding:10px 14px;margin:4px 0;font-size:.85rem">'
+                        f'<span style="color:#9e9e9e">{_h_dt}</span>'
+                        f'&nbsp;|&nbsp;'
+                        f'<b style="color:#ddd">₩{_h_amt:,}</b>'
+                        f'&nbsp;·&nbsp;'
+                        f'<span style="color:#4fc3f7">{_h_prof}</span>'
+                        f'<div style="color:#aaa;margin-top:4px">{_h_names}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
 
 with tab_portfolio:
