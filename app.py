@@ -515,6 +515,45 @@ def _etf_fundamental(ticker: str) -> dict:
 def _inv_data(ticker: str) -> dict:
     return get_investor_trading_naver(ticker) or {}
 
+@st.cache_data(ttl=60)
+def _realtime_price_1m(ticker: str) -> dict:
+    """
+    1분봉 데이터로 실시간 현재가 조회 (TTL=60초 — 1분 내 중복 버튼 클릭 시 API 재호출 없음).
+    한국장 15:30 이후에는 장외로 판단하여 is_realtime=False 반환.
+    Returns: {"price": float, "ts": str, "is_realtime": bool}
+    """
+    _ts = datetime.now().strftime("%H:%M:%S")
+    _is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
+    if _is_kr:
+        _now = datetime.now()
+        _after_close = (_now.hour * 60 + _now.minute) >= (15 * 60 + 30)
+    else:
+        _after_close = False
+
+    try:
+        _df = yf.download(ticker, period="1d", interval="1m",
+                          auto_adjust=True, progress=False)
+        _df = _flatten_columns(_df)
+        if not _df.empty and "Close" in _df.columns:
+            _p = float(_df["Close"].dropna().iloc[-1])
+            if _p > 0:
+                return {"price": _p, "ts": _ts, "is_realtime": not _after_close}
+    except Exception:
+        pass
+
+    # 폴백: 일봉 마지막 종가
+    try:
+        _d = yf.download(ticker, period="2d", auto_adjust=True, progress=False)
+        _d = _flatten_columns(_d)
+        if not _d.empty and "Close" in _d.columns:
+            _p = float(_d["Close"].dropna().iloc[-1])
+            if _p > 0:
+                return {"price": _p, "ts": _ts, "is_realtime": False}
+    except Exception:
+        pass
+
+    return {"price": 0.0, "ts": _ts, "is_realtime": False}
+
 # ─── 관심종목 알림 체크 ───────────────────────────────────────────────────────
 def _get_wl_alerts() -> list:
     """
@@ -794,23 +833,6 @@ with st.sidebar:
     st.divider()
     st.markdown("### 📊 KRX 데이터")
     st.caption("🟢 KRX 자동 로그인 활성" if _krx_ok else "⚪ KRX 인증 미설정")
-
-    # ── 자동 새로고침 ──────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("### 🔄 실시간 새로고침")
-    auto_refresh = st.toggle("자동 새로고침 활성화", value=False)
-    if auto_refresh:
-        interval_opt = st.selectbox("새로고침 주기", ["30초", "1분", "5분"], index=1)
-        interval_ms  = {"30초": 30_000, "1분": 60_000, "5분": 300_000}[interval_opt]
-        if HAS_AUTOREFRESH:
-            refresh_count = st_autorefresh(interval=interval_ms, key="auto_refresh")
-            st.caption(f"자동 새로고침 활성 | 주기: {interval_opt}")
-        else:
-            st.warning("streamlit-autorefresh 미설치")
-    else:
-        if st.button("🔄 수동 새로고침"):
-            st.cache_data.clear()
-            st.rerun()
 
     # ── 환율 ───────────────────────────────────────────────────────────────
     st.divider()
@@ -1119,8 +1141,17 @@ if _data_ready:
 """, unsafe_allow_html=True)
     _loading_ph.empty()
 
+    # ── 실시간 현재가 (1분봉) — 버튼 클릭 직후만 호출, 60초 캐시 ────────────
+    _rt = _realtime_price_1m(_aticker)
+    _rt_price    = _rt["price"]
+    _rt_ts       = _rt["ts"]
+    _rt_realtime = _rt["is_realtime"]
+
 else:
     st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  사이드바에서 종목을 선택하고 분석을 시작하세요.")
+    _rt_price    = 0.0
+    _rt_ts       = ""
+    _rt_realtime = False
     data            = pd.DataFrame()
     vol_anomaly     = {"is_halted": False}
     signals         = {"score": 0, "label": "분석 대기", "badge": "—"}
@@ -3219,14 +3250,27 @@ with tab_chart:
 
         _has_price = not close.empty and len(close) >= 2
         if _has_price:
-            last_price = float(close.iloc[-1])
-            prev_price = float(close.iloc[-2])
-            daily_chg  = (last_price - prev_price) / prev_price * 100
-            _is_krw    = last_price > 500
-            _fmt       = "{:,.0f}" if _is_krw else "{:,.2f}"
+            _daily_last = float(close.iloc[-1])
+            prev_price  = float(close.iloc[-2])
+            # 실시간 가격 우선 — 없으면 일봉 마지막 종가
+            last_price  = _rt_price if (_rt_price > 0 and _data_ready) else _daily_last
+            daily_chg   = (last_price - prev_price) / prev_price * 100
+            _is_krw     = last_price > 500
+            _fmt        = "{:,.0f}" if _is_krw else "{:,.2f}"
         else:
             last_price, prev_price, daily_chg = 0.0, 0.0, 0.0
             _is_krw, _fmt = True, "{:,.0f}"
+
+        # 실시간 시세 배지 (버튼 클릭 후 분석 완료 시만 표시)
+        if _data_ready and _rt_price > 0:
+            _rt_label = "실시간 시세" if _rt_realtime else "장마감 종가"
+            _rt_color = "#22c55e" if _rt_realtime else "#94a3b8"
+            st.markdown(
+                f'<div style="font-size:0.78rem;color:{_rt_color};margin-bottom:6px;">'
+                f'✅ {_rt_label} 반영 완료 &nbsp;|&nbsp; 기준 시각: <b>{_rt_ts}</b>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
         # ═══════════════════════════════════════════════════════════════════
         # LAYER 1 — 결론 레이어 (신호등 카드)
@@ -3257,7 +3301,8 @@ with tab_chart:
         _sl_data = get_stop_loss_targets(data) if _has_price else None
         _bt_data = get_buy_target_price(data, mode="classic") if _has_price else None
         _m1, _m2, _m3, _m4 = st.columns(4)
-        _m1.metric("현재가", _fmt.format(last_price) if _has_price else "—")
+        _cur_label = "현재가(실시간)" if (_rt_realtime and _rt_price > 0 and _data_ready) else "현재가"
+        _m1.metric(_cur_label, _fmt.format(last_price) if _has_price else "—")
         _m2.metric("추천 매수가", _fmt.format(_bt_data["buy_target"]) if _bt_data else "—")
         _m3.metric("손절가", _fmt.format(_sl_data["stop_8pct"])  if _sl_data else "—")
         _m4.metric("등락률", f"{daily_chg:+.2f}%"               if _has_price else "—")
@@ -4280,11 +4325,33 @@ def _render_portfolio_tab():
         _ew_h, _ew_btn_col = st.columns([5, 1])
         _ew_h.markdown("#### 🎯 Event Watch")
         _pf_news_result: dict = st.session_state.get("pf_news_result", {})
+        _pf_news_rt_ts: str   = st.session_state.get("pf_news_rt_ts", "")
         if _ew_btn_col.button("뉴스 분석", key="pf_run_news", type="primary",
                               use_container_width=True):
+            # 실시간 현재가 갱신 (1분봉) — 뉴스 분석 시 등락률 계산 기반
+            _rt_prices_news: dict[str, float] = {}
+            _rt_pct_news:    dict[str, float] = {}
+            with st.spinner("실시간 현재가 조회 중..."):
+                for _it in _items:
+                    _rt_d = _realtime_price_1m(_it["ticker"])
+                    if _rt_d["price"] > 0:
+                        _rt_prices_news[_it["ticker"]] = _rt_d["price"]
+                        if _it["avg_price"] > 0:
+                            _rt_pct_news[_it["ticker"]] = (
+                                _rt_d["price"] / _it["avg_price"] - 1
+                            ) * 100
+                        else:
+                            _rt_pct_news[_it["ticker"]] = 0.0
+            # 조회한 실시간 가격으로 _pf_prices 갱신
+            _pf_prices.update(_rt_prices_news)
+            _rt_now = datetime.now().strftime("%H:%M:%S")
+
             _pf_holdings = [
-                {"ticker": _it["ticker"],
-                 "company_name": _it["ticker"].split(".")[0]}
+                {
+                    "ticker":       _it["ticker"],
+                    "company_name": _it["ticker"].split(".")[0],
+                    "price_change_pct": _rt_pct_news.get(_it["ticker"], 0.0),
+                }
                 for _it in _items
             ]
             with st.spinner("포트폴리오 뉴스 분석 중..."):
@@ -4294,9 +4361,19 @@ def _render_portfolio_tab():
                     groq_api_key=st.session_state.get("groq_api_key", ""),
                     dart_api_key=st.session_state.get("dart_api_key", ""),
                 )
+            _pf_news_result["_rt_ts"] = _rt_now
             st.session_state["pf_news_result"] = _pf_news_result
+            st.session_state["pf_news_rt_ts"]  = _rt_now
 
         if _pf_news_result:
+            _news_rt_ts = _pf_news_result.get("_rt_ts", _pf_news_rt_ts)
+            if _news_rt_ts:
+                st.markdown(
+                    f'<div style="font-size:.75rem;color:#22c55e;margin-bottom:6px">'
+                    f'✅ 실시간 시세 반영 완료 &nbsp;|&nbsp; 기준 시각: <b>{_news_rt_ts}</b>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             _avg_s  = _pf_news_result.get("portfolio_sentiment_avg", 0.0)
             _avg_l  = _pf_news_result.get("portfolio_sentiment_label", "중립")
             _s_clr  = "#4caf50" if _avg_s >= 0.5 else ("#ef4444" if _avg_s <= -0.5 else "#888")
@@ -4317,11 +4394,30 @@ def _render_portfolio_tab():
                 _bc   = "#4caf50" if _bs >= 0.5 else ("#ef4444" if _bs <= -0.5 else "#888")
                 _bnm  = _pf_nm.get(_bt, "")
                 _blbl = f"{_bnm}<br><span style='font-size:.72rem;color:#777'>{_bt}</span>" if _bnm else _bt
+                # 실시간 가격 대비 뉴스 영향력 표시
+                _cur_p  = _pf_prices.get(_bt, 0.0)
+                _avg_p  = next((i["avg_price"] for i in _items if i["ticker"] == _bt), 0.0)
+                _pnl_pc = (_cur_p / _avg_p - 1) * 100 if (_cur_p and _avg_p) else None
+                _pnl_html = ""
+                if _pnl_pc is not None:
+                    _pnl_c   = "#4caf50" if _pnl_pc >= 0 else "#ef4444"
+                    _impact  = (
+                        "호재 반영↑" if (_bs >= 0.5 and _pnl_pc >= 0)
+                        else "악재 하락↓" if (_bs <= -0.5 and _pnl_pc < 0)
+                        else "뉴스↑ 가격↓" if (_bs >= 0.5 and _pnl_pc < 0)
+                        else "뉴스↓ 가격↑" if (_bs <= -0.5 and _pnl_pc >= 0)
+                        else "중립"
+                    )
+                    _pnl_html = (
+                        f"<span style='font-size:.7rem;color:{_pnl_c};margin-left:4px'>"
+                        f"({_pnl_pc:+.1f}% {_impact})</span>"
+                    )
                 _bdg += (
                     f'<span style="background:#252836;border-radius:8px;'
                     f'padding:6px 12px;font-size:.85rem;line-height:1.5">'
                     f'<b style="color:#ddd">{_blbl}</b> '
-                    f'<span style="color:{_bc}">{_bl} ({_bs:+.1f})</span></span>'
+                    f'<span style="color:{_bc}">{_bl} ({_bs:+.1f})</span>'
+                    f'{_pnl_html}</span>'
                 )
             _bdg += '</div>'
             _ew_c2.markdown(_bdg, unsafe_allow_html=True)
@@ -4456,26 +4552,92 @@ def _render_portfolio_tab():
         with st.expander("🎯 매도 가이드 (Exit Strategy)", expanded=False):
             _eg_h, _eg_btn = st.columns([5, 1])
             _eg_h.markdown(
-                "<small style='color:#999'>평단가 대비 목표가 · 트레일링 스탑 · 목표가 근접 알림</small>",
+                "<small style='color:#999'>실시간가 기준 손절/익절 가이드 · 트레일링 스탑 · 목표가 근접 알림</small>",
                 unsafe_allow_html=True,
             )
             _exit_result: dict = st.session_state.get("pf_exit_result", {})
-            if _eg_btn.button("계산", key="pf_exit_calc", type="secondary",
+            _exit_rt_ts: str   = st.session_state.get("pf_exit_rt_ts", "")
+            if _eg_btn.button("매도 가이드 분석", key="pf_exit_calc", type="primary",
                               use_container_width=True):
                 _exit_result = {}
-                with st.spinner("차트 데이터 로딩 중..."):
+                _exit_now = datetime.now().strftime("%H:%M:%S")
+
+                with st.spinner("실시간 현재가 조회 및 차트 분석 중..."):
                     for _it in _items:
                         _t = _it["ticker"]
                         try:
+                            # 실시간 1분봉 현재가 갱신
+                            _rt_exit = _realtime_price_1m(_t)
+                            if _rt_exit["price"] > 0:
+                                _pf_prices[_t] = _rt_exit["price"]
+
                             _cdata = get_stock_data(_t, period="3mo")
                             if _cdata is not None and not _cdata.empty:
-                                _exit_result[_t] = get_sell_target_price(_cdata)
+                                _sell_targets = get_sell_target_price(_cdata)
+                            else:
+                                _sell_targets = {}
+
+                            _rt_p   = _pf_prices.get(_t, _it["avg_price"])
+                            _avg_p  = _it["avg_price"]
+                            _pnl_pc = (_rt_p / _avg_p - 1) * 100 if _avg_p else 0.0
+
+                            # 손절/익절 가이드 생성
+                            _stop8    = _avg_p * 0.92           # 기본 8% 손절
+                            _stop5    = _avg_p * 0.95           # 타이트 5% 손절
+                            _tp1      = _avg_p * 1.10           # 1차 익절 +10%
+                            _tp2      = _avg_p * 1.20           # 2차 익절 +20%
+
+                            if _pnl_pc >= 20:
+                                _guide = "익절 구간 진입 — 분할 매도 권장 (1/2 이상 청산 고려)"
+                                _guide_clr = "#ffd93d"
+                            elif _pnl_pc >= 10:
+                                _guide = "수익 중 — 1차 목표가 도달. 일부 수익 확정 고려"
+                                _guide_clr = "#81c784"
+                            elif _pnl_pc > 0:
+                                _guide = "소폭 수익 — 홀딩 유지 권장"
+                                _guide_clr = "#a5d6a7"
+                            elif _pnl_pc > -5:
+                                _guide = "소폭 손실 — 추세 모니터링"
+                                _guide_clr = "#fff176"
+                            elif _pnl_pc > -8:
+                                _guide = "손절 접근 — 5% 스탑라인 이탈 시 즉시 손절 고려"
+                                _guide_clr = "#ffab91"
+                            else:
+                                _guide = "손절 구간 — 추가 손실 방지를 위한 즉시 손절 권장"
+                                _guide_clr = "#ef9a9a"
+
+                            _exit_result[_t] = {
+                                **_sell_targets,
+                                "rt_price":  _rt_p,
+                                "avg_price": _avg_p,
+                                "pnl_pct":   _pnl_pc,
+                                "stop_loss_8": _stop8,
+                                "stop_loss_5": _stop5,
+                                "take_profit_1": _tp1,
+                                "take_profit_2": _tp2,
+                                "guide":     _guide,
+                                "guide_clr": _guide_clr,
+                                "is_rt":     _rt_exit.get("is_realtime", False),
+                                "rt_ts":     _exit_now,
+                            }
                         except Exception:
                             pass
                 st.session_state["pf_exit_result"] = _exit_result
+                st.session_state["pf_exit_rt_ts"]  = _exit_now
 
             if not _exit_result:
-                st.caption("'계산' 버튼으로 보수적/공격적 목표가를 계산하세요.")
+                st.caption("'매도 가이드 분석' 버튼으로 실시간가 기준 손절/익절 가이드를 확인하세요.")
+            else:
+                _shown_rt = next(
+                    (v.get("rt_ts") for v in _exit_result.values() if v.get("rt_ts")), _exit_rt_ts
+                )
+                if _shown_rt:
+                    st.markdown(
+                        f'<div style="font-size:.75rem;color:#22c55e;margin-bottom:8px">'
+                        f'✅ 실시간 시세 반영 완료 &nbsp;|&nbsp; 기준 시각: <b>{_shown_rt}</b>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
             for _it in _items:
                 _t   = _it["ticker"]
@@ -4489,6 +4651,15 @@ def _render_portfolio_tab():
                 _cons  = _stp.get("conservative_target")
                 _aggr  = _stp.get("aggressive_target")
                 _t_max = _trailing.get(_t, 0.0)
+                # 매도 가이드 분석 결과 우선 사용
+                _guide_txt = _stp.get("guide", "")
+                _guide_clr = _stp.get("guide_clr", "#888")
+                _stop8_p   = _stp.get("stop_loss_8", _avg * 0.92 if _avg else 0)
+                _stop5_p   = _stp.get("stop_loss_5", _avg * 0.95 if _avg else 0)
+                _tp1_p     = _stp.get("take_profit_1", _avg * 1.10 if _avg else 0)
+                _tp2_p     = _stp.get("take_profit_2", _avg * 1.20 if _avg else 0)
+                _pnl_pc    = _stp.get("pnl_pct")
+                _cur_label = "실시간가" if _stp.get("is_rt") else "현재가"
 
                 # 알림 계산
                 _exit_alerts: list[tuple[str, str]] = []
@@ -4506,6 +4677,17 @@ def _render_portfolio_tab():
                         "분할 매도 고려",
                         "#ffd93d",
                     ))
+                # 손절 경고
+                if _cur and _avg and _cur <= _avg * 0.92:
+                    _exit_alerts.append((
+                        f"🔴 손절 구간 돌입: 실시간가 {_efmt(_cur)} — 8% 손절라인 이탈, 즉시 매도 권장",
+                        "#ef4444",
+                    ))
+                elif _cur and _avg and _cur <= _avg * 0.95:
+                    _exit_alerts.append((
+                        f"🟠 손절 주의: 실시간가 {_efmt(_cur)} — 5% 스탑라인 접근",
+                        "#ff8a65",
+                    ))
 
                 # 카드 본문
                 _cp: list[str] = []
@@ -4513,11 +4695,27 @@ def _render_portfolio_tab():
                     _pr  = (_cur / _avg - 1) * 100 if _avg else 0
                     _prc = "#4caf50" if _pr >= 0 else "#ef4444"
                     _cp.append(
-                        f'현재가 <b style="color:#ddd">{_efmt(_cur)}</b> '
+                        f'{_cur_label} <b style="color:#ddd">{_efmt(_cur)}</b> '
                         f'<span style="color:{_prc}">({_pr:+.1f}%)</span>'
                     )
                 if _avg:
                     _cp.append(f'평단가 <b style="color:#aaa">{_efmt(_avg)}</b>')
+                if _stop5_p:
+                    _cp.append(
+                        f'손절(5%) <b style="color:#ff8a65">{_efmt(_stop5_p)}</b>'
+                    )
+                if _stop8_p:
+                    _cp.append(
+                        f'손절(8%) <b style="color:#ef4444">{_efmt(_stop8_p)}</b>'
+                    )
+                if _tp1_p:
+                    _cp.append(
+                        f'1차 익절 <b style="color:#81c784">{_efmt(_tp1_p)}</b>'
+                    )
+                if _tp2_p:
+                    _cp.append(
+                        f'2차 익절 <b style="color:#4fc3f7">{_efmt(_tp2_p)}</b>'
+                    )
                 if _cons:
                     _cg = (_cons / _avg - 1) * 100 if _avg else 0
                     _cp.append(
@@ -4537,6 +4735,12 @@ def _render_portfolio_tab():
                     )
 
                 _card_body = " &nbsp;|&nbsp; ".join(_cp) if _cp else "-"
+                _guide_html = (
+                    f'<div style="margin-top:6px;padding:6px 10px;background:#252836;'
+                    f'border-left:3px solid {_guide_clr};border-radius:0 6px 6px 0;'
+                    f'font-size:.85rem;color:{_guide_clr};font-weight:600">'
+                    f'📋 {_guide_txt}</div>'
+                ) if _guide_txt else ""
                 _alert_html = "".join(
                     f'<div style="margin-top:6px;padding:6px 10px;background:#252836;'
                     f'border-left:3px solid {_ac};border-radius:0 6px 6px 0;'
@@ -4550,6 +4754,7 @@ def _render_portfolio_tab():
                     + (f'<span style="font-size:.95rem;font-weight:700;color:#e0e0e0">{_enm}</span> ' if _enm else "")
                     + f'<span style="font-size:.78rem;color:#666">{_t}</span></div>'
                     f'<div style="font-size:.85rem;line-height:1.9">{_card_body}</div>'
+                    f'{_guide_html}'
                     f'{_alert_html}</div>',
                     unsafe_allow_html=True,
                 )
