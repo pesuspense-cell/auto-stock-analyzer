@@ -5103,7 +5103,7 @@ def _render_portfolio_tab():
                 "| 전략 | 추세추종 — 이미 오르는 종목 편승 | 역추세 — 과매도 반등 포착 |\n"
                 "| RSI 기준 | **RSI < 30 제외** (불안정 회피) | **RSI < 30 = 강력 매수 신호** |\n"
                 "| 뉴스 처리 | 키워드 고속 분석 (0~1 정규화) | LLM 정밀 분석 포함 (멀티소스) |\n"
-                "| 후보 풀 | 코스피 대형주 25개 고정 | 사용자 선택 종목 (제한 없음) |\n"
+                "| 후보 풀 | **코스피+코스닥+나스닥 각 상위 500개** (동적) | 사용자 선택 종목 (제한 없음) |\n"
                 "| 출력 | 매수 수량 + 섹터별 비중 배분 | 매수/매도 신호 강도 |\n\n"
                 "> ℹ️ **뉴스 점수 차이**: 이 추천의 뉴스 감성은 키워드 기반 고속 처리로 계산되어 "
                 "차트 탭의 LLM 정밀 분석 점수와 수치가 다를 수 있습니다. "
@@ -5136,7 +5136,10 @@ def _render_portfolio_tab():
             from src.recommendation_engine import (
                 run_recommendation, recommendation_to_dict,
             )
-            with st.spinner("후보 종목 뉴스·기술 분석 중... (10~25초 소요)"):
+            with st.spinner(
+                "KOSPI·KOSDAQ·NASDAQ 각 상위 500개 후보 로드 → "
+                "L1 RSI·모멘텀 필터 → L2 뉴스 감성 분석 중... (1~2분 소요)"
+            ):
                 _rec_result = run_recommendation(
                     investment_amount=int(_inv_amt),
                     risk_profile=_risk_profile,
@@ -5167,12 +5170,24 @@ def _render_portfolio_tab():
             _remaining   = _rec_result.get("remaining_cash", 0.0)
 
             # 요약 메트릭 바
-            _rm1, _rm2, _rm3 = st.columns(3)
-            _rm1.metric("투자 예정 금액",  f"₩{int(_inv_amt):,}")
-            _rm2.metric("실제 투자액",     f"₩{_total_inv:,.0f}")
-            _rm3.metric("매수 후 잔금",    f"₩{_remaining:,.0f}",
-                        delta=f"-₩{_total_inv:,.0f}",
-                        delta_color="inverse")
+            _pool_sz  = _rec_result.get("pool_size", 0)
+            _l1_cnt   = _rec_result.get("l1_pass", 0)
+            _l2_cnt   = _rec_result.get("l2_pass", 0)
+            _rm1, _rm2, _rm3, _rm4 = st.columns(4)
+            _rm1.metric("투자 예정 금액", f"₩{int(_inv_amt):,}")
+            _rm2.metric("실제 투자액",   f"₩{_total_inv:,.0f}")
+            _rm3.metric("매수 후 잔금",  f"₩{_remaining:,.0f}",
+                        delta=f"-₩{_total_inv:,.0f}", delta_color="inverse")
+            _rm4.metric(
+                "분석 깔때기",
+                f"{len(_recs)}개 선정",
+                help=(
+                    f"후보 풀 {_pool_sz}개 → "
+                    f"L1(RSI·모멘텀) {_l1_cnt}개 → "
+                    f"L2(뉴스감성) {_l2_cnt}개 → "
+                    f"최종 {len(_recs)}개"
+                ),
+            )
 
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -5197,22 +5212,39 @@ def _render_portfolio_tab():
             _row2 = _recs[3:]
 
             def _render_rec_card(r, col):
-                _sent_pct  = round(r.sentiment_score * 100, 1)
+                _sent_pct   = round(r.sentiment_score * 100, 1)
                 _weight_pct = round(r.weight * 100, 1)
-                _rsi_clr   = (
+                _rsi_clr    = (
                     "#4caf50" if r.rsi < 50
                     else "#ffd93d" if r.rsi < 70
                     else "#ef4444"
+                )
+                # 통화별 가격 포맷
+                _cur        = getattr(r, "currency", "KRW")
+                _mkt        = getattr(r, "market", "KOSPI")
+                _native_px  = getattr(r, "current_price", r.current_price if hasattr(r, "current_price") else 0)
+                _price_str  = (
+                    f"₩{_native_px:,.0f}" if _cur == "KRW"
+                    else f"${_native_px:,.2f}"
+                )
+                _mkt_badge_clr = (
+                    "#4fc3f7" if _mkt == "KOSPI"
+                    else "#81c784" if _mkt == "KOSDAQ"
+                    else "#ffb74d"
                 )
                 col.markdown(
                     f'<div class="rec-card">'
                     f'<div style="margin-bottom:6px">'
                     f'<span class="rec-card-name">{r.name}</span>'
                     f'<span class="rec-card-sector">{r.sector}</span>'
+                    f'<span style="font-size:.68rem;background:{_mkt_badge_clr}22;color:{_mkt_badge_clr};'
+                    f'padding:1px 7px;border-radius:8px;margin-left:4px;font-weight:600">{_mkt}</span>'
                     f'</div>'
                     f'<div class="rec-card-price">'
-                    f'현재가 <b style="color:#ddd">₩{r.current_price:,.0f}</b>'
-                    f'</div>'
+                    f'현재가 <b style="color:#ddd">{_price_str}</b>'
+                    + (f' <span style="font-size:.75rem;color:#777">(₩{getattr(r, "current_price_krw", _native_px):,.0f})</span>'
+                       if _cur == "USD" else "")
+                    + f'</div>'
                     f'<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">'
                     f'<span style="font-size:.82rem;color:#9e9e9e">비중</span>'
                     f'<span style="font-size:.9rem;font-weight:700;color:#4fc3f7">{_weight_pct:.1f}%</span>'
@@ -5251,35 +5283,13 @@ def _render_portfolio_tab():
             # ── XAI: 내 포트폴리오 종목이 추천에 없는 이유 ────────────────
             try:
                 from src.recommendation_engine import (
-                    CANDIDATE_STOCKS, SENTIMENT_THRESHOLD, RSI_OVERSOLD_BOUND,
+                    SENTIMENT_THRESHOLD, RSI_OVERSOLD_BOUND, RSI_OVERBOUGHT_BOUND,
                 )
-                _rec_tickers_set  = {r.ticker for r in _recs}
-                _pf_tickers_set   = {it["ticker"] for it in _items}
-                _candidate_map    = {c[0]: (c[1], c[2]) for c in CANDIDATE_STOCKS}
-                _candidate_set    = set(_candidate_map)
-                _missed_tickers   = _pf_tickers_set - _rec_tickers_set
+                _rec_tickers_set = {r.ticker for r in _recs}
+                _pf_tickers_set  = {it["ticker"] for it in _items}
+                _missed_tickers  = _pf_tickers_set - _rec_tickers_set
 
                 if _missed_tickers:
-                    _xai_items = []
-                    for _mt in _missed_tickers:
-                        _mn = _pf_nm.get(_mt, "") or _mt.split(".")[0]
-                        if _mt not in _candidate_set:
-                            _xai_reason = (
-                                "추천 후보 풀(코스피 25개 대형주)에 포함되지 않은 종목입니다. "
-                                "차트 분석 탭에서는 개별 기술적 지표로 독립 평가됩니다."
-                            )
-                            _xai_icon = "🔵"
-                        else:
-                            _xai_reason = (
-                                f"후보 풀에는 포함되어 있으나, 이번 분석 기준 시점에서 "
-                                f"뉴스 모멘텀 점수 미달(기준: {SENTIMENT_THRESHOLD*100:.0f}점) 또는 "
-                                f"RSI 과매도 구간(RSI < {RSI_OVERSOLD_BOUND}) 해당으로 "
-                                "포트폴리오 편입이 유보됐습니다. "
-                                "현재 기술적 지표는 양호할 수 있으나, 추세 안정성 기준을 우선 적용합니다."
-                            )
-                            _xai_icon = "🟡"
-                        _xai_items.append((_mt, _mn, _xai_reason, _xai_icon))
-
                     with st.expander(
                         f"🔎 내 포트폴리오 {len(_missed_tickers)}개 종목이 이번 추천에 없는 이유",
                         expanded=False,
@@ -5288,12 +5298,19 @@ def _render_portfolio_tab():
                             "추세추종(모멘텀) 기준으로 선정하므로, "
                             "기술적으로 매력적인 종목이라도 모멘텀 조건 미충족 시 제외될 수 있습니다."
                         )
-                        for _mt, _mn, _xai_reason, _xai_icon in _xai_items:
+                        for _mt in _missed_tickers:
+                            _mn = _pf_nm.get(_mt, "") or _mt.split(".")[0]
+                            _xai_reason = (
+                                f"KOSPI·KOSDAQ·NASDAQ 상위 500개 후보 중 이번 분석 기준을 충족하지 못했습니다. "
+                                f"선정 기준: RSI {RSI_OVERSOLD_BOUND}–{RSI_OVERBOUGHT_BOUND} 구간 + "
+                                f"20일 이동평균선 돌파 + 뉴스 모멘텀 점수 {SENTIMENT_THRESHOLD*100:.0f}점 이상. "
+                                "차트 분석 탭에서는 역추세 기술적 지표로 독립 평가되므로 결과가 다를 수 있습니다."
+                            )
                             st.markdown(
                                 f'<div style="background:#1e2130;border-radius:8px;'
                                 f'padding:10px 14px;margin:5px 0;border-left:3px solid #555">'
                                 f'<span style="font-size:.9rem;font-weight:600;color:#e0e0e0">'
-                                f'{_xai_icon} {_mn}</span>'
+                                f'🟡 {_mn}</span>'
                                 f'<span style="font-size:.75rem;color:#666;margin-left:8px">{_mt}</span>'
                                 f'<div style="font-size:.82rem;color:#9e9e9e;margin-top:5px;line-height:1.5">'
                                 f'{_xai_reason}</div>'
