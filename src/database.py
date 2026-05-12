@@ -238,6 +238,40 @@ def add_portfolio(user_id: int, ticker: str, avg_price: float, quantity: float =
     return {"ok": True}
 
 
+def upsert_portfolio(user_id: int, ticker: str, avg_price: float, quantity: float = 1.0) -> dict:
+    """추가 매수 통합 — 이미 보유 중이면 가중평균 단가·수량 합산, 없으면 신규 추가.
+
+    반환: {"ok": True, "merged": bool}
+    """
+    ticker = ticker.upper().strip()
+    with _conn() as con:
+        with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, avg_price, quantity FROM portfolios"
+                " WHERE user_id = %s AND ticker = %s",
+                (user_id, ticker),
+            )
+            existing = cur.fetchone()
+        with con.cursor() as cur:
+            if existing:
+                old_qty   = float(existing["quantity"])
+                old_price = float(existing["avg_price"])
+                new_qty   = old_qty + float(quantity)
+                new_price = (old_price * old_qty + float(avg_price) * float(quantity)) / new_qty
+                cur.execute(
+                    "UPDATE portfolios SET avg_price = %s, quantity = %s WHERE id = %s",
+                    (new_price, new_qty, existing["id"]),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO portfolios (user_id, ticker, avg_price, quantity)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (user_id, ticker, float(avg_price), float(quantity)),
+                )
+        con.commit()
+    return {"ok": True, "merged": existing is not None}
+
+
 def get_portfolio(user_id: int) -> list[dict]:
     with _conn() as con:
         with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

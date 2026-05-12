@@ -76,6 +76,7 @@ from src.database import (
     logout_user as _db_logout,
     get_user_by_token as _db_get_user,
     add_portfolio as _db_add_portfolio,
+    upsert_portfolio as _db_upsert_portfolio,
     get_portfolio as _db_get_portfolio,
     delete_portfolio_item as _db_delete_portfolio,
     save_recommendation as _db_save_recommendation,
@@ -4093,11 +4094,14 @@ with tab_chart:
                 with _add_col:
                     if st.button("💼 포트폴리오에 추가", use_container_width=True,
                                  key=f"pf_add_{ticker}"):
-                        _db_add_portfolio(
+                        _up_r = _db_upsert_portfolio(
                             st.session_state["auth_user_id"],
                             ticker, avg_price_input, _qty_input,
                         )
-                        st.success(f"{ticker} 포트폴리오에 추가되었습니다.")
+                        if _up_r.get("merged"):
+                            st.success(f"{ticker} 추가 매수 완료 — 평단가 자동 합산")
+                        else:
+                            st.success(f"{ticker} 포트폴리오에 추가되었습니다.")
             else:
                 st.caption("💼 포트폴리오에 추가하려면 **내 포트폴리오** 탭에서 로그인하세요.")
 
@@ -4357,8 +4361,11 @@ def _render_portfolio_tab():
             )
             if st.button("포트폴리오에 추가", use_container_width=True,
                          type="primary", key="pf_add_btn"):
-                _db_add_portfolio(_uid, _fa_ticker_val, _fa_price, _fa_qty)
-                st.toast(f"{_fa_ticker_val} 추가됐습니다.")
+                _up_r2 = _db_upsert_portfolio(_uid, _fa_ticker_val, _fa_price, _fa_qty)
+                if _up_r2.get("merged"):
+                    st.toast(f"{_fa_ticker_val} 추가 매수 완료 — 평단가 자동 합산")
+                else:
+                    st.toast(f"{_fa_ticker_val} 추가됐습니다.")
                 st.rerun(scope="fragment")
 
     # ── 보유 종목 테이블 ──────────────────────────────────────────────────────
@@ -4862,16 +4869,26 @@ def _render_portfolio_tab():
                 # 매도 확정 버튼 — 분석 결과가 있을 때만 표시
                 if _stp and _stp.get("rt_price"):
                     _rt_sell_px = _stp["rt_price"]
-                    _sell_btn_col, _ = st.columns([2, 5])
+                    _exit_qty_col, _sell_btn_col, _ = st.columns([2, 2, 3])
+                    _exit_sell_qty = _exit_qty_col.number_input(
+                        "매도수량",
+                        min_value=0.01,
+                        max_value=float(_it["quantity"]),
+                        value=float(_it["quantity"]),
+                        step=1.0,
+                        format="%.2f",
+                        key=f"pf_exit_qty_{_it['id']}",
+                        help=f"최대 {_it['quantity']:g}주",
+                    )
                     if _sell_btn_col.button(
                         f"✅ 매도 확정  {_efmt(_rt_sell_px)}",
                         key=f"pf_sell_exit_{_it['id']}",
                         help=(
                             f"실시간가 {_efmt(_rt_sell_px)} 기준으로 "
-                            f"{_it['quantity']:g}주 전량 매도 기록"
+                            f"{_exit_sell_qty:g}주 매도 기록"
                         ),
                     ):
-                        _sell_r = _db_sell_item(_uid, _it["id"], _rt_sell_px)
+                        _sell_r = _db_sell_item(_uid, _it["id"], _rt_sell_px, _exit_sell_qty)
                         if _sell_r["ok"]:
                             _pnl_d = (
                                 f"₩{_sell_r['net_profit']:+,.0f}"
@@ -4891,7 +4908,7 @@ def _render_portfolio_tab():
         # 매도 기록 / 종목 삭제
         with st.expander("💸 매도 기록 / 종목 삭제", expanded=False):
             st.caption(
-                "**매도** 버튼: 입력한 매도가로 trade_history에 기록 후 포트폴리오에서 제거  "
+                "**매도** 버튼: 입력한 매도가·수량으로 trade_history에 기록 후 포트폴리오에서 차감  "
                 "│  **삭제** 버튼: 기록 없이 포트폴리오에서만 제거"
             )
             for _it in _items:
@@ -4900,8 +4917,8 @@ def _render_portfolio_tab():
                 _del_nm     = _pf_nm.get(_it["ticker"], "")
                 _del_label  = f"**{_del_nm}** `{_it['ticker']}`" if _del_nm else f"`{_it['ticker']}`"
 
-                _dc1, _dc2, _dc3, _dc4 = st.columns([4, 2, 1, 1])
-                _dc1.markdown(f"{_del_label} — {_it['quantity']:g}주 @ {_price_str}")
+                _dc1, _dc2, _dc3, _dc4, _dc5 = st.columns([3, 2, 1.5, 1, 1])
+                _dc1.markdown(f"{_del_label}  \n{_it['quantity']:g}주 @ {_price_str}")
 
                 _default_px = float(_pf_prices.get(_it["ticker"], _it["avg_price"]))
                 _sell_px_input = _dc2.number_input(
@@ -4913,9 +4930,20 @@ def _render_portfolio_tab():
                     key=f"pf_sell_px_{_it['id']}",
                     label_visibility="collapsed",
                 )
-                if _dc3.button("매도", key=f"pf_sell_{_it['id']}", type="primary",
+                _sell_qty_input = _dc3.number_input(
+                    "매도수량",
+                    min_value=0.01,
+                    max_value=float(_it["quantity"]),
+                    value=float(_it["quantity"]),
+                    step=1.0,
+                    format="%.2f",
+                    key=f"pf_sell_qty_{_it['id']}",
+                    label_visibility="collapsed",
+                    help=f"최대 {_it['quantity']:g}주",
+                )
+                if _dc4.button("매도", key=f"pf_sell_{_it['id']}", type="primary",
                                use_container_width=True):
-                    _sell_r = _db_sell_item(_uid, _it["id"], _sell_px_input)
+                    _sell_r = _db_sell_item(_uid, _it["id"], _sell_px_input, _sell_qty_input)
                     if _sell_r["ok"]:
                         _pnl_msg = (
                             f"₩{_sell_r['net_profit']:+,.0f}"
@@ -4930,7 +4958,7 @@ def _render_portfolio_tab():
                     else:
                         st.error(_sell_r.get("error", "매도 실패"))
 
-                if _dc4.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
+                if _dc5.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
                     _r3 = _db_delete_portfolio(_it["id"], _uid)
                     if _r3["ok"]:
                         st.rerun(scope="fragment")
