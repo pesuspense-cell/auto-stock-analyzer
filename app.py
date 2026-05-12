@@ -3281,6 +3281,21 @@ with tab_chart:
     with col_sig:
         st.subheader("🎯 AI 매매 신호")
 
+        with st.expander("🔍 진단 기준 보기", expanded=False):
+            st.markdown(
+                "**이 패널은 '역추세 기술적 진단' 관점으로 분석합니다.**\n\n"
+                "현재 종목의 RSI·MACD·볼린저밴드·ADX·일목균형표 등 **10개 이상의 기술적 지표**를 "
+                "종합하여 단기 변곡점(과매도·과매수)과 매수/매도 신호를 포착합니다.\n\n"
+                "| 특성 | 내용 |\n"
+                "|------|------|\n"
+                "| 분석 방식 | 역추세 (RSI 30↓ = 강한 매수 신호) |\n"
+                "| 뉴스 처리 | Naver · RSS · YouTube 멀티소스 · LLM 정밀 분석 |\n"
+                "| 대상 | 사용자가 사이드바에서 직접 선택한 단일 종목 |\n"
+                "| 목적 | 지금 이 종목의 매매 타이밍 포착 |\n\n"
+                "> ⚠️ **포트폴리오 탭 'AI 모멘텀 추천'과 결과가 다를 수 있습니다.**  \n"
+                "> 추천은 '추세추종(모멘텀)' 기반이라 RSI 저점 구간을 오히려 제외합니다."
+            )
+
         # 사전 계산 (아래 섹션에서 재사용)
         h_score = hybrid.get("hybrid_score", 0.0)
         h_label = hybrid.get("label", "중립/관망")
@@ -5074,8 +5089,27 @@ def _render_portfolio_tab():
 
         st.divider()
 
-        # ── AI 투자금 기반 종목 추천 ──────────────────────────────────────────
-        st.markdown("#### 💡 AI 종목 추천 — 투자금 기반 최적 포트폴리오")
+        # ── AI 모멘텀 주도주 포트폴리오 ──────────────────────────────────────
+        st.markdown("#### 📈 AI 전략 자산 배분 — 모멘텀 주도주 포트폴리오")
+
+        with st.expander("💡 분석 가이드 — 차트 정밀 진단과 무엇이 다른가요?", expanded=False):
+            st.markdown(
+                "**이 추천은 '추세추종형(모멘텀)' 관점으로 종목을 선정합니다.**\n\n"
+                "시장 주도력과 뉴스 심리가 **현재 양호한** 종목을 골라 투자금을 최적 배분합니다. "
+                "따라서 과매도 구간(RSI 저점)에서 반등을 노리는 "
+                "**차트 정밀 진단** 결과와 추천 종목이 다를 수 있습니다.\n\n"
+                "| 구분 | AI 모멘텀 추천 (이 섹션) | 차트 정밀 진단 (차트 분석 탭) |\n"
+                "|------|--------------------------|--------------------------------|\n"
+                "| 전략 | 추세추종 — 이미 오르는 종목 편승 | 역추세 — 과매도 반등 포착 |\n"
+                "| RSI 기준 | **RSI < 30 제외** (불안정 회피) | **RSI < 30 = 강력 매수 신호** |\n"
+                "| 뉴스 처리 | 키워드 고속 분석 (0~1 정규화) | LLM 정밀 분석 포함 (멀티소스) |\n"
+                "| 후보 풀 | 코스피 대형주 25개 고정 | 사용자 선택 종목 (제한 없음) |\n"
+                "| 출력 | 매수 수량 + 섹터별 비중 배분 | 매수/매도 신호 강도 |\n\n"
+                "> ℹ️ **뉴스 점수 차이**: 이 추천의 뉴스 감성은 키워드 기반 고속 처리로 계산되어 "
+                "차트 탭의 LLM 정밀 분석 점수와 수치가 다를 수 있습니다. "
+                "두 점수는 동일 종목이라도 ±0.3~1.0 수준의 차이가 발생할 수 있습니다."
+            )
+
         _rec_c1, _rec_c2, _rec_c3 = st.columns([3, 1, 1])
         _inv_amt = _rec_c1.number_input(
             "투자 예정 금액 (원)",
@@ -5094,7 +5128,7 @@ def _render_portfolio_tab():
         )
         _rec_c3.write("")   # 레이블 높이 보정
         _rec_run = _rec_c3.button(
-            "AI 추천 실행", type="primary", key="rec_run",
+            "모멘텀 추천 실행", type="primary", key="rec_run",
             use_container_width=True,
         )
 
@@ -5214,10 +5248,65 @@ def _render_portfolio_tab():
                 for _r, _c in zip(_row2, _cols2[_pad: _pad + len(_row2)]):
                     _render_rec_card(_r, _c)
 
+            # ── XAI: 내 포트폴리오 종목이 추천에 없는 이유 ────────────────
+            try:
+                from src.recommendation_engine import (
+                    CANDIDATE_STOCKS, SENTIMENT_THRESHOLD, RSI_OVERSOLD_BOUND,
+                )
+                _rec_tickers_set  = {r.ticker for r in _recs}
+                _pf_tickers_set   = {it["ticker"] for it in _items}
+                _candidate_map    = {c[0]: (c[1], c[2]) for c in CANDIDATE_STOCKS}
+                _candidate_set    = set(_candidate_map)
+                _missed_tickers   = _pf_tickers_set - _rec_tickers_set
+
+                if _missed_tickers:
+                    _xai_items = []
+                    for _mt in _missed_tickers:
+                        _mn = _pf_nm.get(_mt, "") or _mt.split(".")[0]
+                        if _mt not in _candidate_set:
+                            _xai_reason = (
+                                "추천 후보 풀(코스피 25개 대형주)에 포함되지 않은 종목입니다. "
+                                "차트 분석 탭에서는 개별 기술적 지표로 독립 평가됩니다."
+                            )
+                            _xai_icon = "🔵"
+                        else:
+                            _xai_reason = (
+                                f"후보 풀에는 포함되어 있으나, 이번 분석 기준 시점에서 "
+                                f"뉴스 모멘텀 점수 미달(기준: {SENTIMENT_THRESHOLD*100:.0f}점) 또는 "
+                                f"RSI 과매도 구간(RSI < {RSI_OVERSOLD_BOUND}) 해당으로 "
+                                "포트폴리오 편입이 유보됐습니다. "
+                                "현재 기술적 지표는 양호할 수 있으나, 추세 안정성 기준을 우선 적용합니다."
+                            )
+                            _xai_icon = "🟡"
+                        _xai_items.append((_mt, _mn, _xai_reason, _xai_icon))
+
+                    with st.expander(
+                        f"🔎 내 포트폴리오 {len(_missed_tickers)}개 종목이 이번 추천에 없는 이유",
+                        expanded=False,
+                    ):
+                        st.caption(
+                            "추세추종(모멘텀) 기준으로 선정하므로, "
+                            "기술적으로 매력적인 종목이라도 모멘텀 조건 미충족 시 제외될 수 있습니다."
+                        )
+                        for _mt, _mn, _xai_reason, _xai_icon in _xai_items:
+                            st.markdown(
+                                f'<div style="background:#1e2130;border-radius:8px;'
+                                f'padding:10px 14px;margin:5px 0;border-left:3px solid #555">'
+                                f'<span style="font-size:.9rem;font-weight:600;color:#e0e0e0">'
+                                f'{_xai_icon} {_mn}</span>'
+                                f'<span style="font-size:.75rem;color:#666;margin-left:8px">{_mt}</span>'
+                                f'<div style="font-size:.82rem;color:#9e9e9e;margin-top:5px;line-height:1.5">'
+                                f'{_xai_reason}</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+            except Exception:
+                pass
+
         elif not _rec_result:
             st.caption(
-                "'AI 추천 실행' 버튼을 누르면 뉴스 감성·RSI 기반으로 "
-                "투자금에 맞는 최적 종목 5개와 매수 수량을 제안합니다."
+                "'모멘텀 추천 실행' 버튼을 누르면 뉴스 감성·RSI 기반으로 "
+                "투자금에 맞는 모멘텀 주도주 5개와 매수 수량을 제안합니다."
             )
 
         # ── 추천 이력 조회 ────────────────────────────────────────────────────
