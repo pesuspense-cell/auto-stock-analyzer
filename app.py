@@ -1515,17 +1515,22 @@ with tab_market:
         _em4.metric("🇺🇸 미국 평균", f"{_us_avg:+.2f}%")
         _em5.metric("🇰🇷 국내 평균", f"{_kr_avg:+.2f}%")
 
+        def _sort_index_first(df: pd.DataFrame, *cols: str) -> pd.DataFrame:
+            """📊 지수 태그를 맨 위로, 나머지는 cols 순 정렬."""
+            tmp = df.assign(_pri=(~df["태그"].str.startswith("📊")).astype(int))
+            return tmp.sort_values(["_pri", *cols]).drop(columns=["_pri"])
+
         _etf_t1, _etf_t2, _etf_t3 = st.tabs(
             ["전체 (35종목)", "🇺🇸 미국 ETF (15종목)", "🇰🇷 국내 ETF (20종목)"]
         )
         with _etf_t1:
-            _render_etf_table(_etf_df.sort_values(["국가", "태그", "ETF명"]))
+            _render_etf_table(_sort_index_first(_etf_df, "국가", "태그", "ETF명"))
         with _etf_t2:
-            _us = _etf_df[_etf_df["국가"] == "미국"].sort_values("태그")
-            _render_etf_table(_us) if not _us.empty else st.caption("미국 ETF 데이터 없음")
+            _us = _etf_df[_etf_df["국가"] == "미국"]
+            _render_etf_table(_sort_index_first(_us, "태그")) if not _us.empty else st.caption("미국 ETF 데이터 없음")
         with _etf_t3:
-            _kr = _etf_df[_etf_df["국가"] == "국내"].sort_values("태그")
-            _render_etf_table(_kr) if not _kr.empty else st.caption("국내 ETF 데이터 없음")
+            _kr = _etf_df[_etf_df["국가"] == "국내"]
+            _render_etf_table(_sort_index_first(_kr, "태그")) if not _kr.empty else st.caption("국내 ETF 데이터 없음")
     else:
         st.warning("ETF 데이터를 불러올 수 없습니다. (네트워크 오류 또는 장 마감 시간)", icon="⚠️")
 
@@ -4121,6 +4126,24 @@ def _render_portfolio_tab():
         except Exception:
             pass
 
+    # USD/KRW 환율 — 미국 주식 원화 환산용
+    _usd_krw = 1300.0
+    try:
+        _fx_raw = yf.download("USDKRW=X", period="2d", auto_adjust=True, progress=False)
+        if not _fx_raw.empty:
+            _fx_s = (
+                _fx_raw["Close"] if "Close" in _fx_raw.columns
+                else _fx_raw.iloc[:, 0]
+            ).dropna()
+            if not _fx_s.empty:
+                _usd_krw = float(_fx_s.iloc[-1])
+    except Exception:
+        pass
+
+    def _krw(price: float, ticker: str) -> float:
+        """USD 종목이면 원화 환산, KRW 종목은 그대로."""
+        return price if ticker.upper().endswith((".KS", ".KQ")) else price * _usd_krw
+
     # ── 종목 추가 (목록 검색) ─────────────────────────────────────────────────
     with st.expander("➕ 종목 추가", expanded=False):
         _fa_market = st.radio(
@@ -4212,20 +4235,23 @@ def _render_portfolio_tab():
     if not _items:
         st.info("보유 종목이 없습니다. 차트 분석 탭에서 평단가를 입력한 뒤 '포트폴리오에 추가' 버튼을 눌러보세요.", icon="💡")
     else:
-        # 요약 메트릭
-        _total_cost = sum(it["avg_price"] * it["quantity"] for it in _items)
+        # 요약 메트릭 — 미국 주식은 USD/KRW 환율 적용해 원화 환산 합산
+        _total_cost = sum(
+            _krw(it["avg_price"], it["ticker"]) * it["quantity"] for it in _items
+        )
         _total_val  = sum(
-            _pf_prices.get(it["ticker"], it["avg_price"]) * it["quantity"]
+            _krw(_pf_prices.get(it["ticker"], it["avg_price"]), it["ticker"]) * it["quantity"]
             for it in _items
         )
         _total_pnl  = _total_val - _total_cost
         _total_pnl_pct = (_total_pnl / _total_cost * 100) if _total_cost else 0.0
 
         _m1, _m2, _m3 = st.columns(3)
-        _m1.metric("총 매수 금액",  f"{_total_cost:,.0f}")
-        _m2.metric("총 평가 금액",  f"{_total_val:,.0f}")
-        _pnl_delta = f"{_total_pnl:+,.0f} ({_total_pnl_pct:+.2f}%)"
-        _m3.metric("총 손익", _pnl_delta,
+        _m1.metric("총 매수 금액",  f"₩{_total_cost:,.0f}")
+        _m2.metric("총 평가 금액",  f"₩{_total_val:,.0f}",
+                   help=f"미국 주식 USD→KRW 환율 적용 (USD/KRW ≈ {_usd_krw:,.0f})")
+        _pnl_delta = f"₩{_total_pnl:+,.0f} ({_total_pnl_pct:+.2f}%)"
+        _m3.metric("총 손익 (원화)", _pnl_delta,
                    delta=f"{_total_pnl_pct:+.2f}%",
                    delta_color="normal")
 
