@@ -80,6 +80,9 @@ from src.database import (
     delete_portfolio_item as _db_delete_portfolio,
     save_recommendation as _db_save_recommendation,
     get_recommendation_history as _db_get_rec_history,
+    sell_item as _db_sell_item,
+    get_trade_history as _db_get_trade_history,
+    get_trade_summary as _db_get_trade_summary,
 )
 try:
     _db_init()
@@ -4206,6 +4209,10 @@ def _render_portfolio_tab():
 
     _items = _db_get_portfolio(_uid)
     _pf_nm: dict[str, str] = _ticker_name_map() if _items else {}
+    try:
+        _trade_history: list[dict] = _db_get_trade_history(_uid)
+    except Exception:
+        _trade_history = []
 
     # ── 수익률 계산을 위한 현재가 일괄 조회 ──────────────────────────────────
     _pf_tickers = list({it["ticker"] for it in _items}) if _items else []
@@ -4246,6 +4253,11 @@ def _render_portfolio_tab():
     def _krw(price: float, ticker: str) -> float:
         """USD 종목이면 원화 환산, KRW 종목은 그대로."""
         return price if ticker.upper().endswith((".KS", ".KQ")) else price * _usd_krw
+
+    # 매도 이력 KRW 환산 집계 (통화 혼재 → _krw 함수로 통일)
+    _cum_sell_krw   = sum(_krw(t["sell_price"] * t["quantity"], t["ticker"]) for t in _trade_history)
+    _cum_profit_krw = sum(_krw(t["net_profit"],                 t["ticker"]) for t in _trade_history)
+    _cum_buy_krw    = sum(_krw(t["buy_price"]  * t["quantity"], t["ticker"]) for t in _trade_history)
 
     # ── 종목 추가 (목록 검색) ─────────────────────────────────────────────────
     with st.expander("➕ 종목 추가", expanded=False):
@@ -4349,14 +4361,46 @@ def _render_portfolio_tab():
         _total_pnl  = _total_val - _total_cost
         _total_pnl_pct = (_total_pnl / _total_cost * 100) if _total_cost else 0.0
 
-        _m1, _m2, _m3 = st.columns(3)
-        _m1.metric("총 매수 금액",  f"₩{_total_cost:,.0f}")
-        _m2.metric("총 평가 금액",  f"₩{_total_val:,.0f}",
-                   help=f"미국 주식 USD→KRW 환율 적용 (USD/KRW ≈ {_usd_krw:,.0f})")
-        _pnl_delta = f"₩{_total_pnl:+,.0f} ({_total_pnl_pct:+.2f}%)"
-        _m3.metric("총 손익 (원화)", _pnl_delta,
-                   delta=f"{_total_pnl_pct:+.2f}%",
-                   delta_color="normal")
+        _m1, _m2, _m3, _m4 = st.columns(4)
+        _m1.metric(
+            "총 매수 금액",
+            f"₩{_total_cost:,.0f}",
+            help="현재 보유 종목 평단가 × 수량 합계",
+        )
+        _m2.metric(
+            "현재 평가금",
+            f"₩{_total_val:,.0f}",
+            delta=f"{_total_pnl_pct:+.2f}%",
+            delta_color="normal",
+            help=f"실시간 시세 반영 (USD/KRW ≈ {_usd_krw:,.0f})",
+        )
+        _m3.metric(
+            "누적 매도금",
+            f"₩{_cum_sell_krw:,.0f}",
+            help="지금까지 매도로 회수된 총 금액 (원금+수익)",
+        )
+        _m4.metric(
+            "누적 실현 손익",
+            f"₩{_cum_profit_krw:+,.0f}",
+            delta=f"₩{_cum_profit_krw:+,.0f}" if _cum_profit_krw else None,
+            delta_color="normal",
+            help="매도 완료된 종목들의 순수 손익 합계",
+        )
+
+        # 전체 기간 수익률: (현재 평가금 + 누적 매도금) / (보유 원가 + 매도 원가)
+        _total_in = _total_cost + _cum_buy_krw
+        if _total_in > 0:
+            _overall_pct = (_total_val + _cum_sell_krw) / _total_in * 100 - 100
+            _ov_clr = "#4caf50" if _overall_pct >= 0 else "#ef4444"
+            st.markdown(
+                f'<div style="text-align:right;font-size:.82rem;color:#888;margin-top:-6px">'
+                f'전체 기간 수익률 &nbsp;'
+                f'<b style="color:{_ov_clr};font-size:.95rem">{_overall_pct:+.2f}%</b>'
+                f'&nbsp;&nbsp;|&nbsp;&nbsp;'
+                f'(현재 평가금 ₩{_total_val:,.0f} + 누적 매도금 ₩{_cum_sell_krw:,.0f})'
+                f' / 전체 투자금 ₩{_total_in:,.0f}</div>',
+                unsafe_allow_html=True,
+            )
 
         st.divider()
 
@@ -4800,18 +4844,78 @@ def _render_portfolio_tab():
                     unsafe_allow_html=True,
                 )
 
+                # 매도 확정 버튼 — 분석 결과가 있을 때만 표시
+                if _stp and _stp.get("rt_price"):
+                    _rt_sell_px = _stp["rt_price"]
+                    _sell_btn_col, _ = st.columns([2, 5])
+                    if _sell_btn_col.button(
+                        f"✅ 매도 확정  {_efmt(_rt_sell_px)}",
+                        key=f"pf_sell_exit_{_it['id']}",
+                        help=(
+                            f"실시간가 {_efmt(_rt_sell_px)} 기준으로 "
+                            f"{_it['quantity']:g}주 전량 매도 기록"
+                        ),
+                    ):
+                        _sell_r = _db_sell_item(_uid, _it["id"], _rt_sell_px)
+                        if _sell_r["ok"]:
+                            _pnl_d = (
+                                f"₩{_sell_r['net_profit']:+,.0f}"
+                                if _krw else
+                                f"${_sell_r['net_profit']:+,.2f}"
+                            )
+                            st.success(
+                                f"매도 완료! 실현 손익: {_pnl_d}"
+                                f" ({_sell_r['return_rate']:+.2f}%)"
+                            )
+                            st.rerun(scope="fragment")
+                        else:
+                            st.error(_sell_r.get("error", "매도 실패"))
+
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # 종목 삭제
-        with st.expander("🗑 종목 삭제", expanded=False):
+        # 매도 기록 / 종목 삭제
+        with st.expander("💸 매도 기록 / 종목 삭제", expanded=False):
+            st.caption(
+                "**매도** 버튼: 입력한 매도가로 trade_history에 기록 후 포트폴리오에서 제거  "
+                "│  **삭제** 버튼: 기록 없이 포트폴리오에서만 제거"
+            )
             for _it in _items:
-                _dc1, _dc2 = st.columns([6, 1])
                 _is_krw_del = _it["ticker"].upper().endswith((".KS", ".KQ"))
                 _price_str  = f"₩{_it['avg_price']:,.0f}" if _is_krw_del else f"${_it['avg_price']:,.2f}"
-                _del_nm = _pf_nm.get(_it["ticker"], "")
-                _del_label = f"**{_del_nm}** `{_it['ticker']}`" if _del_nm else f"`{_it['ticker']}`"
+                _del_nm     = _pf_nm.get(_it["ticker"], "")
+                _del_label  = f"**{_del_nm}** `{_it['ticker']}`" if _del_nm else f"`{_it['ticker']}`"
+
+                _dc1, _dc2, _dc3, _dc4 = st.columns([4, 2, 1, 1])
                 _dc1.markdown(f"{_del_label} — {_it['quantity']:g}주 @ {_price_str}")
-                if _dc2.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
+
+                _default_px = float(_pf_prices.get(_it["ticker"], _it["avg_price"]))
+                _sell_px_input = _dc2.number_input(
+                    "매도가",
+                    min_value=0.01,
+                    value=_default_px,
+                    step=100.0 if _is_krw_del else 0.01,
+                    format="%.0f" if _is_krw_del else "%.2f",
+                    key=f"pf_sell_px_{_it['id']}",
+                    label_visibility="collapsed",
+                )
+                if _dc3.button("매도", key=f"pf_sell_{_it['id']}", type="primary",
+                               use_container_width=True):
+                    _sell_r = _db_sell_item(_uid, _it["id"], _sell_px_input)
+                    if _sell_r["ok"]:
+                        _pnl_msg = (
+                            f"₩{_sell_r['net_profit']:+,.0f}"
+                            if _is_krw_del else
+                            f"${_sell_r['net_profit']:+,.2f}"
+                        )
+                        st.toast(
+                            f"매도 완료! 손익: {_pnl_msg}"
+                            f" ({_sell_r['return_rate']:+.2f}%)"
+                        )
+                        st.rerun(scope="fragment")
+                    else:
+                        st.error(_sell_r.get("error", "매도 실패"))
+
+                if _dc4.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
                     _r3 = _db_delete_portfolio(_it["id"], _uid)
                     if _r3["ok"]:
                         st.rerun(scope="fragment")
@@ -5144,6 +5248,52 @@ def _render_portfolio_tab():
                         f'</div>',
                         unsafe_allow_html=True,
                     )
+
+        # ── 매도 이력 ────────────────────────────────────────────────────────
+        with st.expander("📋 매도 이력", expanded=False):
+            if not _trade_history:
+                st.caption(
+                    "매도 이력이 없습니다. '매도 기록 / 종목 삭제' 또는 "
+                    "'매도 가이드'의 매도 확정 버튼으로 기록이 남습니다."
+                )
+            else:
+                _th_rows_data = []
+                for _th in _trade_history:
+                    _th_t       = _th["ticker"]
+                    _th_nm      = _pf_nm.get(_th_t, "") or _th_t
+                    _th_is_krw  = _th_t.upper().endswith((".KS", ".KQ"))
+                    _th_fp      = (lambda v, k=_th_is_krw: f"₩{v:,.0f}" if k else f"${v:,.2f}")
+                    _th_dt      = _th.get("traded_at", "")[:16].replace("T", " ")
+                    _th_pnl_clr = "#4caf50" if _th["net_profit"] >= 0 else "#ef4444"
+                    _th_rows_data.append({
+                        "종목":     f"{_th_nm} ({_th_t})" if _th_nm != _th_t else _th_t,
+                        "매수가":   _th_fp(_th["buy_price"]),
+                        "매도가":   _th_fp(_th["sell_price"]),
+                        "수량":     f"{_th['quantity']:g}주",
+                        "실현 손익": _th_fp(_th["net_profit"]),
+                        "수익률":   f"{_th['return_rate']:+.2f}%",
+                        "매도일시": _th_dt,
+                    })
+
+                # 요약 헤더
+                _th_total_cnt = len(_trade_history)
+                _th_profit_cnt = sum(1 for t in _trade_history if t["net_profit"] >= 0)
+                st.markdown(
+                    f'<div style="display:flex;gap:24px;margin-bottom:10px;font-size:.85rem">'
+                    f'<span style="color:#9e9e9e">총 {_th_total_cnt}건</span>'
+                    f'<span style="color:#4caf50">수익 {_th_profit_cnt}건</span>'
+                    f'<span style="color:#ef4444">손실 {_th_total_cnt - _th_profit_cnt}건</span>'
+                    f'<span style="color:#aaa">누적 실현 손익 '
+                    f'<b style="color:{"#4caf50" if _cum_profit_krw >= 0 else "#ef4444"}">'
+                    f'₩{_cum_profit_krw:+,.0f}</b></span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _th_rows_data,
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
 
 with tab_portfolio:

@@ -120,6 +120,19 @@ def init_db() -> None:
                     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS trade_history (
+                    id          SERIAL           PRIMARY KEY,
+                    user_id     INTEGER          NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    ticker      TEXT             NOT NULL,
+                    buy_price   DOUBLE PRECISION NOT NULL,
+                    sell_price  DOUBLE PRECISION NOT NULL,
+                    quantity    DOUBLE PRECISION NOT NULL,
+                    net_profit  DOUBLE PRECISION NOT NULL,
+                    return_rate DOUBLE PRECISION NOT NULL,
+                    traded_at   TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+                )
+            """)
         con.commit()
     logger.info("[DB] Supabase PostgreSQL 연결 및 스키마 초기화 완료")
 
@@ -253,6 +266,107 @@ def delete_portfolio_item(item_id: int, user_id: int) -> dict:
             rowcount = cur.rowcount
         con.commit()
     return {"ok": True} if rowcount > 0 else {"ok": False, "error": "항목을 찾을 수 없습니다"}
+
+
+def sell_item(
+    user_id: int,
+    item_id: int,
+    sell_price: float,
+    quantity: float | None = None,
+) -> dict:
+    """포트폴리오 종목 매도 — trade_history에 기록하고 portfolios에서 수량 차감(또는 삭제).
+
+    quantity가 None이면 보유 전량 매도.
+    반환: {"ok": True, "net_profit": float, "return_rate": float} 또는 {"ok": False, "error": str}
+    """
+    with _conn() as con:
+        with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT ticker, avg_price, quantity FROM portfolios WHERE id = %s AND user_id = %s",
+                (item_id, user_id),
+            )
+            row = cur.fetchone()
+    if not row:
+        return {"ok": False, "error": "항목을 찾을 수 없습니다"}
+
+    ticker    = row["ticker"]
+    buy_price = float(row["avg_price"])
+    total_qty = float(row["quantity"])
+    sell_qty  = min(float(quantity), total_qty) if quantity is not None else total_qty
+    if sell_qty <= 0:
+        return {"ok": False, "error": "매도 수량이 0 이하입니다"}
+
+    net_profit  = (sell_price - buy_price) * sell_qty
+    return_rate = (sell_price / buy_price - 1) * 100 if buy_price else 0.0
+
+    with _conn() as con:
+        with con.cursor() as cur:
+            cur.execute(
+                "INSERT INTO trade_history"
+                " (user_id, ticker, buy_price, sell_price, quantity, net_profit, return_rate)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (user_id, ticker, buy_price, float(sell_price),
+                 sell_qty, net_profit, return_rate),
+            )
+            remaining = total_qty - sell_qty
+            if remaining <= 0.001:
+                cur.execute(
+                    "DELETE FROM portfolios WHERE id = %s AND user_id = %s",
+                    (item_id, user_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE portfolios SET quantity = %s WHERE id = %s AND user_id = %s",
+                    (remaining, item_id, user_id),
+                )
+        con.commit()
+    return {"ok": True, "net_profit": net_profit, "return_rate": return_rate}
+
+
+def get_trade_history(user_id: int, limit: int = 100) -> list[dict]:
+    """매도 이력 최신순 조회."""
+    with _conn() as con:
+        with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, ticker, buy_price, sell_price, quantity,"
+                " net_profit, return_rate, traded_at"
+                " FROM trade_history WHERE user_id = %s"
+                " ORDER BY traded_at DESC LIMIT %s",
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            **dict(r),
+            "traded_at": r["traded_at"].isoformat() if r.get("traded_at") else "",
+        }
+        for r in rows
+    ]
+
+
+def get_trade_summary(user_id: int) -> dict:
+    """누적 매도 통계 — 통화 혼재 시 UI에서 환율 적용 필요.
+
+    반환: {total_sell_amount, total_net_profit, total_buy_cost, trade_count}
+    """
+    with _conn() as con:
+        with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT"
+                "  COALESCE(SUM(sell_price * quantity), 0) AS total_sell_amount,"
+                "  COALESCE(SUM(net_profit),            0) AS total_net_profit,"
+                "  COALESCE(SUM(buy_price  * quantity), 0) AS total_buy_cost,"
+                "  COUNT(*)                               AS trade_count"
+                " FROM trade_history WHERE user_id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+    return {
+        "total_sell_amount": float(row["total_sell_amount"]),
+        "total_net_profit":  float(row["total_net_profit"]),
+        "total_buy_cost":    float(row["total_buy_cost"]),
+        "trade_count":       int(row["trade_count"]),
+    }
 
 
 # ── AI 추천 이력 ──────────────────────────────────────────────────────────────
