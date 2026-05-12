@@ -357,6 +357,15 @@ def sell_item(
     return {"ok": True, "net_profit": net_profit, "return_rate": return_rate}
 
 
+def clear_trade_history(user_id: int) -> dict:
+    """사용자의 매도 이력 전체 삭제."""
+    with _conn() as con:
+        with con.cursor() as cur:
+            cur.execute("DELETE FROM trade_history WHERE user_id = %s", (user_id,))
+        con.commit()
+    return {"ok": True}
+
+
 def get_trade_history(user_id: int, limit: int = 100) -> list[dict]:
     """매도 이력 최신순 조회."""
     with _conn() as con:

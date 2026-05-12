@@ -84,6 +84,7 @@ from src.database import (
     sell_item as _db_sell_item,
     get_trade_history as _db_get_trade_history,
     get_trade_summary as _db_get_trade_summary,
+    clear_trade_history as _db_clear_trade_history,
 )
 try:
     _db_init()
@@ -5398,7 +5399,6 @@ def _render_portfolio_tab():
                     _th_is_krw  = _th_t.upper().endswith((".KS", ".KQ"))
                     _th_fp      = (lambda v, k=_th_is_krw: f"₩{v:,.0f}" if k else f"${v:,.2f}")
                     _th_dt      = _th.get("traded_at", "")[:16].replace("T", " ")
-                    _th_pnl_clr = "#4caf50" if _th["net_profit"] >= 0 else "#ef4444"
                     _th_rows_data.append({
                         "종목":     f"{_th_nm} ({_th_t})" if _th_nm != _th_t else _th_t,
                         "매수가":   _th_fp(_th["buy_price"]),
@@ -5409,11 +5409,12 @@ def _render_portfolio_tab():
                         "매도일시": _th_dt,
                     })
 
-                # 요약 헤더
-                _th_total_cnt = len(_trade_history)
+                # 요약 헤더 + 초기화 버튼
+                _th_total_cnt  = len(_trade_history)
                 _th_profit_cnt = sum(1 for t in _trade_history if t["net_profit"] >= 0)
-                st.markdown(
-                    f'<div style="display:flex;gap:24px;margin-bottom:10px;font-size:.85rem">'
+                _th_hdr_col, _th_clr_col = st.columns([7, 1])
+                _th_hdr_col.markdown(
+                    f'<div style="display:flex;gap:24px;padding-top:6px;font-size:.85rem">'
                     f'<span style="color:#9e9e9e">총 {_th_total_cnt}건</span>'
                     f'<span style="color:#4caf50">수익 {_th_profit_cnt}건</span>'
                     f'<span style="color:#ef4444">손실 {_th_total_cnt - _th_profit_cnt}건</span>'
@@ -5423,6 +5424,24 @@ def _render_portfolio_tab():
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+                if _th_clr_col.button("🗑️ 초기화", key="th_clear_btn",
+                                      help="매도 이력 전체 삭제 (복구 불가)"):
+                    st.session_state["_th_confirm_clear"] = True
+
+                if st.session_state.get("_th_confirm_clear"):
+                    st.warning("매도 이력을 전부 삭제합니다. 누적 매도금·실현 손익이 0으로 초기화됩니다.")
+                    _cf_ok, _cf_no = st.columns(2)
+                    if _cf_ok.button("삭제 확인", key="th_clear_confirm", type="primary",
+                                     use_container_width=True):
+                        _db_clear_trade_history(_uid)
+                        st.session_state.pop("_th_confirm_clear", None)
+                        st.toast("매도 이력이 초기화됐습니다.")
+                        st.rerun(scope="fragment")
+                    if _cf_no.button("취소", key="th_clear_cancel",
+                                     use_container_width=True):
+                        st.session_state.pop("_th_confirm_clear", None)
+                        st.rerun(scope="fragment")
+
                 st.dataframe(
                     _th_rows_data,
                     use_container_width=True,
