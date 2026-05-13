@@ -35,15 +35,10 @@
   color: var(--text) !important;
 }
 
-/* Streamlit 상단 툴바 숨김 — 콘텐츠가 38px 툴바에 가려지는 문제 해결 */
-header[data-testid="stHeader"] {
-  display: none !important;
-}
+/* 데스크탑: stHeader 숨김 */
+header[data-testid="stHeader"] { display: none !important; }
 #MainMenu, footer { visibility: hidden; }
-
-.block-container {
-  padding-top: 1.5rem;
-}
+.block-container { padding-top: 1.5rem; }
 .main .block-container {
   background: transparent !important;
 }
@@ -605,8 +600,78 @@ hr {
   border: 1px solid var(--border);
 }
 
+/* ─── Toss 스타일 종목 리스트 ────────────────────────────────────── */
+.toss-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.toss-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-md);
+  transition: background 0.12s;
+}
+.toss-item:last-child { border-bottom: none; }
+.toss-item:hover { background: rgba(255,255,255,0.03); }
+.toss-item-name {
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
+}
+.toss-item-sub { font-size: .68rem; color: var(--text-2); margin-top: 2px; }
+.toss-item-price { font-size: .92rem; font-weight: 700; color: var(--text); }
+
+/* ─── Toss 환율 수평 스크롤 카드 ─────────────────────────────────── */
+.toss-rate-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 0 10px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.toss-rate-row::-webkit-scrollbar { display: none; }
+.toss-rate-card {
+  flex: 0 0 120px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
 /* ─── Mobile ──────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  /* 사이드바 토글 버튼: 모바일에서 stHeader 복원 */
+  header[data-testid="stHeader"] {
+    display: flex !important;
+    align-items: center;
+    height: 48px !important;
+    min-height: 48px !important;
+    background: rgba(14,17,23,0.97) !important;
+    backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 1000 !important;
+    padding: 0 8px !important;
+  }
+  /* 탭바: 헤더 아래 sticky */
+  [data-testid="stTabBar"],
+  .stTabs [data-baseweb="tab-list"] {
+    top: 48px !important;
+  }
+  .block-container { padding-top: 3rem !important; }
+
+  /* 일반 metric 컬럼 스택 */
   div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
     flex-direction: column-reverse !important;
   }
@@ -617,4 +682,5 @@ hr {
   }
   .ma-header-card { padding: 14px 16px; }
   .key-metric { font-size: 1.5rem; }
+  .toss-item-name { max-width: 140px; }
 }
