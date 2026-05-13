@@ -299,25 +299,13 @@ def render_sidebar(
         st.markdown("## ⚙️ 종목 설정")
 
         if all_stocks:
-            _unified_q = st.text_input(
-                "종목 검색",
-                key="_unified_q",
-                placeholder="종목명, 코드, 티커 입력 (예: 삼성전자, AAPL, KODEX 200)",
-            )
-            _unified_opts = (
-                {k: v for k, v in all_stocks.items() if _unified_q.lower() in k.lower()}
-                if _unified_q else all_stocks
-            )
-            if not _unified_opts:
-                st.caption("검색 결과 없음 — 전체 목록 표시")
-                _unified_opts = all_stocks
             selected = st.selectbox(
-                f"종목 선택 ({len(_unified_opts):,}개)",
-                list(_unified_opts.keys()),
+                f"종목 선택 ({len(all_stocks):,}개)",
+                list(all_stocks.keys()),
                 key="_unified_selected",
                 on_change=_clear_analysis,
             )
-            ticker = _unified_opts[selected]
+            ticker = all_stocks[selected]
             sname  = selected.split(" (")[0]
         else:
             st.warning("종목 목록 로드 실패 — 티커를 직접 입력하세요")
@@ -433,28 +421,45 @@ def render_sidebar(
 
         # ── 환율 ────────────────────────────────────────────────────────────
         st.divider()
-        st.markdown("### 💱 실시간 환율")
-        for pair, info in rates.items():
-            st.metric(
-                pair,
-                f"{info['rate']:,.2f}",
-                f"{info['change']:+.3f}%",
-                help=f"{pair} 환율. 전일 대비 변동률 표시.",
+        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">💱 실시간 환율</p>', unsafe_allow_html=True)
+
+        def _sb_row(label, value, change, chg_color):
+            return (
+                f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                f'padding:5px 0;border-bottom:1px solid #21262D;">'
+                f'<span style="font-size:.78rem;color:#8B949E;">{label}</span>'
+                f'<div style="text-align:right">'
+                f'<div style="font-size:.88rem;font-weight:700;color:#E6EDF3;">{value}</div>'
+                f'<div style="font-size:.72rem;color:{chg_color};">{change}</div>'
+                f'</div></div>'
             )
+
+        rate_html = ""
+        for pair, info in rates.items():
+            chg_val = info["change"]
+            chg_color = "#3FB950" if chg_val >= 0 else "#F85149"
+            chg_sign = "+" if chg_val >= 0 else ""
+            rate_html += _sb_row(pair, f"{info['rate']:,.2f}", f"{chg_sign}{chg_val:.3f}%", chg_color)
+        st.markdown(rate_html, unsafe_allow_html=True)
 
         # ── 주요 지수 ────────────────────────────────────────────────────────
         st.divider()
-        st.markdown("### 📊 주요 지수")
+        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">📊 주요 지수</p>', unsafe_allow_html=True)
+
+        idx_html = ""
         for idx_name, idx_sym in indices.items():
             try:
                 d = get_index_data(idx_sym)
                 if len(d) >= 2:
                     p   = float(d["Close"].iloc[-1])
                     chg = (p - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2]) * 100
-                    st.metric(idx_name, f"{p:,.2f}", f"{chg:+.2f}%",
-                              help=f"{idx_name} 지수. 전일 종가 대비 등락률.")
+                    chg_color = "#3FB950" if chg >= 0 else "#F85149"
+                    chg_sign = "+" if chg >= 0 else ""
+                    idx_html += _sb_row(idx_name, f"{p:,.2f}", f"{chg_sign}{chg:.2f}%", chg_color)
             except Exception:
                 pass
+        if idx_html:
+            st.markdown(idx_html, unsafe_allow_html=True)
 
         # ── 관심종목 ──────────────────────────────────────────────────────────
         st.divider()
