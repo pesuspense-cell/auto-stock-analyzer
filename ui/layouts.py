@@ -1281,37 +1281,6 @@ def render_chart_tab(
                 unsafe_allow_html=True,
             )
 
-        # AI 종합 리포트 배너
-        if data_ready:
-            _rpt_signal, _rpt_action, _rpt_reasons = generate_signal(
-                data=data, advanced=advanced, hybrid=hybrid,
-                news_result=news_result, expected=expected, signals=signals,
-            )
-            _sl_rpt  = get_stop_loss_targets(data) if not data.empty else None
-            _has_rpt = not close.empty
-            _rpt_cur = float(close.iloc[-1]) if _has_rpt else 0
-            _is_krw  = _rpt_cur > 500
-            _fmt     = "{:,.0f}" if _is_krw else "{:,.2f}"
-            _rpt_sl  = _fmt.format(_sl_rpt["stop_8pct"]) if _sl_rpt else "—"
-            _rpt_tgt = _fmt.format(_sl_rpt["target_2r"])  if _sl_rpt else "—"
-
-            st.markdown(
-                signal_report_html(
-                    signal=_rpt_signal, action=_rpt_action, reasons=_rpt_reasons,
-                    h_label=hybrid.get("label", "중립/관망"),
-                    h_badge=hybrid.get("badge", "⚪"),
-                    h_score=hybrid.get("hybrid_score", 0.0),
-                    news_score=news_result.get("score", 0.0) if isinstance(news_result, dict) else 0.0,
-                    fund_score=fund_score_data.get("fund_score", 0),
-                    fund_label=fund_score_data.get("fund_label", "N/A"),
-                    cur_price=_rpt_cur,
-                    sl_price=_rpt_sl,
-                    tgt_price=_rpt_tgt,
-                    is_krw=_is_krw,
-                ),
-                unsafe_allow_html=True,
-            )
-
         # ── 차트 생성 (dialog용) ───────────────────────────────────────────
         try:
             _kospi_raw = yf.download("^KS11", period=aperiod, auto_adjust=True, progress=False)
@@ -1362,6 +1331,37 @@ def render_chart_tab(
                     "Naver·RSS·YouTube 멀티소스 뉴스 LLM 감성 포함. "
                     "포트폴리오 탭 AI 모멘텀 추천과 결과가 다를 수 있습니다."
                 )
+
+        # AI 종합 리포트 배너
+        if data_ready:
+            _rpt_signal, _rpt_action, _rpt_reasons = generate_signal(
+                data=data, advanced=advanced, hybrid=hybrid,
+                news_result=news_result, expected=expected, signals=signals,
+            )
+            _sl_rpt  = get_stop_loss_targets(data) if not data.empty else None
+            _has_rpt = not close.empty
+            _rpt_cur = float(close.iloc[-1]) if _has_rpt else 0
+            _is_krw  = _rpt_cur > 500
+            _fmt     = "{:,.0f}" if _is_krw else "{:,.2f}"
+            _rpt_sl  = _fmt.format(_sl_rpt["stop_8pct"]) if _sl_rpt else "—"
+            _rpt_tgt = _fmt.format(_sl_rpt["target_2r"])  if _sl_rpt else "—"
+
+            st.markdown(
+                signal_report_html(
+                    signal=_rpt_signal, action=_rpt_action, reasons=_rpt_reasons,
+                    h_label=hybrid.get("label", "중립/관망"),
+                    h_badge=hybrid.get("badge", "⚪"),
+                    h_score=hybrid.get("hybrid_score", 0.0),
+                    news_score=news_result.get("score", 0.0) if isinstance(news_result, dict) else 0.0,
+                    fund_score=fund_score_data.get("fund_score", 0),
+                    fund_label=fund_score_data.get("fund_label", "N/A"),
+                    cur_price=_rpt_cur,
+                    sl_price=_rpt_sl,
+                    tgt_price=_rpt_tgt,
+                    is_krw=_is_krw,
+                ),
+                unsafe_allow_html=True,
+            )
 
         # ── AI 매매 신호 패널 (풀 너비) ──────────────────────────────────
         _render_signal_panel(
