@@ -489,8 +489,11 @@ def render_sidebar(
                         st.caption(item["name"])
                 with col_b:
                     if st.button("✕", key=f"rm_{i}", help="관심종목 삭제"):
-                        st.session_state.watchlist.pop(i)
-                        save_watchlist_fn(st.session_state.watchlist)
+                        _wl_cur: list = st.session_state.get("watchlist", [])
+                        if i < len(_wl_cur):
+                            _wl_cur.pop(i)
+                        st.session_state["watchlist"] = _wl_cur
+                        save_watchlist_fn(_wl_cur)
                         st.rerun()
 
         # ── 포트폴리오 종목 추가 (로그인 시만) ──────────────────────────────
@@ -1222,20 +1225,22 @@ def render_chart_tab(
             st.info("👈 사이드바에서 종목을 선택하고 **분석 시작** 버튼을 눌러주세요.", icon="📊")
 
         # 관심종목 버튼
-        is_in_wl = any(w["ticker"] == ticker for w in st.session_state.watchlist)
+        _wl: list = st.session_state.get("watchlist", [])
+        is_in_wl = any(w["ticker"] == ticker for w in _wl)
         wl_col1, wl_col2 = st.columns([6, 1])
         with wl_col2:
             if is_in_wl:
                 if st.button("★ 관심 해제", use_container_width=True):
-                    st.session_state.watchlist = [
-                        w for w in st.session_state.watchlist if w["ticker"] != ticker
+                    st.session_state["watchlist"] = [
+                        w for w in _wl if w["ticker"] != ticker
                     ]
-                    save_watchlist_fn(st.session_state.watchlist)
+                    save_watchlist_fn(st.session_state["watchlist"])
                     st.rerun()
             else:
                 if st.button("☆ 관심 추가", use_container_width=True, type="primary"):
-                    st.session_state.watchlist.append({"name": sname, "ticker": ticker})
-                    save_watchlist_fn(st.session_state.watchlist)
+                    _wl.append({"name": sname, "ticker": ticker})
+                    st.session_state["watchlist"] = _wl
+                    save_watchlist_fn(_wl)
                     st.rerun()
 
         if data.empty:
