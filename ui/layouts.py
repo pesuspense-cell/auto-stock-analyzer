@@ -622,7 +622,8 @@ def render_header(portfolio_summary: dict) -> None:
         hc1.markdown(
             header_metric_card_html(
                 SVG_WALLET, "총 평가금",
-                f"₩{h_val:,.0f}", "포트폴리오 현재가치",
+                f'<span style="color:{COLORS["accent"]}">₩{h_val:,.0f}</span>',
+                f'<span style="color:{COLORS["accent"]}">포트폴리오 현재가치</span>',
                 COLORS["accent"], COLORS["accent_rgb"], COLORS["accent_rgb"],
             ),
             unsafe_allow_html=True,
