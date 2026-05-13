@@ -963,11 +963,12 @@ def render_news_tab(
         sname       = state["sname"]
         data_ready  = state["data_ready"]
         asname      = state.get("asname", sname)
-        news_result = state.get("news_result", {})
         gemini_key  = api_keys.get("gemini", "")
         groq_key    = api_keys.get("groq", "")
+        _cname      = sname if sname != ticker else ""
 
         _news_is_etf = data_ready and check_is_etf_fn(ticker)
+        is_kr_stock  = ticker.endswith(".KS") or ticker.endswith(".KQ")
 
         if _news_is_etf:
             st.subheader(f"📊 {asname or sname} 섹터 뉴스 — 돈이 몰리는 섹터 파악")
@@ -975,18 +976,118 @@ def render_news_tab(
         else:
             st.subheader(f"📰 {asname or sname} 뉴스 & 관련 정보")
 
-        is_kr_stock = ticker.endswith(".KS") or ticker.endswith(".KQ")
-
-        raw_news: list = []
+        raw_news: list       = []
         _etf_fund_data: dict = {}
+        sent: dict           = {}
+        _sec_perf: dict      = {}
+        _etf_meta: tuple     = ("", [])
+
+        with st.status("📡 뉴스 & 데이터 수집 중...", expanded=True) as _status:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _pool:
+
+                if _news_is_etf:
+                    # ETF 펀더멘탈과 섹터 성과를 병렬로 시작
+                    _f_fund   = _pool.submit(etf_fundamental_fn, ticker)
+                    _f_sector = _pool.submit(sector_perf_fn, ticker) if data_ready else None
+
+                    st.write("🔄 ETF 펀더멘탈 & 섹터 데이터 수집 중...")
+                    _etf_fund_data = _f_fund.result()
+                    raw_news = get_etf_news_with_holdings(ticker, _etf_fund_data, max_items=15)
+                    st.write(f"✅ ETF 뉴스 {len(raw_news)}건 수집 완료")
+
+                    # 뉴스 수집 완료 즉시 감성 분석 제출
+                    _f_sent = _pool.submit(
+                        analyze_etf_news_sentiment, raw_news, ticker, _etf_fund_data
+                    ) if raw_news else None
+                    st.write("🔄 AI 감성 분석 중...")
+
+                    _sec_perf = _f_sector.result() if _f_sector else {}
+                    if _sec_perf:
+                        st.write("✅ 섹터 데이터 수집 완료")
+
+                    sent = _f_sent.result() if _f_sent else {}
+                    if sent:
+                        st.write("✅ 감성 분석 완료")
+
+                    _etf_meta = (
+                        _etf_fund_data.get("sector", ""),
+                        [h.get("name", h.get("ticker", "")) for h in _etf_fund_data.get("top_holdings", [])[:5]],
+                    )
+
+                elif is_kr_stock:
+                    # 네이버 뉴스와 섹터 성과를 병렬로 시작
+                    _f_news   = _pool.submit(naver_news_fn, ticker)
+                    _f_sector = _pool.submit(sector_perf_fn, ticker) if data_ready else None
+
+                    st.write("🔄 네이버 뉴스 & 섹터 데이터 수집 중...")
+                    raw_news = _f_news.result()
+                    st.write(f"✅ 뉴스 {len(raw_news)}건 수집 완료")
+
+                    # 뉴스 도착 즉시 감성 분석 제출 (섹터 대기 없이)
+                    if raw_news:
+                        def _do_sent(_rn=raw_news):
+                            if gemini_key or groq_key:
+                                return analyze_news_sentiment_llm(_rn, ticker, gemini_key, groq_key, _cname)
+                            return analyze_news_sentiment_keywords(_rn, ticker, _cname)
+                        _f_sent = _pool.submit(_do_sent)
+                        st.write("🔄 AI 감성 분석 중...")
+                    else:
+                        _f_sent = None
+
+                    _sec_perf = _f_sector.result() if _f_sector else {}
+                    if _sec_perf:
+                        st.write("✅ 섹터 데이터 수집 완료")
+
+                    sent = _f_sent.result() if _f_sent else {}
+                    if sent:
+                        st.write("✅ 감성 분석 완료")
+
+                else:
+                    # 미국 주식: yfinance(빠름) + 섹터 성과 병렬
+                    _f_sector = _pool.submit(sector_perf_fn, ticker) if data_ready else None
+
+                    st.write("🔄 뉴스 & 섹터 데이터 수집 중...")
+                    try:
+                        for it in (yf.Ticker(ticker).news or [])[:10]:
+                            c = it.get("content", it)
+                            ts_raw = c.get("pubDate", it.get("providerPublishTime", ""))
+                            raw_news.append({
+                                "title":     c.get("title",    it.get("title", "제목 없음")),
+                                "link":      (c.get("canonicalUrl", {}).get("url") or it.get("link", "#")),
+                                "publisher": (c.get("provider", {}).get("displayName") or it.get("publisher", "")),
+                                "pub_date":  (
+                                    datetime.fromtimestamp(ts_raw).strftime("%Y-%m-%d %H:%M")
+                                    if isinstance(ts_raw, (int, float)) else str(ts_raw)
+                                ),
+                            })
+                    except Exception as e:
+                        st.warning(f"뉴스 로드 실패: {e}")
+
+                    st.write(f"✅ 뉴스 {len(raw_news)}건 수집 완료")
+
+                    if raw_news:
+                        def _do_sent_us(_rn=raw_news):
+                            if gemini_key or groq_key:
+                                return analyze_news_sentiment_llm(_rn, ticker, gemini_key, groq_key, _cname)
+                            return analyze_news_sentiment_keywords(_rn, ticker, _cname)
+                        _f_sent = _pool.submit(_do_sent_us)
+                        st.write("🔄 AI 감성 분석 중...")
+                    else:
+                        _f_sent = None
+
+                    _sec_perf = _f_sector.result() if _f_sector else {}
+                    if _sec_perf:
+                        st.write("✅ 섹터 데이터 수집 완료")
+
+                    sent = _f_sent.result() if _f_sent else {}
+                    if sent:
+                        st.write("✅ 감성 분석 완료")
+
+            _status.update(label="✅ 분석 완료", state="complete", expanded=False)
+
+        # ── ETF 메타데이터 배지 ───────────────────────────────────────────────
         if _news_is_etf:
-            with st.spinner("ETF 섹터 뉴스 수집 중 (ETF + 구성종목)..."):
-                _etf_fund_data = etf_fundamental_fn(ticker)
-                raw_news = get_etf_news_with_holdings(ticker, _etf_fund_data, max_items=15)
-            _etf_sector = _etf_fund_data.get("sector", "")
-            _etf_holdings_display = [
-                h.get("name", h.get("ticker", "")) for h in _etf_fund_data.get("top_holdings", [])[:5]
-            ]
+            _etf_sector, _etf_holdings_display = _etf_meta
             if _etf_sector or _etf_holdings_display:
                 st.markdown(
                     f'<div style="background:#1a2f3a;border-radius:8px;padding:10px 16px;margin-bottom:10px;">'
@@ -997,36 +1098,6 @@ def render_news_tab(
                     f'</div>',
                     unsafe_allow_html=True,
                 )
-        elif is_kr_stock:
-            with st.spinner("네이버 금융에서 뉴스 수집 중..."):
-                raw_news = naver_news_fn(ticker)
-        else:
-            try:
-                for it in (yf.Ticker(ticker).news or [])[:10]:
-                    c = it.get("content", it)
-                    ts_raw = c.get("pubDate", it.get("providerPublishTime", ""))
-                    raw_news.append({
-                        "title":     c.get("title",    it.get("title", "제목 없음")),
-                        "link":      (c.get("canonicalUrl", {}).get("url") or it.get("link", "#")),
-                        "publisher": (c.get("provider", {}).get("displayName") or it.get("publisher", "")),
-                        "pub_date":  (
-                            datetime.fromtimestamp(ts_raw).strftime("%Y-%m-%d %H:%M")
-                            if isinstance(ts_raw, (int, float)) else str(ts_raw)
-                        ),
-                    })
-            except Exception as e:
-                st.warning(f"뉴스 로드 실패: {e}")
-
-        _cname = sname if sname != ticker else ""
-        sent: dict = {}
-        if raw_news:
-            with st.spinner("AI 감성 분석 중..."):
-                if _news_is_etf:
-                    sent = analyze_etf_news_sentiment(raw_news, ticker, _etf_fund_data)
-                elif gemini_key or groq_key:
-                    sent = analyze_news_sentiment_llm(raw_news, ticker, gemini_key, groq_key, _cname)
-                else:
-                    sent = analyze_news_sentiment_keywords(raw_news, ticker, _cname)
 
         news_col, sent_col = st.columns([3, 2])
 
@@ -1092,23 +1163,19 @@ def render_news_tab(
             if data_ready:
                 st.markdown("---")
                 st.markdown("#### 📊 관련 섹터 성과")
-                try:
-                    _sec_perf = sector_perf_fn(ticker)
-                    if _sec_perf:
-                        for _sec, _pct in list(_sec_perf.items())[:5]:
-                            _sc = COLORS["gain"] if _pct >= 0 else COLORS["loss"]
-                            st.markdown(
-                                f'<div style="display:flex;justify-content:space-between;'
-                                f'padding:5px 0;border-bottom:1px solid {COLORS["border_md"]};">'
-                                f'<span style="color:{COLORS["text_2"]};font-size:.85rem">{_sec}</span>'
-                                f'<span style="color:{_sc};font-weight:700;font-size:.85rem">{_pct:+.2f}%</span>'
-                                f'</div>',
-                                unsafe_allow_html=True,
-                            )
-                    else:
-                        st.caption("섹터 데이터 없음")
-                except Exception:
-                    pass
+                if _sec_perf:
+                    for _sec, _pct in list(_sec_perf.items())[:5]:
+                        _sc = COLORS["gain"] if _pct >= 0 else COLORS["loss"]
+                        st.markdown(
+                            f'<div style="display:flex;justify-content:space-between;'
+                            f'padding:5px 0;border-bottom:1px solid {COLORS["border_md"]};">'
+                            f'<span style="color:{COLORS["text_2"]};font-size:.85rem">{_sec}</span>'
+                            f'<span style="color:{_sc};font-weight:700;font-size:.85rem">{_pct:+.2f}%</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption("섹터 데이터 없음")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
