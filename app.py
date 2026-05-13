@@ -838,11 +838,11 @@ with st.sidebar:
                 try:
                     p2, chg2 = _wl_price(item["ticker"])
                     if chg2 is not None:
-                        arrow = "🔺" if chg2 >= 0 else "🔻"
-                        color = "#ef5350" if chg2 >= 0 else "#42a5f5"
+                        arrow = "▲" if chg2 >= 0 else "▼"
+                        color = "#26a69a" if chg2 >= 0 else "#ef5350"
                         st.markdown(
                             f"**{item['name']}**<br>"
-                            f"<span style='color:{color}'>{arrow} {chg2:+.2f}%</span>",
+                            f"<span style='color:{color};font-size:0.85rem;font-weight:600;'>{arrow} {chg2:+.2f}%</span>",
                             unsafe_allow_html=True,
                         )
                     else:
@@ -963,51 +963,51 @@ _SVG_TREND  = ('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" v
 
 _hc1, _hc2, _hc3 = st.columns(3)
 if _h_val is not None:
-    _pnl_c  = "#10B981" if _h_pnl  >= 0 else "#3B82F6"
-    _ovr_c  = "#10B981" if (_h_ovr or 0) >= 0 else "#3B82F6"
-    _pnl_rgb = "16,185,129" if _h_pnl >= 0 else "59,130,246"
-    _ovr_rgb = "16,185,129" if (_h_ovr or 0) >= 0 else "59,130,246"
+    _pnl_c  = "#26a69a" if _h_pnl  >= 0 else "#ef5350"
+    _ovr_c  = "#26a69a" if (_h_ovr or 0) >= 0 else "#ef5350"
+    _pnl_rgb = "38,166,154" if _h_pnl >= 0 else "239,83,80"
+    _ovr_rgb = "38,166,154" if (_h_ovr or 0) >= 0 else "239,83,80"
     _hc1.markdown(f"""
 <div class="ma-header-card" style="border:1px solid rgba(139,92,246,0.25)">
   <div style="position:absolute;top:-15px;right:-15px;width:70px;height:70px;
-              background:radial-gradient(circle,rgba(139,92,246,.18) 0%,transparent 70%);border-radius:50%"></div>
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
-    <span style="font-size:.73rem;color:#94A3B8;font-weight:500;letter-spacing:.8px;text-transform:uppercase">총 평가금</span>
+              background:radial-gradient(circle,rgba(139,92,246,.15) 0%,transparent 70%);border-radius:50%"></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+    <span style="font-size:.68rem;color:#8B949E;font-weight:500;letter-spacing:.8px;text-transform:uppercase">총 평가금</span>
     <span style="color:#8B5CF6">{_SVG_WALLET}</span>
   </div>
-  <div style="font-size:1.6rem;font-weight:800;color:#E2E8F0;line-height:1.1">₩{_h_val:,.0f}</div>
-  <div style="font-size:.74rem;color:#8B5CF6;font-weight:600;margin-top:10px">포트폴리오 현재가치</div>
+  <div class="key-metric">₩{_h_val:,.0f}</div>
+  <div style="font-size:.72rem;color:#8B5CF6;font-weight:600;margin-top:10px">포트폴리오 현재가치</div>
 </div>
 """, unsafe_allow_html=True)
     _hc2.markdown(f"""
 <div class="ma-header-card" style="border:1px solid rgba({_pnl_rgb},.25)">
   <div style="position:absolute;top:-15px;right:-15px;width:70px;height:70px;
-              background:radial-gradient(circle,rgba({_pnl_rgb},.15) 0%,transparent 70%);border-radius:50%"></div>
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
-    <span style="font-size:.73rem;color:#94A3B8;font-weight:500;letter-spacing:.8px;text-transform:uppercase">미실현 손익</span>
+              background:radial-gradient(circle,rgba({_pnl_rgb},.12) 0%,transparent 70%);border-radius:50%"></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+    <span style="font-size:.68rem;color:#8B949E;font-weight:500;letter-spacing:.8px;text-transform:uppercase">미실현 손익</span>
     <span style="color:{_pnl_c}">{_SVG_CHART}</span>
   </div>
-  <div style="font-size:1.6rem;font-weight:800;color:{_pnl_c};line-height:1.1">₩{_h_pnl:+,.0f}</div>
-  <div style="font-size:.74rem;color:{_pnl_c};font-weight:600;margin-top:10px">{_h_pnlp:+.2f}% 수익률</div>
+  <div class="key-metric" style="color:{_pnl_c}">₩{_h_pnl:+,.0f}</div>
+  <div style="font-size:.72rem;color:{_pnl_c};font-weight:600;margin-top:10px">{_h_pnlp:+.2f}% 수익률</div>
 </div>
 """, unsafe_allow_html=True)
     _hc3.markdown(f"""
 <div class="ma-header-card" style="border:1px solid rgba({_ovr_rgb},.25)">
   <div style="position:absolute;top:-15px;right:-15px;width:70px;height:70px;
-              background:radial-gradient(circle,rgba({_ovr_rgb},.15) 0%,transparent 70%);border-radius:50%"></div>
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
-    <span style="font-size:.73rem;color:#94A3B8;font-weight:500;letter-spacing:.8px;text-transform:uppercase">누적 수익률</span>
+              background:radial-gradient(circle,rgba({_ovr_rgb},.12) 0%,transparent 70%);border-radius:50%"></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+    <span style="font-size:.68rem;color:#8B949E;font-weight:500;letter-spacing:.8px;text-transform:uppercase">누적 수익률</span>
     <span style="color:{_ovr_c}">{_SVG_TREND}</span>
   </div>
-  <div style="font-size:1.6rem;font-weight:800;color:{_ovr_c};line-height:1.1">{f"{_h_ovr:+.2f}%" if _h_ovr is not None else "—"}</div>
-  <div style="font-size:.74rem;color:{_ovr_c};font-weight:600;margin-top:10px">매도 이력 포함 전체 기간</div>
+  <div class="key-metric" style="color:{_ovr_c}">{f"{_h_ovr:+.2f}%" if _h_ovr is not None else "—"}</div>
+  <div style="font-size:.72rem;color:{_ovr_c};font-weight:600;margin-top:10px">매도 이력 포함 전체 기간</div>
 </div>
 """, unsafe_allow_html=True)
 else:
     _placeholder_html = (
-        '<div class="ma-header-card" style="border:1px solid rgba(255,255,255,0.06);text-align:center">'
-        '<div style="font-size:1.5rem;font-weight:700;color:#1E293B;margin-bottom:8px">—</div>'
-        '<div style="font-size:.72rem;color:#475569">💼 포트폴리오 탭 접속 후 갱신</div></div>'
+        '<div class="ma-header-card" style="border:1px solid #30363D;text-align:center;">'
+        '<div style="font-size:1.6rem;font-weight:700;color:#21262D;margin-bottom:8px;">—</div>'
+        '<div style="font-size:.72rem;color:#484F58;">💼 포트폴리오 탭 접속 후 갱신</div></div>'
     )
     _hc1.markdown(_placeholder_html, unsafe_allow_html=True)
     _hc2.markdown(_placeholder_html, unsafe_allow_html=True)
@@ -1057,18 +1057,17 @@ if _pending and not _aticker:
     st.caption(f"업데이트: {_now_kst().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 중: **{_pname}** (`{_pending}`)")
     _load_start = time.time()
     _loading_ph.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
-            border:2px solid #3b82f6; border-radius:16px;
-            padding:28px 24px; text-align:center; margin:8px 0 16px;
-            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
-  <div class="loading-icon" style="font-size:40px;">⏳</div>
-  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 분석 준비 중</h3>
-  <p style="color:#94a3b8; margin:0; line-height:1.7;">
-    <span style="color:#e2e8f0; font-weight:bold;">{_pname}</span>
-    데이터를 불러오는 중입니다.<br>잠시만 기다려 주세요.
-  </p>
+<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;
+            padding:28px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 4px 24px rgba(0,0,0,0.4);">
+  <div class="loading-icon" style="font-size:36px;margin-bottom:12px;">⏳</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#E6EDF3;margin-bottom:8px;">AI 분석 준비 중</div>
+  <div style="color:#8B949E;font-size:0.88rem;line-height:1.7;">
+    <span style="color:#E6EDF3;font-weight:600;">{_pname}</span>
+    데이터를 불러오는 중입니다. 잠시만 기다려 주세요.
+  </div>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>0s</b> 경과</p>
+  <div style="color:#8B949E;margin:10px 0 0;font-size:0.78rem;">⏱ <b style="color:#E6EDF3;">0s</b> 경과</div>
 </div>
 """, unsafe_allow_html=True)
     # pending → analyzed 로 전환 후 rerun (탭 이동은 분석 완료 후)
@@ -1088,18 +1087,17 @@ if _data_ready:
     # ── 주가 데이터 + 펀더멘털 병렬 로딩 ────────────────────────────────────
     _load_start = time.time()
     _loading_ph.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
-            border:2px solid #3b82f6; border-radius:16px;
-            padding:28px 24px; text-align:center; margin:8px 0 16px;
-            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
-  <div class="loading-icon" style="font-size:40px;">📊</div>
-  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 분석 중</h3>
-  <p style="color:#94a3b8; margin:0; line-height:1.7;">
-    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
-    주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
-  </p>
+<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;
+            padding:28px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 4px 24px rgba(0,0,0,0.4);">
+  <div class="loading-icon" style="font-size:36px;margin-bottom:12px;">📊</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#E6EDF3;margin-bottom:8px;">AI 분석 중</div>
+  <div style="color:#8B949E;font-size:0.88rem;line-height:1.7;">
+    <span style="color:#E6EDF3;font-weight:600;">{_asname}</span>
+    주가·재무 데이터를 분석하고 있습니다. 잠시만 기다려 주세요.
+  </div>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>0s</b> 경과</p>
+  <div style="color:#8B949E;margin:10px 0 0;font-size:0.78rem;">⏱ <b style="color:#E6EDF3;">0s</b> 경과</div>
 </div>
 """, unsafe_allow_html=True)
     # 병렬 로딩 시작 (spinner 제거하고 실시간 업데이트)
@@ -1110,18 +1108,17 @@ if _data_ready:
         while not (_f_data.done() and _f_fund.done()):
             _elapsed = int(time.time() - _load_start)
             _loading_ph.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
-            border:2px solid #3b82f6; border-radius:16px;
-            padding:28px 24px; text-align:center; margin:8px 0 16px;
-            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
-  <div class="loading-icon" style="font-size:40px;">📊</div>
-  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 분석 중</h3>
-  <p style="color:#94a3b8; margin:0; line-height:1.7;">
-    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
-    주가·재무 데이터를 분석하고 있습니다.<br>잠시만 기다려 주세요.
-  </p>
+<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;
+            padding:28px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 4px 24px rgba(0,0,0,0.4);">
+  <div class="loading-icon" style="font-size:36px;margin-bottom:12px;">📊</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#E6EDF3;margin-bottom:8px;">AI 분석 중</div>
+  <div style="color:#8B949E;font-size:0.88rem;line-height:1.7;">
+    <span style="color:#E6EDF3;font-weight:600;">{_asname}</span>
+    주가·재무 데이터를 분석하고 있습니다. 잠시만 기다려 주세요.
+  </div>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>{_elapsed}s</b> 경과</p>
+  <div style="color:#8B949E;margin:10px 0 0;font-size:0.78rem;">⏱ <b style="color:#E6EDF3;">{_elapsed}s</b> 경과</div>
 </div>
 """, unsafe_allow_html=True)
             time.sleep(1)
@@ -1130,18 +1127,17 @@ if _data_ready:
         fund_info = _f_fund.result()
     _load_elapsed = int(time.time() - _load_start)
     _loading_ph.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
-            border:2px solid #3b82f6; border-radius:16px;
-            padding:28px 24px; text-align:center; margin:8px 0 16px;
-            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
-  <div class="loading-icon" style="font-size:40px;">🎯</div>
-  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 매매신호 분석 중</h3>
-  <p style="color:#94a3b8; margin:0; line-height:1.7;">
-    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
-    뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
-  </p>
+<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;
+            padding:28px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 4px 24px rgba(0,0,0,0.4);">
+  <div class="loading-icon" style="font-size:36px;margin-bottom:12px;">🎯</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#E6EDF3;margin-bottom:8px;">AI 매매신호 분석 중</div>
+  <div style="color:#8B949E;font-size:0.88rem;line-height:1.7;">
+    <span style="color:#E6EDF3;font-weight:600;">{_asname}</span>
+    뉴스 감성 · 기술적 지표를 종합하고 있습니다. 잠시만 기다려 주세요.
+  </div>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>{_load_elapsed}s</b> 경과</p>
+  <div style="color:#8B949E;margin:10px 0 0;font-size:0.78rem;">⏱ <b style="color:#E6EDF3;">{_load_elapsed}s</b> 경과</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1191,18 +1187,17 @@ if _data_ready:
         while not (_f_comp.done() and _f_news.done()):
             _elapsed = int(time.time() - _load_start)
             _loading_ph.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
-            border:2px solid #3b82f6; border-radius:16px;
-            padding:28px 24px; text-align:center; margin:8px 0 16px;
-            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
-  <div class="loading-icon" style="font-size:40px;">🎯</div>
-  <h3 style="color:#60a5fa; margin:12px 0 8px;">AI 매매신호 분석 중</h3>
-  <p style="color:#94a3b8; margin:0; line-height:1.7;">
-    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
-    뉴스 감성 · 기술적 지표를 종합하고 있습니다.<br>잠시만 기다려 주세요.
-  </p>
+<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;
+            padding:28px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 4px 24px rgba(0,0,0,0.4);">
+  <div class="loading-icon" style="font-size:36px;margin-bottom:12px;">🎯</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#E6EDF3;margin-bottom:8px;">AI 매매신호 분석 중</div>
+  <div style="color:#8B949E;font-size:0.88rem;line-height:1.7;">
+    <span style="color:#E6EDF3;font-weight:600;">{_asname}</span>
+    뉴스 감성 · 기술적 지표를 종합하고 있습니다. 잠시만 기다려 주세요.
+  </div>
   <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
-  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ <b>{_elapsed}s</b> 경과</p>
+  <div style="color:#8B949E;margin:10px 0 0;font-size:0.78rem;">⏱ <b style="color:#E6EDF3;">{_elapsed}s</b> 경과</div>
 </div>
 """, unsafe_allow_html=True)
             time.sleep(1)
@@ -1236,18 +1231,17 @@ if _data_ready:
     risk_adj   = adjust_risk_conservative(expected) if expected else {}
     _total_elapsed = int(time.time() - _load_start)
     _loading_ph.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
-            border:2px solid #3b82f6; border-radius:16px;
-            padding:28px 24px; text-align:center; margin:8px 0 16px;
-            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
-  <div class="loading-icon" style="font-size:40px;">✅</div>
-  <h3 style="color:#60a5fa; margin:12px 0 8px;">분석 완료</h3>
-  <p style="color:#94a3b8; margin:0; line-height:1.7;">
-    <span style="color:#e2e8f0; font-weight:bold;">{_asname}</span>
+<div style="background:#161B22;border:1px solid #26a69a55;border-radius:12px;
+            padding:28px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 4px 24px rgba(38,166,154,0.15);">
+  <div style="font-size:36px;margin-bottom:12px;">✅</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#E6EDF3;margin-bottom:8px;">분석 완료</div>
+  <div style="color:#8B949E;font-size:0.88rem;line-height:1.7;">
+    <span style="color:#26a69a;font-weight:600;">{_asname}</span>
     데이터 분석이 완료되었습니다.
-  </p>
-  <div class="loading-bar-track"><div class="loading-bar-fill" style="animation:none;background:#60a5fa;"></div></div>
-  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">⏱ 총 소요 시간: <b>{_total_elapsed}s</b></p>
+  </div>
+  <div class="loading-bar-track"><div style="background:#26a69a;width:100%;height:4px;border-radius:4px;"></div></div>
+  <div style="color:#8B949E;margin:10px 0 0;font-size:0.78rem;">⏱ 총 소요 시간: <b style="color:#E6EDF3;">{_total_elapsed}s</b></div>
 </div>
 """, unsafe_allow_html=True)
     _loading_ph.empty()
@@ -1486,14 +1480,17 @@ with tab_market:
     with col_right:
         st.markdown("### 💱 환율 상세")
         for pair, info in rates.items():
-            arrow = "🔺" if info["change"] > 0 else "🔻"
-            color = "#ef5350" if info["change"] > 0 else "#42a5f5"
+            arrow = "▲" if info["change"] > 0 else "▼"
+            color = "#26a69a" if info["change"] > 0 else "#ef5350"
             st.markdown(f"""
-            <div style="background:#1e2130;padding:10px 14px;border-radius:8px;margin:6px 0;">
-                <b>{pair}</b><br>
-                <span style="font-size:1.4rem;font-weight:bold;">{info['rate']:,.2f}</span>
-                <span style="color:{color};"> {arrow} {abs(info['change']):.3f}%</span>
-            </div>
+<div style="background:#161B22;border:1px solid #30363D;border-radius:10px;
+            padding:12px 16px;margin:6px 0;display:flex;justify-content:space-between;align-items:center;">
+  <div>
+    <div style="font-size:0.72rem;color:#8B949E;margin-bottom:3px;">{pair}</div>
+    <div style="font-size:1.3rem;font-weight:700;color:#E6EDF3;">{info['rate']:,.2f}</div>
+  </div>
+  <div style="font-size:0.9rem;font-weight:700;color:{color};">{arrow} {abs(info['change']):.3f}%</div>
+</div>
             """, unsafe_allow_html=True)
 
         st.markdown("### 📈 USD/KRW 추이 (3개월)")
@@ -1737,21 +1734,20 @@ with tab_rec:
         }
 
         def _render_rec_bar(state: dict, elapsed: int, done: bool = False):
-            bar_style = "animation:none;background:#60a5fa;" if done else ""
+            _border = "#26a69a55" if done else "#30363D"
+            _glow   = "rgba(38,166,154,0.15)" if done else "rgba(0,0,0,0.4)"
+            _fill   = f'<div style="background:#26a69a;width:100%;height:4px;border-radius:4px;"></div>' if done else '<div class="loading-bar-fill"></div>'
             _rec_ph.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a1f3a 0%,#242b4d 100%);
-            border:2px solid #3b82f6; border-radius:16px;
-            padding:28px 24px; text-align:center; margin:8px 0 16px;
-            box-shadow:0 4px 20px rgba(59,130,246,0.25);">
-  <div class="loading-icon" style="font-size:40px;">{state["icon"]}</div>
-  <h3 style="color:#60a5fa; margin:12px 0 8px;">{state["title"]}</h3>
-  <p style="color:#94a3b8; margin:0; line-height:1.7;">{state["msg"]}</p>
-  <div class="loading-bar-track">
-    <div class="loading-bar-fill" style="{bar_style}"></div>
+<div style="background:#161B22;border:1px solid {_border};border-radius:12px;
+            padding:28px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 4px 24px {_glow};">
+  <div class="{'loading-icon' if not done else ''}" style="font-size:36px;margin-bottom:12px;">{state["icon"]}</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#E6EDF3;margin-bottom:8px;">{state["title"]}</div>
+  <div style="color:#8B949E;font-size:0.88rem;line-height:1.7;">{state["msg"]}</div>
+  <div class="loading-bar-track">{_fill}</div>
+  <div style="color:#8B949E;margin:10px 0 0;font-size:0.78rem;">
+    ⏱ <b style="color:#E6EDF3;">{elapsed}s</b> 경과 &nbsp;|&nbsp; 전체 {total_stocks}개 종목 전수 분석
   </div>
-  <p style="color:#93c5fd; margin:8px 0 0; font-size:13px;">
-    ⏱ <b>{elapsed}s</b> 경과 &nbsp;|&nbsp; 전체 {total_stocks}개 종목 전수 분석
-  </p>
 </div>""", unsafe_allow_html=True)
 
         _render_rec_bar(_stage_state, 0)
@@ -2138,11 +2134,11 @@ with tab_news:
             s_indiv        = sent.get("individual_score")
             s_sector       = sent.get("sector_score", 0.0)
             if s_score >= 1:
-                banner_color, text_color = "#1b5e20", "#a5d6a7"
+                banner_color, text_color = "rgba(38,166,154,0.12)", "#26a69a"
             elif s_score <= -1:
-                banner_color, text_color = "#b71c1c", "#ef9a9a"
+                banner_color, text_color = "rgba(239,83,80,0.12)", "#ef5350"
             else:
-                banner_color, text_color = "#1e2130", "#bdbdbd"
+                banner_color, text_color = "#161B22", "#8B949E"
 
             sector_html = ""
             if s_sector != 0.0:
@@ -2172,18 +2168,22 @@ with tab_news:
                 ("#ef4444" if s_score <= -1.5 else "#eab308")
             )
             st.markdown(
-                f'<div style="background:{banner_color};border-radius:10px;padding:12px 18px;margin-bottom:8px;">'
-                f'<div style="font-size:1.05rem;font-weight:bold;color:{text_color};">'
+                f'<div style="background:{banner_color};border:1px solid #30363D;border-radius:12px;'
+                f'padding:14px 18px;margin-bottom:10px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">'
+                f'<div style="font-size:0.95rem;font-weight:700;color:{text_color};">'
                 f'뉴스 감성: {s_label} &nbsp;'
-                f'<span style="font-size:0.95rem;font-weight:normal;">({s_score:+.1f}점 / ±5)</span>'
-                f'{sector_html}{indiv_html}'
-                f'{llm_badge}'
+                f'<span style="font-size:0.82rem;font-weight:400;color:#8B949E;">({s_score:+.1f}점 / ±5)</span>'
+                f'{sector_html}{indiv_html}</div>'
+                f'<span style="font-size:0.72rem;color:#484F58;background:#0E1117;border:1px solid #30363D;'
+                f'border-radius:20px;padding:2px 10px;">{llm_badge.replace("&nbsp;|&nbsp; ","")}</span>'
                 f'</div>'
-                f'<div style="position:relative;background:#2a2d3e;border-radius:4px;height:8px;margin-top:8px;">'
-                f'<div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:rgba(255,255,255,0.2);"></div>'
-                f'<div style="background:{_gauge_clr};width:{_gauge_pct}%;height:8px;border-radius:4px;transition:width .4s;"></div>'
+                f'<div style="position:relative;background:#21262D;border-radius:4px;height:6px;margin-top:10px;">'
+                f'<div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#30363D;"></div>'
+                f'<div style="background:{_gauge_clr};width:{_gauge_pct}%;height:6px;border-radius:4px;transition:width .4s;"></div>'
                 f'</div>'
-                f'<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#666;margin-top:2px;"><span>-5 악재</span><span>0 중립</span><span>+5 호재</span></div>'
+                f'<div style="display:flex;justify-content:space-between;font-size:0.68rem;color:#484F58;margin-top:4px;">'
+                f'<span>−5 악재</span><span>0 중립</span><span>+5 호재</span></div>'
                 f'{summary_html}'
                 f'</div>',
                 unsafe_allow_html=True
@@ -2314,12 +2314,19 @@ with tab_news:
                 color = "#ef5350" if chg >= 0 else "#42a5f5"
                 badge = " ◀ 현재 선택" if sym == ticker else ""
                 bg    = "#1a3a2a" if sym == ticker else "#1e2130"
+                _rel_bg  = "#1C2128" if sym == ticker else "#161B22"
+                _rel_brd = "rgba(38,166,154,0.4)" if sym == ticker else "#30363D"
                 st.markdown(f"""
-                <div style="background:{bg};padding:8px 14px;border-radius:8px;margin:5px 0;">
-                    <b>{name}</b><span style="color:#aaa;font-size:0.8rem;">{badge}</span><br>
-                    <span style="font-size:1.15rem;font-weight:bold;">{p:,.0f}</span>
-                    <span style="color:{color}"> {arrow} {abs(chg):.2f}%</span>
-                </div>
+<div style="background:{_rel_bg};border:1px solid {_rel_brd};border-radius:10px;
+            padding:10px 14px;margin:4px 0;display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <div style="font-size:0.88rem;font-weight:600;color:#E6EDF3;">{name}
+      {"&nbsp;<span style='font-size:0.7rem;color:#26a69a;'>◀ 선택</span>" if sym == ticker else ""}
+    </div>
+    <div style="font-size:1.1rem;font-weight:700;color:#E6EDF3;margin-top:2px;">{p:,.0f}</div>
+  </div>
+  <div style="font-size:0.88rem;font-weight:700;color:{color};">{arrow} {abs(chg):.2f}%</div>
+</div>
                 """, unsafe_allow_html=True)
             except Exception:
                 pass
@@ -2478,9 +2485,10 @@ with tab_news:
                 arrow = "🔺" if t["chg"] >= 0 else "🔻"
                 clr   = "#ef5350" if t["chg"] >= 0 else "#42a5f5"
                 sec_cols[i % 4].markdown(
-                    f'<div style="background:#1e2130;border-radius:8px;padding:8px 12px;text-align:center;">'
-                    f'<div style="font-size:0.82rem;color:#aaa;">{t["ticker"]}</div>'
-                    f'<div style="font-size:1rem;font-weight:bold;color:{clr};">{arrow} {t["chg"]:+.2f}%</div>'
+                    f'<div style="background:#161B22;border:1px solid #30363D;border-radius:10px;'
+                    f'padding:10px 12px;text-align:center;margin-bottom:6px;">'
+                    f'<div style="font-size:0.78rem;color:#8B949E;margin-bottom:4px;">{t["ticker"]}</div>'
+                    f'<div style="font-size:1rem;font-weight:700;color:{clr};">{arrow} {t["chg"]:+.2f}%</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -2598,14 +2606,15 @@ with tab_fund:
 
         # ── NAV 괴리율 설명 ──────────────────────────────────────────────────
         if _premium is not None:
-            _prem_color = "#ef5350" if _premium > 1 else ("#42a5f5" if _premium < -0.5 else "#bdbdbd")
+            _prem_color = "#ef5350" if _premium > 1 else ("#26a69a" if _premium < -0.5 else "#8B949E")
             st.markdown(
-                f'<div style="background:#12141f;border-radius:10px;padding:14px 18px;">'
-                f'<div style="font-size:0.85rem;color:#aaa;">📐 NAV 괴리율이란?</div>'
-                f'<div style="font-size:1rem;margin-top:4px;">현재가(<b>{_price:,.0f}원</b>) vs NAV(<b>{_nav:,.0f}원</b>)</div>'
-                f'<div style="font-size:1.1rem;font-weight:bold;color:{_prem_color};margin-top:4px;">'
-                f'{"🔴 프리미엄" if _premium > 0 else "🔵 할인"} {_premium:+.2f}%</div>'
-                f'<div style="font-size:0.8rem;color:#888;margin-top:6px;">'
+                f'<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;padding:16px 18px;">'
+                f'<div style="font-size:0.72rem;color:#8B949E;letter-spacing:0.6px;margin-bottom:8px;">📐 NAV 괴리율이란?</div>'
+                f'<div style="font-size:0.95rem;color:#E6EDF3;margin-bottom:6px;">'
+                f'현재가(<b>{_price:,.0f}원</b>) vs NAV(<b>{_nav:,.0f}원</b>)</div>'
+                f'<div style="font-size:1.2rem;font-weight:700;color:{_prem_color};">'
+                f'{"🔴 프리미엄" if _premium > 0 else "🟢 할인"} {_premium:+.2f}%</div>'
+                f'<div style="font-size:0.78rem;color:#8B949E;margin-top:8px;line-height:1.6;word-break:keep-all;">'
                 f'{"시장가가 NAV보다 높음 → 고평가. 매수 시 주의 필요" if _premium > 0.5 else "시장가가 NAV보다 낮음 → 저평가. 잠재적 매수 기회"}'
                 f'</div></div>',
                 unsafe_allow_html=True,
@@ -2637,9 +2646,10 @@ with tab_fund:
             _sig_label = _etf_sig.get("label", "N/A")
             _sig_clr = "#a5d6a7" if _sig_score >= 3 else ("#ef9a9a" if _sig_score <= -3 else "#bdbdbd")
             st.markdown(
-                f'<div style="background:#1e2130;border-radius:10px;padding:12px 18px;">'
-                f'<span style="font-size:0.9rem;color:#aaa;">기술적 신호: </span>'
-                f'<b style="color:{_sig_clr};font-size:1.1rem;">{_sig_label} ({_sig_score:+.1f}점)</b>'
+                f'<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;'
+                f'padding:14px 18px;display:flex;align-items:center;justify-content:space-between;">'
+                f'<span style="font-size:0.85rem;color:#8B949E;">기술적 신호</span>'
+                f'<b style="color:{_sig_clr};font-size:1rem;">{_sig_label} ({_sig_score:+.1f}점)</b>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -2844,14 +2854,14 @@ with tab_fund:
             _verdict = _v.get("판정", "N/A")
             _comment = _v.get("comment", "데이터 부족")
             _vcol.markdown(
-                f'<div style="background:#12141f;border-radius:10px;padding:12px;'
-                f'border-left:3px solid {_clr};min-height:140px;">'
-                f'<div style="font-size:0.72rem;color:#888;margin-bottom:4px;">{_sub}</div>'
-                f'<div style="font-size:0.9rem;font-weight:bold;color:{_clr};margin-bottom:4px;">'
-                f'{_name}</div>'
-                f'<div style="font-size:1.1rem;margin-bottom:6px;">'
-                f'{_icon} <b style="color:#e0e0e0;">{_verdict}</b></div>'
-                f'<div style="font-size:0.75rem;color:#aaa;line-height:1.5;">{_comment}</div>'
+                f'<div style="background:#161B22;border-radius:12px;padding:14px;'
+                f'border:1px solid #30363D;border-top:3px solid {_clr};min-height:130px;'
+                f'transition:transform 0.2s ease;">'
+                f'<div style="font-size:0.65rem;color:#8B949E;letter-spacing:0.6px;margin-bottom:5px;">{_sub}</div>'
+                f'<div style="font-size:0.85rem;font-weight:700;color:{_clr};margin-bottom:6px;">{_name}</div>'
+                f'<div style="font-size:1rem;font-weight:700;color:#E6EDF3;margin-bottom:6px;">'
+                f'{_icon} {_verdict}</div>'
+                f'<div style="font-size:0.75rem;color:#8B949E;line-height:1.6;word-break:keep-all;">{_comment}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -2876,19 +2886,23 @@ with tab_fund:
                     val = _inv_f.get(key)
                     if val is not None:
                         _sign = "+" if val > 0 else ""
-                        _color = "#ef5350" if val > 0 else ("#42a5f5" if val < 0 else "#bdbdbd")
+                        _color = "#26a69a" if val > 0 else ("#ef5350" if val < 0 else "#8B949E")
+                        _inv_bg = "rgba(38,166,154,0.08)" if val > 0 else ("rgba(239,83,80,0.08)" if val < 0 else "#161B22")
                         col.markdown(
-                            f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
-                            f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
-                            f'<div style="font-size:1.1rem;font-weight:bold;color:{_color};">{_sign}{val:,}</div>'
+                            f'<div style="background:{_inv_bg};border:1px solid #30363D;border-radius:10px;'
+                            f'padding:14px;text-align:center;">'
+                            f'<div style="font-size:0.72rem;color:#8B949E;letter-spacing:0.5px;margin-bottom:6px;">{label}</div>'
+                            f'<div style="font-size:1.1rem;font-weight:700;color:{_color};">{_sign}{val:,}</div>'
+                            f'<div style="font-size:0.68rem;color:#484F58;margin-top:3px;">주(株)</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
                     else:
                         col.markdown(
-                            f'<div style="background:#1e2130;padding:14px;border-radius:10px;text-align:center;">'
-                            f'<div style="font-size:0.75rem;color:#888;margin-bottom:4px;">{label}</div>'
-                            f'<div style="font-size:1.1rem;color:#555;">N/A</div>'
+                            f'<div style="background:#161B22;border:1px solid #30363D;border-radius:10px;'
+                            f'padding:14px;text-align:center;">'
+                            f'<div style="font-size:0.72rem;color:#8B949E;margin-bottom:6px;">{label}</div>'
+                            f'<div style="font-size:1.1rem;color:#484F58;">N/A</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
@@ -3145,18 +3159,17 @@ with tab_chart:
     # ── 거래 정지/주의 경고 배너 ─────────────────────────────────────────────
     if vol_anomaly.get("is_halted"):
         st.markdown(
-            f'<div style="background:#4a1010;border:2px solid #ef5350;border-radius:10px;'
+            f'<div style="background:rgba(239,83,80,0.08);border:1px solid #ef5350;border-radius:12px;'
             f'padding:14px 20px;margin-bottom:16px;">'
-            f'<span style="font-size:1.2rem;font-weight:bold;color:#ef5350;">⛔ 거래 정지/주의</span>'
-            f'<div style="color:#ffcdd2;margin-top:6px;">{vol_anomaly.get("reason", "")}</div>'
-            f'<div style="color:#ef9a9a;font-size:0.85rem;margin-top:4px;">'
-            f'최근 거래량: {vol_anomaly.get("recent_vol", 0):,} &nbsp;|&nbsp; '
-            f'20일 평균: {int(vol_anomaly.get("avg_vol", 0)):,} &nbsp;|&nbsp; '
-            f'비율: {vol_anomaly.get("ratio", 0) * 100:.1f}%'
-            f'</div>'
-            f'<div style="color:#ff8a80;font-size:0.82rem;margin-top:4px;">'
-            f'기술적 분석 점수 합산이 중단되었습니다. 거래 재개 후 분석을 다시 실행하세요.'
-            f'</div>'
+            f'<div style="font-size:1rem;font-weight:700;color:#ef5350;margin-bottom:8px;">⛔ 거래 정지 / 주의</div>'
+            f'<div style="color:#E6EDF3;font-size:0.88rem;line-height:1.6;margin-bottom:6px;">'
+            f'{vol_anomaly.get("reason", "")}</div>'
+            f'<div style="color:#8B949E;font-size:0.78rem;">'
+            f'최근 거래량: {vol_anomaly.get("recent_vol", 0):,} &nbsp;·&nbsp; '
+            f'20일 평균: {int(vol_anomaly.get("avg_vol", 0)):,} &nbsp;·&nbsp; '
+            f'비율: {vol_anomaly.get("ratio", 0) * 100:.1f}%</div>'
+            f'<div style="color:#8B949E;font-size:0.75rem;margin-top:4px;">'
+            f'기술적 분석 점수 합산이 중단되었습니다. 거래 재개 후 분석을 다시 실행하세요.</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -3210,49 +3223,49 @@ with tab_chart:
         _rpt_tgt  = _rpt_fmt.format(_sl_rpt["target_2r"])  if _sl_rpt else "—"
 
         st.markdown(f"""
-<div style="background:{_rpt_grad};border:1px solid {_rpt_border}55;border-radius:18px;
-            padding:20px 24px;margin-bottom:18px;
-            box-shadow:0 0 40px {_rpt_glow},inset 0 1px 0 rgba(255,255,255,0.05);">
+<div style="background:#161B22;border:1px solid {_rpt_border}66;border-radius:12px;
+            padding:22px 24px;margin-bottom:16px;
+            box-shadow:0 0 32px {_rpt_glow},0 4px 20px rgba(0,0,0,0.35);">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-    <div style="flex:1;min-width:260px;">
-      <div style="font-size:0.65rem;color:#64748B;letter-spacing:3px;text-transform:uppercase;margin-bottom:8px;">
-        ✦ AI 종합 리포트
+    <div style="flex:1;min-width:240px;">
+      <div style="font-size:0.65rem;color:#8B949E;letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+        <span style="width:4px;height:4px;border-radius:50%;background:{_rpt_border};display:inline-block;"></span> AI 종합 리포트
       </div>
-      <div style="font-size:2.2rem;font-weight:900;color:{_rpt_fc};letter-spacing:3px;line-height:1.1;">
+      <div style="font-size:2.4rem;font-weight:900;color:{_rpt_fc};letter-spacing:2px;line-height:1.05;margin-bottom:10px;">
         {_rpt_emoji} {_rpt_signal}
       </div>
-      <div style="font-size:0.9rem;color:{_rpt_fc}cc;margin-top:8px;line-height:1.6;">
+      <div style="font-size:0.88rem;color:#8B949E;line-height:1.65;word-break:keep-all;margin-bottom:12px;">
         {_rpt_action}
       </div>
-      <div style="margin-top:10px;">{_rpt_reasons_html}</div>
+      <div>{_rpt_reasons_html}</div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;min-width:280px;">
-      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">단타 신호</div>
-        <div style="font-size:0.95rem;font-weight:700;color:{_rpt_tech_c};margin-top:3px;">{_rpt_h_badge} {_rpt_h_label}</div>
-        <div style="font-size:0.75rem;color:{_rpt_tech_c};opacity:.8;">{_rpt_h_score:+.1f}점</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;min-width:270px;">
+      <div style="background:#0E1117;border:1px solid #30363D;border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.62rem;color:#484F58;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">단타 신호</div>
+        <div style="font-size:0.9rem;font-weight:700;color:{_rpt_tech_c};">{_rpt_h_badge} {_rpt_h_label}</div>
+        <div style="font-size:0.72rem;color:{_rpt_tech_c};opacity:.75;margin-top:2px;">{_rpt_h_score:+.1f}점</div>
       </div>
-      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">뉴스 감성</div>
-        <div style="font-size:0.95rem;font-weight:700;color:{_rpt_news_c};margin-top:3px;">{_rpt_ns:+.1f}점</div>
-        <div style="font-size:0.75rem;color:#64748B;">±5 기준</div>
+      <div style="background:#0E1117;border:1px solid #30363D;border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.62rem;color:#484F58;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">뉴스 감성</div>
+        <div style="font-size:0.9rem;font-weight:700;color:{_rpt_news_c};">{_rpt_ns:+.1f}점</div>
+        <div style="font-size:0.72rem;color:#484F58;margin-top:2px;">±5 기준</div>
       </div>
-      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">장투 신호</div>
-        <div style="font-size:0.95rem;font-weight:700;color:{_rpt_fund_c};margin-top:3px;">{_rpt_f_label}</div>
-        <div style="font-size:0.75rem;color:{_rpt_fund_c};opacity:.8;">{_rpt_fs:+.1f}점</div>
+      <div style="background:#0E1117;border:1px solid #30363D;border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.62rem;color:#484F58;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">장투 신호</div>
+        <div style="font-size:0.9rem;font-weight:700;color:{_rpt_fund_c};">{_rpt_f_label}</div>
+        <div style="font-size:0.72rem;color:{_rpt_fund_c};opacity:.75;margin-top:2px;">{_rpt_fs:+.1f}점</div>
       </div>
-      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">현재가</div>
-        <div style="font-size:0.95rem;font-weight:700;color:#E2E8F0;margin-top:3px;">{_rpt_fmt.format(_rpt_cur) if _has_rpt_price else "—"}</div>
+      <div style="background:#0E1117;border:1px solid #30363D;border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.62rem;color:#484F58;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">현재가</div>
+        <div style="font-size:0.9rem;font-weight:700;color:#E6EDF3;">{_rpt_fmt.format(_rpt_cur) if _has_rpt_price else "—"}</div>
       </div>
-      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">1차 목표가</div>
-        <div style="font-size:0.95rem;font-weight:700;color:#a5d6a7;margin-top:3px;">{_rpt_tgt}</div>
+      <div style="background:#0E1117;border:1px solid #30363D;border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.62rem;color:#484F58;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">1차 목표가</div>
+        <div style="font-size:0.9rem;font-weight:700;color:#26a69a;">{_rpt_tgt}</div>
       </div>
-      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">손절가</div>
-        <div style="font-size:0.95rem;font-weight:700;color:#ef9a9a;margin-top:3px;">{_rpt_sl}</div>
+      <div style="background:#0E1117;border:1px solid #30363D;border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.62rem;color:#484F58;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">손절가</div>
+        <div style="font-size:0.9rem;font-weight:700;color:#ef5350;">{_rpt_sl}</div>
       </div>
     </div>
   </div>
@@ -3606,10 +3619,13 @@ with tab_chart:
             if _rt_stale:
                 st.warning(_rt_stale_msg or "장이 열리지 않은 상태입니다. 가장 최근 종가를 표시합니다.", icon="⏸️")
             _rt_label = "실시간 시세 (KST)" if _rt_realtime else "장마감 종가 (KST)"
-            _rt_color = "#22c55e" if _rt_realtime else "#94a3b8"
+            _rt_color = "#26a69a" if _rt_realtime else "#8B949E"
             st.markdown(
-                f'<div style="font-size:0.78rem;color:{_rt_color};margin-bottom:6px;">'
-                f'✅ {_rt_label} 반영 완료 &nbsp;|&nbsp; 기준 시각: <b>{_rt_ts}</b>'
+                f'<div style="font-size:0.75rem;color:{_rt_color};margin-bottom:8px;'
+                f'display:flex;align-items:center;gap:6px;">'
+                f'<span style="width:6px;height:6px;border-radius:50%;background:{_rt_color};display:inline-block;">'
+                f'</span>{_rt_label} &nbsp;·&nbsp; '
+                f'<span style="color:#8B949E;">기준 시각: <b style="color:#E6EDF3;">{_rt_ts}</b></span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -3630,12 +3646,18 @@ with tab_chart:
         _l1_emoji = "🟢" if _tl_signal == "BUY" else ("🔴" if _tl_signal == "SELL" else "🟡")
 
         st.markdown(f"""
-<div style="background:{_l1_bg};border:2px solid {_l1_border};border-radius:16px;
-            padding:20px 18px;text-align:center;margin-bottom:10px;
-            box-shadow:0 0 24px {_l1_border}44;">
-  <div style="font-size:0.7rem;color:#888;letter-spacing:2px;margin-bottom:8px;">AI TRADING SIGNAL</div>
-  <div style="font-size:2.8rem;font-weight:900;color:{_l1_fc};letter-spacing:4px;">{_l1_emoji} {_tl_signal}</div>
-  <div style="font-size:0.88rem;color:{_l1_fc}cc;margin-top:10px;line-height:1.5;">{_tl_action}</div>
+<div style="background:#161B22;border:1px solid {_l1_border}88;border-radius:12px;
+            padding:22px 20px;text-align:center;margin-bottom:12px;
+            box-shadow:0 0 28px {_l1_border}33,0 4px 20px rgba(0,0,0,0.35);">
+  <div style="font-size:0.62rem;color:#484F58;letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;">
+    AI TRADING SIGNAL
+  </div>
+  <div style="font-size:2rem;font-weight:900;color:{_l1_fc};letter-spacing:2px;line-height:1.05;margin-bottom:10px;">
+    {_l1_emoji} {_tl_signal}
+  </div>
+  <div style="font-size:0.87rem;color:#8B949E;line-height:1.65;word-break:keep-all;">
+    {_tl_action}
+  </div>
 </div>
         """, unsafe_allow_html=True)
 
@@ -3690,14 +3712,17 @@ with tab_chart:
         # Reasoning Box — 신호 근거 TOP 3
         _sig_icon = _l1_emoji
         _reason_html = "".join(
-            f'<div style="padding:6px 0;border-bottom:1px solid #1e2130;font-size:0.9rem;color:#ddd;">'
-            f'{_sig_icon} {r}</div>'
+            f'<div style="padding:8px 0;border-bottom:1px solid #21262D;font-size:0.88rem;'
+            f'color:#E6EDF3;display:flex;align-items:flex-start;gap:8px;line-height:1.6;">'
+            f'<span style="color:{_l1_fc};flex-shrink:0;">{_sig_icon}</span>'
+            f'<span style="word-break:keep-all;">{r}</span></div>'
             for r in _tl_reasons[:3]
-        ) or '<div style="color:#555;font-size:0.88rem;">분석 데이터 수집 중...</div>'
+        ) or '<div style="color:#484F58;font-size:0.88rem;">분석 데이터 수집 중...</div>'
         st.markdown(f"""
-<div style="background:#12161f;border:1px solid {_l1_border}44;border-radius:12px;
-            padding:14px 16px;margin-bottom:14px;">
-  <div style="font-size:0.72rem;color:#888;letter-spacing:1px;margin-bottom:8px;">📋 신호 근거 (TOP 3)</div>
+<div class="card-sm" style="border-color:{_l1_border}44;margin-bottom:12px;">
+  <div style="font-size:0.65rem;color:#8B949E;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;">
+    📋 신호 근거 (TOP 3)
+  </div>
   {_reason_html}
 </div>
         """, unsafe_allow_html=True)
@@ -3708,14 +3733,19 @@ with tab_chart:
         _vs = advanced.get("volume_score",   50.0)
 
         def _signal_prog_bar(label, score, icon):
-            _sc = "#4ade80" if score >= 65 else ("#f87171" if score <= 35 else "#facc15")
+            _sc = "#26a69a" if score >= 65 else ("#ef5350" if score <= 35 else "#eab308")
+            _bg = "rgba(38,166,154,0.12)" if score >= 65 else ("rgba(239,83,80,0.12)" if score <= 35 else "rgba(234,179,8,0.12)")
             st.markdown(
-                f'<div style="margin-bottom:10px;">'
-                f'<div style="display:flex;justify-content:space-between;font-size:0.88rem;">'
-                f'<span style="color:#aaa;">{icon} {label}</span>'
-                f'<b style="color:{_sc};">{score:.0f}점</b></div>'
-                f'<div style="background:#1e2130;border-radius:4px;height:8px;margin-top:4px;">'
-                f'<div style="background:{_sc};width:{int(score)}%;height:8px;border-radius:4px;"></div>'
+                f'<div style="background:#161B22;border:1px solid #30363D;border-radius:10px;'
+                f'padding:10px 14px;margin-bottom:8px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+                f'<span style="color:#8B949E;font-size:0.85rem;display:flex;align-items:center;gap:6px;">'
+                f'<span>{icon}</span><span>{label}</span></span>'
+                f'<span style="background:{_bg};color:{_sc};border-radius:20px;'
+                f'padding:2px 10px;font-size:0.78rem;font-weight:700;">{score:.0f}점</span></div>'
+                f'<div style="background:#21262D;border-radius:4px;height:6px;">'
+                f'<div style="background:{_sc};width:{int(score)}%;height:6px;border-radius:4px;'
+                f'transition:width 0.4s ease;"></div>'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
@@ -3743,10 +3773,12 @@ with tab_chart:
                     else:
                         _inv_txt, _inv_brd = f"외국인·기관 중립 (외국인 {_for_n:+,} / 기관 {_inst_n:+,}주)", "#555"
                     st.markdown(
-                        f'<div style="background:#1a1d2e;border-radius:8px;padding:10px 14px;'
-                        f'border-left:3px solid {_inv_brd};margin-bottom:6px;">'
-                        f'<div style="font-size:0.72rem;color:#888;margin-bottom:3px;">📊 수급 동향</div>'
-                        f'<div style="font-size:0.9rem;color:#e0e0e0;">{_inv_txt}</div>'
+                        f'<div style="background:#161B22;border:1px solid #30363D;'
+                        f'border-left:3px solid {_inv_brd};border-radius:10px;'
+                        f'padding:10px 14px;margin-bottom:8px;">'
+                        f'<div style="font-size:0.65rem;color:#8B949E;letter-spacing:0.8px;'
+                        f'text-transform:uppercase;margin-bottom:5px;">📊 수급 동향</div>'
+                        f'<div style="font-size:0.88rem;color:#E6EDF3;line-height:1.5;word-break:keep-all;">{_inv_txt}</div>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )

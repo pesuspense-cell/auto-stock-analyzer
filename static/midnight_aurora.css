@@ -1,177 +1,585 @@
 /* ═══════════════════════════════════════════════════════════════════
-   MIDNIGHT AURORA THEME — 프리미엄 AI 투자 비서
-   Main: #8B5CF6 (Violet) ↔ #3B82F6 (Blue) gradient
-   BG:   #0F172A  Surface: rgba(30,41,59,0.7)
-   Up:   #10B981 (Emerald)  Down: #3B82F6 (Sky Blue)
+   FINTECH DARK — AI 주식 분석 터미널 v3.0
+   BG:      #0E1117  Surface: #161B22  Elevated: #1C2128
+   Border:  #30363D  Muted:   #21262D
+   Text:    #E6EDF3  Secondary: #8B949E  Muted: #484F58
+   Gain:    #26a69a  Loss: #ef5350
+   Accent:  #8B5CF6  Blue: #3B82F6
 ═══════════════════════════════════════════════════════════════════ */
 
-/* ─── App background ───────────────────────────────────────────── */
-.stApp { background: #0F172A !important; }
-.block-container { padding-top: 1rem; }
-.main .block-container { background: transparent !important; }
+/* ─── CSS 변수 ─────────────────────────────────────────────────── */
+:root {
+  --bg:        #0E1117;
+  --surface:   #161B22;
+  --elevated:  #1C2128;
+  --border:    #30363D;
+  --border-md: #21262D;
+  --text:      #E6EDF3;
+  --text-2:    #8B949E;
+  --text-3:    #484F58;
+  --gain:      #26a69a;
+  --gain-dim:  rgba(38,166,154,0.15);
+  --loss:      #ef5350;
+  --loss-dim:  rgba(239,83,80,0.15);
+  --accent:    #8B5CF6;
+  --accent-b:  #3B82F6;
+  --accent-dim:rgba(139,92,246,0.15);
+  --radius:    12px;
+  --radius-lg: 16px;
+  --shadow:    0 4px 20px rgba(0,0,0,0.35);
+}
+
+/* ─── App 배경 ──────────────────────────────────────────────────── */
+.stApp {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+.block-container {
+  padding-top: 1rem;
+}
+.main .block-container {
+  background: transparent !important;
+}
+
+/* ─── 전역 텍스트 ─────────────────────────────────────────────── */
+body, .stApp, .stMarkdown, p, span, div {
+  line-height: 1.6;
+  word-break: keep-all;
+}
 
 /* ─── Sidebar ──────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: rgba(10, 16, 34, 0.98) !important;
-    border-right: 1px solid rgba(139, 92, 246, 0.2) !important;
+  background: #0A0F1E !important;
+  border-right: 1px solid var(--border) !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input {
-    background: rgba(30, 41, 59, 0.9) !important;
-    border: 1px solid rgba(139, 92, 246, 0.3) !important;
-    color: #E2E8F0 !important;
-    border-radius: 8px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  border-radius: 8px !important;
 }
 [data-testid="stSidebar"] .stSelectbox > div > div {
-    background: rgba(30, 41, 59, 0.9) !important;
-    border: 1px solid rgba(139, 92, 246, 0.3) !important;
-    border-radius: 8px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
 }
 
 /* ─── Metric containers (st.metric) ─────────────────────────────── */
 div[data-testid="metric-container"] {
-    background: rgba(30, 41, 59, 0.7) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    border-radius: 16px !important;
-    padding: 16px 20px !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  padding: 16px 20px !important;
+  box-shadow: var(--shadow) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+}
+div[data-testid="metric-container"]:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45) !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricLabel"] {
+  font-size: 0.73rem !important;
+  color: var(--text-2) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.6px !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricValue"] {
+  font-size: 1.35rem !important;
+  font-weight: 700 !important;
+  color: var(--text) !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricDelta"] svg {
+  display: none;
+}
+div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="stMetricDeltaIcon-Up"] ~ span {
+  color: var(--gain) !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="stMetricDeltaIcon-Down"] ~ span {
+  color: var(--loss) !important;
 }
 
 /* ─── Tab bar ──────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background: rgba(15, 23, 42, 0.95) !important;
-    border-radius: 14px !important;
-    padding: 4px !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    gap: 2px !important;
+  background: var(--surface) !important;
+  border-radius: var(--radius-lg) !important;
+  padding: 4px !important;
+  border: 1px solid var(--border) !important;
+  gap: 2px !important;
 }
 .stTabs [data-baseweb="tab"] {
-    border-radius: 10px !important;
-    color: #94A3B8 !important;
-    font-weight: 500 !important;
-    transition: all 0.25s ease !important;
+  border-radius: 10px !important;
+  color: var(--text-2) !important;
+  font-weight: 500 !important;
+  font-size: 0.88rem !important;
+  transition: all 0.2s ease !important;
 }
 .stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, rgba(139,92,246,0.25), rgba(59,130,246,0.25)) !important;
-    color: #E2E8F0 !important;
-    border-bottom: 2px solid #8B5CF6 !important;
+  background: rgba(139,92,246,0.18) !important;
+  color: var(--text) !important;
+  border-bottom: 2px solid var(--accent) !important;
+  font-weight: 600 !important;
+}
+.stTabs [data-baseweb="tab"]:hover {
+  background: rgba(255,255,255,0.06) !important;
+  color: var(--text) !important;
 }
 
-/* ─── Primary button — Midnight Aurora gradient + hover effect ──── */
+/* ─── Primary 버튼 ─────────────────────────────────────────────── */
 .stButton > button[kind="primary"],
 button[data-testid="baseButton-primary"] {
-    background: linear-gradient(135deg, #8B5CF6, #3B82F6) !important;
-    border: none !important;
-    border-radius: 10px !important;
-    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
-    box-shadow: 0 2px 10px rgba(139,92,246,0.3) !important;
-    font-weight: 600 !important;
-    color: #fff !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-b)) !important;
+  border: none !important;
+  border-radius: 10px !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+  box-shadow: 0 2px 12px rgba(139,92,246,0.35) !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  letter-spacing: 0.3px !important;
 }
 .stButton > button[kind="primary"]:hover,
 button[data-testid="baseButton-primary"]:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 8px 24px rgba(139,92,246,0.55) !important;
-    background: linear-gradient(135deg, #7C3AED, #2563EB) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 24px rgba(139,92,246,0.55) !important;
+  background: linear-gradient(135deg, #7C3AED, #2563EB) !important;
 }
 
-/* ─── Custom component classes ────────────────────────────────── */
-.st-card {
-    background: rgba(30, 41, 59, 0.7);
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 1px 2px rgba(139,92,246,0.1);
-    padding: 20px 24px;
+/* 일반 버튼 */
+.stButton > button:not([kind="primary"]) {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-2) !important;
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
 }
-.glass-morphism {
-    background: rgba(30, 41, 59, 0.6);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 16px;
+.stButton > button:not([kind="primary"]):hover {
+  background: var(--elevated) !important;
+  border-color: var(--accent) !important;
+  color: var(--text) !important;
 }
-.gradient-text {
-    background: linear-gradient(135deg, #8B5CF6, #3B82F6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-weight: 700;
-    display: inline-block;
+
+/* ─── Dataframe ──────────────────────────────────────────────────── */
+.stDataFrame {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  overflow: hidden !important;
 }
-.ma-metric-card {
-    background: rgba(30, 41, 59, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 16px;
-    padding: 16px 18px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
-    height: 100%;
-    min-height: 90px;
+.stDataFrame table thead tr th {
+  background: var(--elevated) !important;
+  color: var(--text-2) !important;
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.5px !important;
+  border-bottom: 1px solid var(--border) !important;
 }
-.ma-stock-badge {
-    background: linear-gradient(135deg, rgba(139,92,246,0.15), rgba(59,130,246,0.12));
-    border: 1px solid rgba(139,92,246,0.35);
-    border-radius: 14px;
-    padding: 14px 20px;
-    margin-bottom: 14px;
+.stDataFrame table tbody tr:hover {
+  background: rgba(139,92,246,0.06) !important;
 }
+
+/* ─── Expander ────────────────────────────────────────────────── */
+.stExpander {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  margin-bottom: 8px !important;
+}
+.stExpander summary {
+  color: var(--text-2) !important;
+  font-weight: 500 !important;
+}
+.stExpander summary:hover {
+  color: var(--text) !important;
+}
+
+/* ─── Success / Warning / Error / Info ─────────────────────────── */
+div[data-testid="stNotification"] {
+  border-radius: var(--radius) !important;
+  border-width: 1px !important;
+}
+
+/* ─── Divider ────────────────────────────────────────────────────── */
+hr {
+  border-color: var(--border) !important;
+  margin: 14px 0 !important;
+}
+
+/* ─── Input fields ──────────────────────────────────────────────── */
+.stTextInput input, .stSelectbox > div > div,
+.stNumberInput input, .stTextArea textarea {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  border-radius: 8px !important;
+  transition: border-color 0.2s ease !important;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-dim) !important;
+}
+
+/* ─── Radio ────────────────────────────────────────────────────── */
+.stRadio [data-testid="stWidgetLabel"] {
+  color: var(--text-2) !important;
+}
+
+/* ─── Caption / small text ───────────────────────────────────────── */
+.stCaption, small, .caption {
+  color: var(--text-2) !important;
+  font-size: 0.78rem !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   커스텀 컴포넌트 클래스
+═══════════════════════════════════════════════════════════════════ */
+
+/* ─── 공용 카드 ──────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+}
+.card-sm {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+  margin-bottom: 8px;
+}
+.card-elevated {
+  background: var(--elevated);
+  border-radius: var(--radius);
+  padding: 20px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+/* ─── 카드 헤더 ─────────────────────────────────────────────────── */
+.card-label {
+  font-size: 0.7rem;
+  color: var(--text-2);
+  font-weight: 500;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.card-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+/* ─── 핵심 지표 (2rem 강조) ─────────────────────────────────────── */
+.key-metric {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+}
+.key-metric-sm {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+/* ─── 손익 색상 ─────────────────────────────────────────────────── */
+.gain { color: var(--gain) !important; font-weight: 700; }
+.loss { color: var(--loss) !important; font-weight: 700; }
+.neutral { color: var(--text-2) !important; }
+
+/* ─── 배지 ────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.badge-gain {
+  background: var(--gain-dim);
+  color: var(--gain);
+  border: 1px solid rgba(38,166,154,0.3);
+}
+.badge-loss {
+  background: var(--loss-dim);
+  color: var(--loss);
+  border: 1px solid rgba(239,83,80,0.3);
+}
+.badge-accent {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid rgba(139,92,246,0.3);
+}
+.badge-neutral {
+  background: rgba(139,148,158,0.12);
+  color: var(--text-2);
+  border: 1px solid rgba(139,148,158,0.2);
+}
+
+/* ─── 아이콘 + 텍스트 flex 행 ──────────────────────────────────── */
+.flex-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ─── 진행바 ─────────────────────────────────────────────────────── */
+.progress-track {
+  background: var(--border-md);
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.progress-fill-gain {
+  background: var(--gain);
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.progress-fill-loss {
+  background: var(--loss);
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.progress-fill-accent {
+  background: linear-gradient(90deg, var(--accent), var(--accent-b));
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+/* ─── 헤더 요약 카드 ─────────────────────────────────────────────── */
 .ma-header-card {
-    background: rgba(30, 41, 59, 0.7);
-    border-radius: 18px;
-    padding: 20px 22px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.3);
-    position: relative;
-    overflow: hidden;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .ma-header-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45);
 }
-.ma-gain { color: #10B981 !important; font-weight: 700; }
-.ma-loss { color: #3B82F6 !important; font-weight: 700; }
 
-/* ─── Legacy selectors (기존 기능 유지) ──────────────────────────── */
+/* ─── 종목 배지 ─────────────────────────────────────────────────── */
+.ma-stock-badge {
+  background: linear-gradient(135deg, rgba(139,92,246,0.12), rgba(59,130,246,0.10));
+  border: 1px solid rgba(139,92,246,0.3);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  margin-bottom: 14px;
+}
+
+/* ─── 지표 카드 (4분할) ─────────────────────────────────────────── */
+.ma-metric-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  height: 100%;
+  min-height: 80px;
+  transition: border-color 0.2s ease;
+}
+.ma-metric-card:hover {
+  border-color: rgba(139,92,246,0.4);
+}
+
+/* ─── 신호 박스 ─────────────────────────────────────────────────── */
 .signal-box {
-    padding: 12px 8px; border-radius: 12px;
-    text-align: center; margin-bottom: 12px; word-break: keep-all;
-}
-.wl-item {
-    background: rgba(30, 41, 59, 0.7); border-radius: 8px;
-    padding: 8px 12px; margin: 4px 0;
-    display: flex; justify-content: space-between; align-items: center;
-    border: 1px solid rgba(255,255,255,0.06);
+  padding: 14px 12px;
+  border-radius: var(--radius);
+  text-align: center;
+  margin-bottom: 12px;
+  word-break: keep-all;
+  border: 1px solid var(--border);
 }
 
-/* ─── Loading animations ──────────────────────────────────────── */
+/* ─── 관심종목 리스트 아이템 ─────────────────────────────────────── */
+.wl-item {
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid var(--border);
+}
+
+/* ─── 그라디언트 텍스트 ─────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, var(--accent), var(--accent-b));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 700;
+  display: inline-block;
+}
+
+/* ─── 레거시 호환 ────────────────────────────────────────────────── */
+.st-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 20px 24px;
+}
+.glass-morphism {
+  background: rgba(22,27,34,0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ma-gain { color: var(--gain) !important; font-weight: 700; }
+.ma-loss { color: var(--loss) !important; font-weight: 700; }
+
+/* ─── 로딩 애니메이션 ───────────────────────────────────────────── */
 @keyframes loading-sweep {
-    0%   { transform: translateX(-100%); }
-    50%  { transform: translateX(0%); }
-    100% { transform: translateX(100%); }
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(0%); }
+  100% { transform: translateX(100%); }
 }
 @keyframes loading-pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.5; }
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
 }
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .loading-bar-track {
-    background: #1e2444; border-radius: 8px; height: 6px;
-    overflow: hidden; margin-top: 16px;
+  background: var(--border-md);
+  border-radius: 8px;
+  height: 4px;
+  overflow: hidden;
+  margin-top: 16px;
 }
 .loading-bar-fill {
-    background: linear-gradient(90deg, #8B5CF6, #60a5fa, #8B5CF6);
-    height: 100%; width: 100%;
-    animation: loading-sweep 1.8s ease-in-out infinite;
+  background: linear-gradient(90deg, var(--accent), var(--accent-b), var(--gain));
+  height: 100%;
+  width: 100%;
+  animation: loading-sweep 1.8s ease-in-out infinite;
 }
-.loading-icon { animation: loading-pulse 1.4s ease-in-out infinite; display: inline-block; }
+.loading-icon {
+  animation: loading-pulse 1.4s ease-in-out infinite;
+  display: inline-block;
+}
+
+/* ─── 감성 게이지 ───────────────────────────────────────────────── */
+.gauge-track {
+  position: relative;
+  background: var(--elevated);
+  border-radius: 4px;
+  height: 8px;
+  margin-top: 8px;
+}
+.gauge-fill {
+  height: 8px;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.gauge-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: rgba(255,255,255,0.25);
+}
+
+/* ─── 이벤트 배너 ───────────────────────────────────────────────── */
+.event-banner {
+  background: rgba(106,27,154,0.15);
+  border: 1px solid rgba(206,147,216,0.35);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  margin-bottom: 12px;
+}
+
+/* ─── 섹터 칩 ──────────────────────────────────────────────────── */
+.sector-chip {
+  display: inline-block;
+  background: rgba(38,166,154,0.12);
+  color: var(--gain);
+  border: 1px solid rgba(38,166,154,0.3);
+  border-radius: 20px;
+  padding: 3px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 2px 4px;
+}
+
+/* ─── 키워드 태그 ───────────────────────────────────────────────── */
+.kw-tag {
+  display: inline-block;
+  border-radius: 14px;
+  padding: 3px 12px;
+  margin: 2px 4px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* ─── 뉴스 기사 아이템 ──────────────────────────────────────────── */
+.news-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-md);
+  line-height: 1.6;
+}
+.news-item:last-child {
+  border-bottom: none;
+}
+
+/* ─── 거장 판정 카드 ─────────────────────────────────────────────── */
+.master-card {
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 14px;
+  min-height: 130px;
+  border: 1px solid var(--border);
+  transition: transform 0.2s ease;
+}
+.master-card:hover {
+  transform: translateY(-1px);
+}
+
+/* ─── 테이블 수급 배지 ──────────────────────────────────────────── */
+.inv-badge {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px;
+  text-align: center;
+  border: 1px solid var(--border);
+}
 
 /* ─── Mobile ──────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
-        flex-direction: column-reverse !important;
-    }
-    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div[data-testid="column"] {
-        width: 100% !important;
-        flex: 0 0 100% !important;
-        max-width: 100% !important;
-    }
-    .ma-header-card { padding: 14px 16px; }
+  div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+    flex-direction: column-reverse !important;
+  }
+  div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div[data-testid="column"] {
+    width: 100% !important;
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+  .ma-header-card { padding: 14px 16px; }
+  .key-metric { font-size: 1.5rem; }
 }
