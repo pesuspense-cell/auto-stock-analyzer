@@ -2086,18 +2086,24 @@ def get_advanced_analysis(data: pd.DataFrame) -> dict:
 # ─── 상위 종목 리스트 ─────────────────────────────────────────────────────────
 
 def get_top_kospi_stocks(n: int = 500) -> dict:
-    """
-    시가총액 상위 KOSPI 종목 반환
-    반환 형태: {"삼성전자": "005930.KS", ...}
-    """
+    """시가총액 상위 KOSPI 종목 반환. 우선순위: 번들 JSON → FDR → 하드코딩"""
+    cached = _load_json_cache("krx_stocks.json")
+    if cached:
+        kospi = {k: v for k, v in cached.items() if v.endswith(".KS")}
+        if kospi:
+            return dict(list(kospi.items())[:n])
+
     try:
         import FinanceDataReader as fdr
         df = fdr.StockListing("KOSPI")
-        df = df.dropna(subset=["Name", "Code", "Marcap"])
-        df = df[df["Marcap"] > 0].sort_values("Marcap", ascending=False).head(n)
+        code_col = "Code" if "Code" in df.columns else "Symbol"
+        df = df.dropna(subset=["Name", code_col])
+        if "Marcap" in df.columns:
+            df = df[df["Marcap"] > 0].sort_values("Marcap", ascending=False)
+        df = df.head(n)
         result = {}
         for _, row in df.iterrows():
-            code = str(row["Code"]).strip().zfill(6)
+            code = str(row[code_col]).strip().zfill(6)
             name = str(row["Name"]).strip()
             if name and code:
                 result[name] = f"{code}.KS"
@@ -2107,24 +2113,30 @@ def get_top_kospi_stocks(n: int = 500) -> dict:
 
 
 def get_top_kosdaq_stocks(n: int = 500) -> dict:
-    """
-    시가총액 상위 KOSDAQ 종목 반환
-    반환 형태: {"에코프로비엠": "247540.KQ", ...}
-    """
+    """시가총액 상위 KOSDAQ 종목 반환. 우선순위: 번들 JSON → FDR → 하드코딩"""
+    cached = _load_json_cache("krx_stocks.json")
+    if cached:
+        kosdaq = {k: v for k, v in cached.items() if v.endswith(".KQ")}
+        if kosdaq:
+            return dict(list(kosdaq.items())[:n])
+
     try:
         import FinanceDataReader as fdr
         df = fdr.StockListing("KOSDAQ")
-        df = df.dropna(subset=["Name", "Code", "Marcap"])
-        df = df[df["Marcap"] > 0].sort_values("Marcap", ascending=False).head(n)
+        code_col = "Code" if "Code" in df.columns else "Symbol"
+        df = df.dropna(subset=["Name", code_col])
+        if "Marcap" in df.columns:
+            df = df[df["Marcap"] > 0].sort_values("Marcap", ascending=False)
+        df = df.head(n)
         result = {}
         for _, row in df.iterrows():
-            code = str(row["Code"]).strip().zfill(6)
+            code = str(row[code_col]).strip().zfill(6)
             name = str(row["Name"]).strip()
             if name and code:
                 result[name] = f"{code}.KQ"
-        return result if result else {}
+        return result if result else KOSDAQ_STOCKS
     except Exception:
-        return {}
+        return KOSDAQ_STOCKS
 
 
 def get_top_us_stocks(n: int = 503) -> dict:
@@ -2225,13 +2237,30 @@ def _krx_stock_fallback() -> dict:
     return result
 
 
+def _load_json_cache(filename: str) -> dict:
+    """data/ 폴더의 JSON 캐시 파일을 로드한다."""
+    import json
+    base = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base, "data", filename)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def get_krx_stock_list() -> dict:
     """
     KOSPI + KOSDAQ 전체 종목 이름 → 티커 매핑 반환
     반환 형태: {"삼성전자 (005930)": "005930.KS", ...}
-    데이터 소스: FinanceDataReader (KRX 실시간 종목 목록)
-    FDR 실패 시 주요 종목 하드코딩 폴백 반환.
+    우선순위: 번들 JSON → FDR 실시간 → 하드코딩 폴백
     """
+    # 1) 번들 JSON (Streamlit Cloud 등 FDR 차단 환경 대응)
+    cached = _load_json_cache("krx_stocks.json")
+    if cached:
+        return cached
+
+    # 2) FinanceDataReader 실시간
     try:
         import FinanceDataReader as fdr
         result = {}
@@ -2242,12 +2271,13 @@ def get_krx_stock_list() -> dict:
                 continue
             if df is None or df.empty:
                 continue
-            df["Code"] = df["Code"].astype(str).str.strip()
-            df["Name"] = df["Name"].astype(str).str.strip()
-            mask = df["Name"].ne("") & df["Code"].str.len().eq(6) & df["Code"].str.isdigit()
+            code_col = "Code" if "Code" in df.columns else "Symbol"
+            df[code_col] = df[code_col].astype(str).str.strip()
+            df["Name"]   = df["Name"].astype(str).str.strip()
+            mask = df["Name"].ne("") & df[code_col].str.len().eq(6) & df[code_col].str.isdigit()
             df = df[mask]
-            df["_display"] = df["Name"] + " (" + df["Code"] + ")"
-            df["_ticker"]  = df["Code"] + "." + suffix
+            df["_display"] = df["Name"] + " (" + df[code_col] + ")"
+            df["_ticker"]  = df[code_col] + "." + suffix
             result.update(dict(zip(df["_display"], df["_ticker"])))
         return result if result else _krx_stock_fallback()
     except Exception:
@@ -2259,10 +2289,15 @@ def get_krx_stock_list() -> dict:
 def get_krx_etf_list() -> dict:
     """
     국내 ETF 전체 목록 반환.
-    우선순위: KRX 데이터포털 직접 → FinanceDataReader → 정적 폴백
+    우선순위: 번들 JSON → KRX 데이터포털 → FDR → 정적 폴백
     반환 형태: {"KODEX 200 (069500)": "069500.KS", ...}
     """
-    # 1) KRX 데이터포털 직접 호출 (최신 상장 ETF 포함)
+    # 1) 번들 JSON (Streamlit Cloud 등 FDR 차단 환경 대응)
+    cached = _load_json_cache("krx_etf.json")
+    if cached:
+        return cached
+
+    # 2) KRX 데이터포털 직접 호출 (최신 상장 ETF 포함)
     try:
         from src.etf_krx import get_etf_name_list
         krx_result = get_etf_name_list()
@@ -2271,7 +2306,7 @@ def get_krx_etf_list() -> dict:
     except Exception:
         pass
 
-    # 2) FinanceDataReader 폴백
+    # 3) FinanceDataReader 폴백
     try:
         import FinanceDataReader as fdr
         df = fdr.StockListing("ETF/KR")
@@ -2284,14 +2319,14 @@ def get_krx_etf_list() -> dict:
         df = df[mask]
         result = {}
         for _, row in df.iterrows():
-            code    = row[code_col]
-            name    = row["Name"]
+            code = row[code_col]
+            name = row["Name"]
             result[f"{name} ({code})"] = f"{code}.KS"
         return result if result else _etf_fallback_list()
     except Exception:
         pass
 
-    # 3) 정적 폴백
+    # 4) 정적 폴백
     return _etf_fallback_list()
 
 
