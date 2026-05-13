@@ -88,7 +88,7 @@ from src.database import (
 )
 try:
     _db_init()
-    st.sidebar.success("DB 연결됨", icon="🗄️")
+    pass  # DB 연결 성공 — 사이드바 최하단에서 비활성 항목만 표시
 except Exception as _db_err:
     st.error(f"Supabase 연결 실패: {_db_err}\n\nStreamlit Secrets에 SUPABASE_DB_URL을 설정하세요.", icon="🚨")
     st.stop()
@@ -762,34 +762,27 @@ with st.sidebar:
         st.session_state["_pending_period"]  = period
         st.rerun()
 
-    # ── API 키 상태 표시 ────────────────────────────────────────────────────
+    # ── API 키 변수 로드 (상태 알림은 사이드바 최하단에서 비활성 시만 표시) ──────
     st.divider()
-    st.markdown("### 🔑 API 연동 상태")
-
     try:
         _gem_secret = st.secrets.get("GEMINI_API_KEY", "")
     except Exception:
         _gem_secret = ""
     gemini_api_key = _gem_secret or st.session_state.get("gemini_api_key", "")
-    st.caption("🤖 Gemini: " + ("🟢 활성" if gemini_api_key else "⚪ 미설정 (키워드 분석)"))
 
     try:
         _groq_secret = st.secrets.get("GROQ_API_KEY", "")
     except Exception:
         _groq_secret = ""
     groq_api_key = _groq_secret or st.session_state.get("groq_api_key", "")
-    st.caption("🦙 Groq:   " + ("🟢 활성 (Gemini 폴백)" if groq_api_key else "⚪ 미설정"))
 
     try:
         _dart_secret = st.secrets.get("DART_API_KEY", "")
     except Exception:
         _dart_secret = ""
     dart_api_key = _dart_secret or st.session_state.get("dart_api_key", "")
-    st.caption("📑 DART:  " + ("🟢 활성" if dart_api_key else "⚪ 미설정 (yfinance 사용)"))
 
     _krx_ok = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
-    st.caption("📊 KRX:   " + ("🟢 자동 로그인 활성" if _krx_ok else "⚪ 인증 미설정"))
-
     use_llm = bool(gemini_api_key or groq_api_key)
 
     # ── API 키 설정 폼 (미설정 키 있으면 자동 펼침) ────────────────────────
@@ -856,11 +849,6 @@ with st.sidebar:
                     os.environ["KRX_PW"] = _to_save["krx_pw"]
                 st.success("저장되었습니다!")
                 st.rerun()
-
-    # ── KRX 데이터 ─────────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("### 📊 KRX 데이터")
-    st.caption("🟢 KRX 자동 로그인 활성" if _krx_ok else "⚪ KRX 인증 미설정")
 
     # ── 환율 ───────────────────────────────────────────────────────────────
     st.divider()
@@ -997,6 +985,33 @@ with st.sidebar:
                     else:
                         st.toast(f"{_sb_ticker_val} 포트폴리오에 추가됐습니다.")
                     st.rerun()
+
+    # ── 시스템 연동 상태 (비활성 항목만 표시) ──────────────────────────────────
+    _inactive = []
+    if not gemini_api_key:
+        _inactive.append(("🤖", "Gemini API 미설정", "키워드 분석 모드로 동작"))
+    if not groq_api_key:
+        _inactive.append(("🦙", "Groq API 미설정", "Gemini 폴백 불가"))
+    if not dart_api_key:
+        _inactive.append(("📑", "DART API 미설정", "yfinance로 대체"))
+    if not _krx_ok:
+        _inactive.append(("📊", "KRX 인증 미설정", "기관 매매 데이터 제한"))
+
+    if _inactive:
+        st.divider()
+        st.markdown(
+            '<div style="font-size:.78rem;color:#F59E0B;font-weight:600;'
+            'letter-spacing:.3px;margin-bottom:6px">⚠️ 미연동 항목</div>',
+            unsafe_allow_html=True,
+        )
+        for _ic, _it, _ih in _inactive:
+            st.markdown(
+                f'<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);'
+                f'border-radius:8px;padding:6px 10px;margin:3px 0;font-size:.75rem">'
+                f'<span style="color:#FCD34D">{_ic} {_it}</span>'
+                f'<div style="color:#78716C;margin-top:1px">{_ih}</div></div>',
+                unsafe_allow_html=True,
+            )
 
 # ─── 헤더 + 포트폴리오 대시보드 요약 카드 ────────────────────────────────────────
 st.markdown("""
