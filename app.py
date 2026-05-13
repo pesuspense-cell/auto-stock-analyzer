@@ -653,116 +653,44 @@ def _clear_analysis():
 
 with st.sidebar:
     st.markdown("## ⚙️ 종목 설정")
-    market_sel = st.selectbox(
-        "시장",
-        ["국내 주식 (검색)", "국내 ETF (검색)", "미국 주식 (검색)", "직접 입력"],
-        key="_market_sel",
-        on_change=_clear_analysis,
-    )
 
-    if market_sel == "국내 주식 (검색)":
-        krx = _krx_stocks()
+    # 국내 주식 + ETF + 미국 주식 통합 목록
+    _all_stocks: dict = {}
+    _all_stocks.update(_krx_stocks() or {})
+    _all_stocks.update(_etf_stocks() or {})
+    _all_stocks.update(_us_stocks() or {})
 
-        if krx:
-            _krx_q = st.text_input(
-                "종목 검색",
-                key="_krx_q",
-                placeholder="종목명 또는 코드 입력 (예: 삼성전자, 005930)",
-            )
-            _krx_opts = (
-                {k: v for k, v in krx.items() if _krx_q.lower() in k.lower()}
-                if _krx_q else krx
-            )
-            if not _krx_opts:
-                st.caption("검색 결과 없음 — 전체 목록 표시")
-                _krx_opts = krx
-            selected = st.selectbox(
-                f"종목 선택 ({len(_krx_opts):,}개)",
-                list(_krx_opts.keys()),
-                key="_krx_selected",
-                on_change=_clear_analysis,
-            )
-            ticker = _krx_opts[selected]
-            sname  = selected.split(" (")[0]
-        else:
-            st.warning("종목 목록 로드 실패 — 기본 목록 사용")
-            sname  = st.selectbox("종목", list(KOSPI_STOCKS.keys()),
-                                  key="_krx_fallback", on_change=_clear_analysis)
-            ticker = KOSPI_STOCKS[sname]
-
-    elif market_sel == "국내 ETF (검색)":
-        etf_list = _etf_stocks()
-
-        if etf_list:
-            _etf_q = st.text_input(
-                "ETF 검색",
-                key="_etf_q",
-                placeholder="ETF명 또는 코드 입력 (예: KODEX 200, 069500)",
-            )
-            _etf_opts = (
-                {k: v for k, v in etf_list.items() if _etf_q.lower() in k.lower()}
-                if _etf_q else etf_list
-            )
-            if not _etf_opts:
-                st.caption("검색 결과 없음 — 전체 목록 표시")
-                _etf_opts = etf_list
-            etf_selected = st.selectbox(
-                f"ETF 선택 ({len(_etf_opts):,}개)",
-                list(_etf_opts.keys()),
-                key="_etf_selected",
-                on_change=_clear_analysis,
-            )
-            ticker = _etf_opts[etf_selected]
-            sname  = etf_selected.split(" (")[0]
-        else:
-            st.warning("ETF 목록 로드 실패 — 기본 목록 사용")
-            _etf_fb = {f"{v['name']} ({k})": f"{k}.KS" for k, v in _ETF_PORTFOLIO_MAP.items()}
-            sname   = st.selectbox("ETF", list(_etf_fb.keys()), key="_etf_fallback",
-                                   on_change=_clear_analysis)
-            ticker  = _etf_fb[sname]
-            sname   = sname.split(" (")[0]
-
-        st.info("ETF는 기술적 분석 + ETF 전용 지표(괴리율·운용보수)로 분석됩니다.", icon="📊")
-
-    elif market_sel == "미국 주식 (검색)":
-        us_list = _us_stocks()
-
-        if us_list:
-            _us_q = st.text_input(
-                "종목 검색",
-                key="_us_q",
-                placeholder="회사명 또는 티커 입력 (예: Apple, AAPL, 애플)",
-            )
-            _us_opts = (
-                {k: v for k, v in us_list.items() if _us_q.lower() in k.lower()}
-                if _us_q else us_list
-            )
-            if not _us_opts:
-                st.caption("검색 결과 없음 — 전체 목록 표시")
-                _us_opts = us_list
-            us_selected = st.selectbox(
-                f"종목 선택 ({len(_us_opts):,}개)",
-                list(_us_opts.keys()),
-                key="_us_selected",
-                on_change=_clear_analysis,
-            )
-            ticker = _us_opts[us_selected]
-            sname  = us_selected.split(" (")[0]
-        else:
-            st.warning("미국 종목 목록 로드 실패 — 기본 목록 사용")
-            sname  = st.selectbox("종목", list(US_STOCKS.keys()),
-                                  key="_us_fallback", on_change=_clear_analysis)
-            ticker = US_STOCKS[sname]
-
+    if _all_stocks:
+        _unified_q = st.text_input(
+            "종목 검색",
+            key="_unified_q",
+            placeholder="종목명, 코드, 티커 입력 (예: 삼성전자, AAPL, KODEX 200)",
+        )
+        _unified_opts = (
+            {k: v for k, v in _all_stocks.items() if _unified_q.lower() in k.lower()}
+            if _unified_q else _all_stocks
+        )
+        if not _unified_opts:
+            st.caption("검색 결과 없음 — 전체 목록 표시")
+            _unified_opts = _all_stocks
+        selected = st.selectbox(
+            f"종목 선택 ({len(_unified_opts):,}개)",
+            list(_unified_opts.keys()),
+            key="_unified_selected",
+            on_change=_clear_analysis,
+        )
+        ticker = _unified_opts[selected]
+        sname  = selected.split(" (")[0]
     else:
+        st.warning("종목 목록 로드 실패 — 티커를 직접 입력하세요")
         ticker = st.text_input(
             "티커 직접 입력",
             value=st.session_state.get("_direct_ticker_input", "005930.KS"),
             key="_direct_ticker_input",
             on_change=_clear_analysis,
-            help="예) 005930.KS (KOSPI), 247540.KQ (KOSDAQ), AAPL (미국) — 아래 버튼 클릭",
+            help="예) 005930.KS (KOSPI), 247540.KQ (KOSDAQ), AAPL (미국)",
         )
-        sname  = ticker
+        sname = ticker
 
     period = st.selectbox("분석 기간", ["1mo", "3mo", "6mo", "1y", "2y"],
                           index=1, key="_period_sel", on_change=_clear_analysis)
@@ -938,41 +866,19 @@ with st.sidebar:
 </div>
 """, unsafe_allow_html=True)
         with st.expander("종목 추가", expanded=False):
-            _sb_market = st.radio(
-                "시장", ["국내 주식", "국내 ETF", "미국 주식"],
-                horizontal=True, label_visibility="collapsed", key="sb_add_market",
-            )
             _sb_ticker_val = ""
-            if _sb_market == "국내 주식":
-                _sb_list = _krx_stocks() or {}
-                if _sb_list:
-                    _sbq = st.text_input("종목 검색", key="sb_add_krx_q",
-                                         placeholder="삼성전자, 005930 ...")
-                    _sb_opts = ({k: v for k, v in _sb_list.items() if _sbq.lower() in k.lower()}
-                                if _sbq else _sb_list) or _sb_list
-                    _sb_sel = st.selectbox(f"선택 ({len(_sb_opts):,}개)",
-                                           list(_sb_opts.keys()), key="sb_add_krx")
-                    _sb_ticker_val = _sb_opts[_sb_sel]
-            elif _sb_market == "국내 ETF":
-                _sb_list = _etf_stocks() or {}
-                if _sb_list:
-                    _sbq = st.text_input("ETF 검색", key="sb_add_etf_q",
-                                         placeholder="KODEX 200, 069500 ...")
-                    _sb_opts = ({k: v for k, v in _sb_list.items() if _sbq.lower() in k.lower()}
-                                if _sbq else _sb_list) or _sb_list
-                    _sb_sel = st.selectbox(f"선택 ({len(_sb_opts):,}개)",
-                                           list(_sb_opts.keys()), key="sb_add_etf")
-                    _sb_ticker_val = _sb_opts[_sb_sel]
-            else:
-                _sb_list = _us_stocks() or {}
-                if _sb_list:
-                    _sbq = st.text_input("종목 검색", key="sb_add_us_q",
-                                         placeholder="Apple, AAPL, 애플 ...")
-                    _sb_opts = ({k: v for k, v in _sb_list.items() if _sbq.lower() in k.lower()}
-                                if _sbq else _sb_list) or _sb_list
-                    _sb_sel = st.selectbox(f"선택 ({len(_sb_opts):,}개)",
-                                           list(_sb_opts.keys()), key="sb_add_us")
-                    _sb_ticker_val = _sb_opts[_sb_sel]
+            _sb_all: dict = {}
+            _sb_all.update(_krx_stocks() or {})
+            _sb_all.update(_etf_stocks() or {})
+            _sb_all.update(_us_stocks() or {})
+            if _sb_all:
+                _sbq = st.text_input("종목 검색", key="sb_add_q",
+                                     placeholder="종목명, 코드, 티커 입력 (예: 삼성전자, AAPL, KODEX 200)")
+                _sb_opts = ({k: v for k, v in _sb_all.items() if _sbq.lower() in k.lower()}
+                            if _sbq else _sb_all) or _sb_all
+                _sb_sel = st.selectbox(f"선택 ({len(_sb_opts):,}개)",
+                                       list(_sb_opts.keys()), key="sb_add_unified")
+                _sb_ticker_val = _sb_opts[_sb_sel]
 
             if _sb_ticker_val:
                 _sb_is_krw = _sb_ticker_val.upper().endswith((".KS", ".KQ"))
