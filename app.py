@@ -716,20 +716,24 @@ def _render_sector_etf_prices():
         unsafe_allow_html=True,
     )
 
+    # ETF명 + 티커 합치기 (티커에서 .KS/.KQ 제거)
+    _etf_df["ETF"] = (
+        _etf_df["ETF명"] + "  ·  " + _etf_df["티커"].str.split(".").str[0]
+    )
+
     def _row_style(row):
         chg = row["등락률(%)"]
         if isinstance(chg, (int, float)) and chg > 0:  return ["background-color:rgba(239,83,80,0.13)"] * len(row)
         if isinstance(chg, (int, float)) and chg < 0:  return ["background-color:rgba(66,165,245,0.13)"] * len(row)
         return ["background-color:transparent"] * len(row)
 
-    _cols     = ["국가", "태그", "ETF명", "티커", "현재가", "방향", "등락률(%)"]
-    _col_cfg  = {
-        "국가": st.column_config.TextColumn("국가", width="small"),
-        "태그": st.column_config.TextColumn("테마", width="medium"),
-        "ETF명": st.column_config.TextColumn("ETF명", width="large"),
-        "티커": st.column_config.TextColumn("티커", width="small"),
-        "현재가": st.column_config.TextColumn("현재가", width="small"),
-        "방향": st.column_config.TextColumn("↕", width="small"),
+    _cols    = ["국가", "태그", "ETF", "현재가", "방향", "등락률(%)"]
+    _col_cfg = {
+        "국가":      st.column_config.TextColumn("국가",      width="small"),
+        "태그":      st.column_config.TextColumn("테마",      width="small"),
+        "ETF":       st.column_config.TextColumn("ETF · 티커", width="medium"),
+        "현재가":    st.column_config.TextColumn("현재가",    width="small"),
+        "방향":      st.column_config.TextColumn("↕",         width="small"),
         "등락률(%)": st.column_config.ProgressColumn("등락률 (%)", format="%+.2f%%", min_value=-15.0, max_value=15.0),
     }
 
