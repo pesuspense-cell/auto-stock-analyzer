@@ -300,6 +300,12 @@ def _full_movers():
 def _rates():
     return get_exchange_rates()
 
+@st.cache_data(ttl=600)
+def _usdkrw_history():
+    """USD/KRW 3개월 추이 (10분 캐시)."""
+    d = yf.download("USDKRW=X", period="3mo", auto_adjust=True, progress=False)
+    return _flatten_columns(d)
+
 def _get_full_stocks(market: str) -> dict:
     """시장 전체 종목 사전 반환 — 인위적 상한 없음."""
     if market == "KOSPI":
@@ -583,6 +589,17 @@ def _realtime_price_1m(ticker: str) -> dict:
     return {"price": 0.0, "ts": _ts, "is_realtime": False, "stale": False, "stale_msg": ""}
 
 # ─── 관심종목 알림 체크 ───────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def _wl_price(ticker: str):
+    """관심종목 현재가·등락률 (60초 캐시)."""
+    d = yf.download(ticker, period="2d", auto_adjust=True, progress=False)
+    d = _flatten_columns(d)
+    if len(d) >= 2:
+        p   = float(d["Close"].iloc[-1])
+        chg = (p - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2]) * 100
+        return p, chg
+    return None, None
+
 def _get_wl_alerts() -> list:
     """
     관심종목 매매 신호 체크.
@@ -644,8 +661,7 @@ with st.sidebar:
     )
 
     if market_sel == "국내 주식 (검색)":
-        with st.spinner("종목 목록 로딩 중..."):
-            krx = _krx_stocks()
+        krx = _krx_stocks()
 
         if krx:
             _krx_q = st.text_input(
@@ -675,8 +691,7 @@ with st.sidebar:
             ticker = KOSPI_STOCKS[sname]
 
     elif market_sel == "국내 ETF (검색)":
-        with st.spinner("ETF 목록 준비 중..."):
-            etf_list = _etf_stocks()
+        etf_list = _etf_stocks()
 
         if etf_list:
             _etf_q = st.text_input(
@@ -710,8 +725,7 @@ with st.sidebar:
         st.info("ETF는 기술적 분석 + ETF 전용 지표(괴리율·운용보수)로 분석됩니다.", icon="📊")
 
     elif market_sel == "미국 주식 (검색)":
-        with st.spinner("미국 종목 목록 준비 중... (S&P500 + 나스닥)"):
-            us_list = _us_stocks()
+        us_list = _us_stocks()
 
         if us_list:
             _us_q = st.text_input(
@@ -853,8 +867,7 @@ with st.sidebar:
     # ── 환율 ───────────────────────────────────────────────────────────────
     st.divider()
     st.markdown("### 💱 실시간 환율")
-    with st.spinner("환율 로딩 중..."):
-        rates = _rates()
+    rates = _rates()
     for pair, info in rates.items():
         st.metric(pair, f"{info['rate']:,.2f}", f"{info['change']:+.3f}%",
                   help=f"{pair} 환율. 전일 대비 변동률 표시. 양수(🔺)면 원화 대비 해당 통화 강세(원화 약세)를 의미합니다.")
@@ -895,11 +908,8 @@ with st.sidebar:
             col_a, col_b = st.columns([4, 1])
             with col_a:
                 try:
-                    d2 = yf.download(item["ticker"], period="2d", auto_adjust=True, progress=False)
-                    d2 = _flatten_columns(d2)
-                    if len(d2) >= 2:
-                        p2  = float(d2["Close"].iloc[-1])
-                        chg2= (p2 - float(d2["Close"].iloc[-2])) / float(d2["Close"].iloc[-2]) * 100
+                    p2, chg2 = _wl_price(item["ticker"])
+                    if chg2 is not None:
                         arrow = "🔺" if chg2 >= 0 else "🔻"
                         color = "#ef5350" if chg2 >= 0 else "#42a5f5"
                         st.markdown(
@@ -1478,8 +1488,7 @@ with tab_market:
 
     # ── 전체 시장 급등/급락 TOP 10 ──────────────────────────────────────────
     st.markdown("### 🏆 전체 시장 급등·급락 TOP 10 (KOSPI+KOSDAQ)")
-    with st.spinner("전체 시장 데이터 로딩 중..."):
-        _fm_gainers, _fm_losers = _full_movers()
+    _fm_gainers, _fm_losers = _full_movers()
 
     if not _fm_gainers.empty or not _fm_losers.empty:
         _fmc1, _fmc2 = st.columns(2)
@@ -1514,8 +1523,7 @@ with tab_market:
             "분석 종목 수 (시가총액 상위)", list(range(10, 110, 10)), value=50,
             help="KOSPI 시가총액 상위 N개 종목의 등락률을 분석합니다. 많을수록 로딩이 느려집니다."
         )
-        with st.spinner(f"KOSPI 상위 {mover_n}개 종목 로딩 중..."):
-            movers = _movers(mover_n)
+        movers = _movers(mover_n)
 
         if not movers.empty:
             top_n   = min(10, len(movers) // 2)
@@ -1584,8 +1592,7 @@ with tab_market:
 
         st.markdown("### 📈 USD/KRW 추이 (3개월)")
         try:
-            fx = yf.download("USDKRW=X", period="3mo", auto_adjust=True, progress=False)
-            fx = _flatten_columns(fx)
+            fx = _usdkrw_history()
             if not fx.empty:
                 fig_fx = go.Figure(go.Scatter(
                     x=fx.index, y=fx["Close"],
@@ -1738,8 +1745,7 @@ with tab_market:
             },
         )
 
-    with st.spinner("섹터 ETF 데이터 로딩 중 (35종목)..."):
-        _etf_df = _fetch_sector_etfs(_SECTOR_ETF_LIST)
+    _etf_df = _fetch_sector_etfs(_SECTOR_ETF_LIST)
 
     if not _etf_df.empty:
         # 요약 메트릭 (5열)
