@@ -1578,20 +1578,11 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
     rt_stale    = state["rt_stale"]
     rt_stale_msg = state["rt_stale_msg"]
 
-    st.subheader("🎯 AI 매매 신호")
-
-    with st.expander("🔍 진단 기준 보기", expanded=False):
-        st.markdown(
-            "**이 패널은 '역추세 기술적 진단' 관점으로 분석합니다.**\n\n"
-            "현재 종목의 RSI·MACD·볼린저밴드·ADX·일목균형표 등 **10개 이상의 기술적 지표**를 "
-            "종합하여 단기 변곡점(과매도·과매수)과 매수/매도 신호를 포착합니다.\n\n"
-            "| 특성 | 내용 |\n"
-            "|------|------|\n"
-            "| 분석 방식 | 역추세 (RSI 30↓ = 강한 매수 신호) |\n"
-            "| 뉴스 처리 | Naver · RSS · YouTube 멀티소스 · LLM 정밀 분석 |\n"
-            "| 대상 | 사용자가 사이드바에서 직접 선택한 단일 종목 |\n"
-            "| 목적 | 지금 이 종목의 매매 타이밍 포착 |\n\n"
-            "> ⚠️ **포트폴리오 탭 'AI 모멘텀 추천'과 결과가 다를 수 있습니다.**"
+    with st.expander("🔍 진단 기준", expanded=False):
+        st.caption(
+            "역추세 기술적 진단 — RSI·MACD·볼린저밴드·ADX·일목균형표 등 10개+ 지표 종합.  \n"
+            "Naver·RSS·YouTube 멀티소스 뉴스 LLM 감성 포함. "
+            "포트폴리오 탭 AI 모멘텀 추천과 결과가 다를 수 있습니다."
         )
 
     h_score = hybrid.get("hybrid_score", 0.0)
@@ -1629,33 +1620,6 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
             unsafe_allow_html=True,
         )
 
-    # 신호등 카드
-    _tl_signal, _tl_action, _tl_reasons = generate_signal(
-        data=data, advanced=advanced, hybrid=hybrid,
-        news_result=news_result, expected=expected, signals=signals,
-    )
-    if _tl_signal == "BUY":
-        _l1_border, _l1_fc = "#22c55e", "#4ade80"
-    elif _tl_signal == "SELL":
-        _l1_border, _l1_fc = "#ef4444", "#f87171"
-    else:
-        _l1_border, _l1_fc = "#eab308", "#facc15"
-    _l1_emoji = "🟢" if _tl_signal == "BUY" else ("🔴" if _tl_signal == "SELL" else "🟡")
-
-    st.markdown(f"""
-<div style="background:{COLORS['surface']};border:1px solid {_l1_border}88;border-radius:12px;
-            padding:22px 20px;text-align:center;margin-bottom:12px;
-            box-shadow:0 0 28px {_l1_border}33,0 4px 20px rgba(0,0,0,0.35);">
-  <div style="font-size:0.62rem;color:{COLORS['text_3']};letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;">
-    AI TRADING SIGNAL
-  </div>
-  <div style="font-size:2rem;font-weight:900;color:{_l1_fc};letter-spacing:2px;line-height:1.05;margin-bottom:10px;">
-    {_l1_emoji} {_tl_signal}
-  </div>
-  <div style="font-size:0.87rem;color:{COLORS['text_2']};line-height:1.65;word-break:keep-all;">
-    {_tl_action}
-  </div>
-</div>""", unsafe_allow_html=True)
 
     # Key Metrics
     _sl_data = get_stop_loss_targets(data) if _has_price else None
@@ -1690,48 +1654,27 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
   <div style="font-size:1.2rem;font-weight:700;color:#E2E8F0">{_val_str}</div>
 </div>""", unsafe_allow_html=True)
 
-    st.markdown("---")
-
-    # 신호 근거 박스
-    _reason_html = "".join(
-        f'<div style="padding:8px 0;border-bottom:1px solid {COLORS["border_md"]};font-size:0.88rem;'
-        f'color:{COLORS["text"]};display:flex;align-items:flex-start;gap:8px;line-height:1.6;">'
-        f'<span style="color:{_l1_fc};flex-shrink:0;">{_l1_emoji}</span>'
-        f'<span style="word-break:keep-all;">{r}</span></div>'
-        for r in _tl_reasons[:3]
-    ) or f'<div style="color:{COLORS["text_3"]};font-size:0.88rem;">분석 데이터 수집 중...</div>'
-
-    st.markdown(f"""
-<div class="card-sm" style="border-color:{_l1_border}44;margin-bottom:12px;">
-  <div style="font-size:0.65rem;color:{COLORS['text_2']};letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;">
-    📋 신호 근거 (TOP 3)
-  </div>
-  {_reason_html}
-</div>""", unsafe_allow_html=True)
-
-    # Progress bars
+    # ── 추세·탄력·에너지 — 3컬럼 컴팩트 카드 ────────────────────────────
     _ts = advanced.get("trend_score",    50.0)
     _ms = advanced.get("momentum_score", 50.0)
     _vs = advanced.get("volume_score",   50.0)
-
-    for _label, _score, _icon in [
-        ("추세 (Trend)",    _ts, "📈"),
-        ("탄력 (Momentum)", _ms, "⚡"),
-        ("에너지 (Volume)", _vs, "🔋"),
+    _sc1, _sc2, _sc3 = st.columns(3)
+    for _col, _label, _score, _icon in [
+        (_sc1, "추세",  _ts, "📈"),
+        (_sc2, "탄력",  _ms, "⚡"),
+        (_sc3, "에너지", _vs, "🔋"),
     ]:
         _sc = "#26a69a" if _score >= 65 else ("#ef5350" if _score <= 35 else "#eab308")
         _bg = "rgba(38,166,154,0.12)" if _score >= 65 else ("rgba(239,83,80,0.12)" if _score <= 35 else "rgba(234,179,8,0.12)")
-        st.markdown(
+        _col.markdown(
             f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
-            f'border-radius:10px;padding:10px 14px;margin-bottom:8px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
-            f'<span style="color:{COLORS["text_2"]};font-size:0.85rem;display:flex;align-items:center;gap:6px;">'
-            f'<span>{_icon}</span><span>{_label}</span></span>'
+            f'border-radius:10px;padding:9px 12px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+            f'<span style="color:{COLORS["text_2"]};font-size:0.78rem;">{_icon} {_label}</span>'
             f'<span style="background:{_bg};color:{_sc};border-radius:20px;'
-            f'padding:2px 10px;font-size:0.78rem;font-weight:700;">{_score:.0f}점</span></div>'
-            f'<div style="background:{COLORS["border_md"]};border-radius:4px;height:6px;">'
-            f'<div style="background:{_sc};width:{int(_score)}%;height:6px;border-radius:4px;'
-            f'transition:width 0.4s ease;"></div>'
+            f'padding:1px 8px;font-size:0.73rem;font-weight:700;">{_score:.0f}</span></div>'
+            f'<div style="background:{COLORS["border_md"]};border-radius:4px;height:5px;">'
+            f'<div style="background:{_sc};width:{int(_score)}%;height:5px;border-radius:4px;"></div>'
             f'</div></div>',
             unsafe_allow_html=True,
         )
@@ -1767,38 +1710,43 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
         except Exception:
             pass
 
-    st.markdown("---")
-
-    # Dead time / Breakout
-    if dead_time.get("message"):
-        _dt_dead = dead_time.get("is_dead", False)
-        _dt_vol  = dead_time.get("volatility_14d", 0.0)
-        _dt_vr   = dead_time.get("vol_ratio", 1.0)
-        if _dt_dead:
-            st.warning(dead_time["message"], icon="⏳")
-            st.markdown(
-                f'<div style="background:#1a1d2e;border-radius:7px;padding:8px 12px;'
-                f'border-left:3px solid #f39c12;font-size:0.86rem;color:#aaa;margin-top:4px;">'
-                f'14일 변동성 <b style="color:#fff176;">{_dt_vol:.1f}%</b> · '
-                f'거래량 비율 <b style="color:#fff176;">{_dt_vr*100:.0f}%</b><br>'
-                f'<span style="color:#888;">돌파 신호 전까지 신규 진입을 자제하세요.</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.info(dead_time["message"], icon="📊")
-
+    # ── Dead time / Breakout — 컴팩트 인라인 카드 ──────────────────────
+    _dt_dead = dead_time.get("is_dead", False)
+    _dt_msg  = dead_time.get("message", "")
     _bk_status = breakout.get("status", "wait")
     _bk_detail = breakout.get("detail", "")
-    if _bk_status == "breakout_both":
-        st.success(f"**돌파(Breakout) 조건 충족** — {_bk_detail}", icon="🚀")
-    elif _bk_status in ("breakout_ma", "breakout_vol"):
-        st.info(f"**부분 돌파 감지** — {_bk_detail}", icon="📈")
-    else:
-        st.info(f"**관망(Wait) 유지** — {_bk_detail}  \n*20일 MA 상향 돌파 또는 전일 거래량 200% 초과 시 진입 고려*", icon="⏸️")
 
-    # 종합 스코어보드
-    with st.expander("📊 종합 판단 스코어보드", expanded=False):
+    if _dt_msg or _bk_detail:
+        _dt_border = "#f39c12" if _dt_dead else "#3B82F6"
+        _dt_icon   = "⏳" if _dt_dead else "📊"
+        _bk_border = "#22c55e" if _bk_status == "breakout_both" else ("#4b9cf5" if "breakout" in _bk_status else "#555")
+        _bk_icon   = "🚀" if _bk_status == "breakout_both" else ("📈" if "breakout" in _bk_status else "⏸️")
+        _bk_label  = "돌파 충족" if _bk_status == "breakout_both" else ("부분 돌파" if "breakout" in _bk_status else "관망")
+
+        _left_col, _right_col = st.columns(2)
+        if _dt_msg:
+            _left_col.markdown(
+                f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+                f'border-left:3px solid {_dt_border};border-radius:10px;padding:9px 12px;">'
+                f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:.6px;margin-bottom:4px;">'
+                f'{_dt_icon} 거래 에너지</div>'
+                f'<div style="font-size:0.82rem;color:{COLORS["text"]};line-height:1.45;word-break:keep-all;">'
+                f'{_dt_msg}</div></div>',
+                unsafe_allow_html=True,
+            )
+        if _bk_detail:
+            _right_col.markdown(
+                f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+                f'border-left:3px solid {_bk_border};border-radius:10px;padding:9px 12px;">'
+                f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:.6px;margin-bottom:4px;">'
+                f'{_bk_icon} 돌파 — <b style="color:{_bk_border}">{_bk_label}</b></div>'
+                f'<div style="font-size:0.82rem;color:{COLORS["text"]};line-height:1.45;word-break:keep-all;">'
+                f'{_bk_detail}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+    # 종합 스코어보드 (progress bar는 위에서 표시했으므로 수치표+다이버전스만)
+    with st.expander("📊 종합 스코어보드 상세", expanded=False):
         ts = advanced.get("trend_score",    50.0)
         ms = advanced.get("momentum_score", 50.0)
         vs = advanced.get("volume_score",   50.0)
@@ -1806,24 +1754,21 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
         def _sc_color(s):
             return "#a5d6a7" if s >= 65 else ("#ef9a9a" if s <= 35 else "#fff176")
 
-        for _lbl, _sc_val, _wt, _desc in [
-            ("추세 (Trend)",    ts, "40%", "EMA 배열 · ADX · 일목균형표"),
-            ("탄력 (Momentum)", ms, "30%", "MACD · RSI · ROC · CCI"),
-            ("에너지 (Volume)", vs, "30%", "OBV · MFI"),
-        ]:
-            _clr = _sc_color(_sc_val)
-            st.markdown(
-                f'<div style="margin-bottom:8px;">'
-                f'<div style="display:flex;justify-content:space-between;font-size:0.92rem;">'
-                f'<span style="color:#ccc;">{_lbl} <span style="color:#666;">({_wt})</span></span>'
-                f'<b style="color:{_clr};">{_sc_val:.0f}점</b></div>'
-                f'<div style="background:#2a2d3e;border-radius:4px;height:7px;margin-top:3px;">'
-                f'<div style="background:{_clr};width:{int(_sc_val)}%;height:7px;border-radius:4px;"></div>'
-                f'</div>'
-                f'<div style="font-size:0.85rem;color:#666;margin-top:2px;">{_desc}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+        st.markdown(
+            '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+            "".join(
+                f'<div style="flex:1;background:#1a1d2e;border-radius:8px;padding:7px 10px;text-align:center;">'
+                f'<div style="font-size:0.7rem;color:#888;margin-bottom:3px;">{lbl} ({wt})</div>'
+                f'<div style="font-size:0.95rem;font-weight:700;color:{_sc_color(sv)};">{sv:.0f}점</div>'
+                f'<div style="font-size:0.68rem;color:#555;margin-top:2px;">{desc}</div></div>'
+                for lbl, sv, wt, desc in [
+                    ("추세", ts, "40%", "EMA·ADX·일목"),
+                    ("탄력", ms, "30%", "MACD·RSI·ROC"),
+                    ("에너지", vs, "30%", "OBV·MFI"),
+                ]
+            ) + '</div>',
+            unsafe_allow_html=True,
+        )
 
         composite = round(ts * 0.4 + ms * 0.3 + vs * 0.3, 1)
         if composite >= 65:
