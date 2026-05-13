@@ -490,6 +490,15 @@ def _us_stocks():
 def _etf_stocks():
     return get_krx_etf_list()
 
+# ─── 종목 목록 백그라운드 사전 로딩 ──────────────────────────────────────────────
+if "stock_lists_preloaded" not in st.session_state:
+    st.session_state["stock_lists_preloaded"] = True
+    _preload_ex = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="preload")
+    _preload_ex.submit(_krx_stocks)
+    _preload_ex.submit(_etf_stocks)
+    _preload_ex.submit(_us_stocks)
+    _preload_ex.shutdown(wait=False)
+
 @st.cache_data(ttl=86400)
 def _ticker_name_map() -> dict:
     """티커 → 종목명 역방향 맵 (KRX 주식 + ETF + 미국 주식 통합, 일 1회 캐시)."""
@@ -696,7 +705,7 @@ with st.sidebar:
             ticker = KOSPI_STOCKS[sname]
 
     elif market_sel == "국내 ETF (검색)":
-        with st.spinner("ETF 목록 로딩 중..."):
+        with st.spinner("ETF 목록 준비 중..."):
             etf_list = _etf_stocks()
 
         if etf_list:
@@ -731,7 +740,7 @@ with st.sidebar:
         st.info("ETF는 기술적 분석 + ETF 전용 지표(괴리율·운용보수)로 분석됩니다.", icon="📊")
 
     elif market_sel == "미국 주식 (검색)":
-        with st.spinner("미국 종목 목록 로딩 중... (S&P500 + 나스닥)"):
+        with st.spinner("미국 종목 목록 준비 중... (S&P500 + 나스닥)"):
             us_list = _us_stocks()
 
         if us_list:
