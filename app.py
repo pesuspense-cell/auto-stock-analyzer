@@ -111,173 +111,16 @@ except Exception:
     _cookie_mgr = None
     _HAS_COOKIE_MGR = False
 
-st.markdown("""
-<style>
-/* ═══════════════════════════════════════════════════════════════════
-   MIDNIGHT AURORA THEME — 프리미엄 AI 투자 비서
-   Main: #8B5CF6 (Violet) ↔ #3B82F6 (Blue) gradient
-   BG:   #0F172A  Surface: rgba(30,41,59,0.7)
-   Up:   #10B981 (Emerald)  Down: #3B82F6 (Sky Blue)
-═══════════════════════════════════════════════════════════════════ */
+def _inject_midnight_aurora_css() -> None:
+    """Midnight Aurora 전역 테마 CSS — static/midnight_aurora.css에서 로드."""
+    _css_path = os.path.join(os.path.dirname(__file__), "static", "midnight_aurora.css")
+    try:
+        with open(_css_path, "r", encoding="utf-8") as _f:
+            st.markdown(f"<style>{_f.read()}</style>", unsafe_allow_html=True)
+    except FileNotFoundError:
+        pass  # CSS 파일 없으면 기본 스타일로 동작
 
-/* ─── App background ───────────────────────────────────────────── */
-.stApp { background: #0F172A !important; }
-.block-container { padding-top: 1rem; }
-.main .block-container { background: transparent !important; }
-
-/* ─── Sidebar ──────────────────────────────────────────────────── */
-[data-testid="stSidebar"] {
-    background: rgba(10, 16, 34, 0.98) !important;
-    border-right: 1px solid rgba(139, 92, 246, 0.2) !important;
-}
-[data-testid="stSidebar"] .stTextInput input,
-[data-testid="stSidebar"] .stNumberInput input {
-    background: rgba(30, 41, 59, 0.9) !important;
-    border: 1px solid rgba(139, 92, 246, 0.3) !important;
-    color: #E2E8F0 !important;
-    border-radius: 8px !important;
-}
-[data-testid="stSidebar"] .stSelectbox > div > div {
-    background: rgba(30, 41, 59, 0.9) !important;
-    border: 1px solid rgba(139, 92, 246, 0.3) !important;
-    border-radius: 8px !important;
-}
-
-/* ─── Metric containers (st.metric) ─────────────────────────────── */
-div[data-testid="metric-container"] {
-    background: rgba(30, 41, 59, 0.7) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    border-radius: 16px !important;
-    padding: 16px 20px !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
-}
-
-/* ─── Tab bar ──────────────────────────────────────────────────── */
-.stTabs [data-baseweb="tab-list"] {
-    background: rgba(15, 23, 42, 0.95) !important;
-    border-radius: 14px !important;
-    padding: 4px !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    gap: 2px !important;
-}
-.stTabs [data-baseweb="tab"] {
-    border-radius: 10px !important;
-    color: #94A3B8 !important;
-    font-weight: 500 !important;
-    transition: all 0.25s ease !important;
-}
-.stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, rgba(139,92,246,0.25), rgba(59,130,246,0.25)) !important;
-    color: #E2E8F0 !important;
-    border-bottom: 2px solid #8B5CF6 !important;
-}
-
-/* ─── Primary button — Midnight Aurora gradient + hover effect ──── */
-.stButton > button[kind="primary"],
-button[data-testid="baseButton-primary"] {
-    background: linear-gradient(135deg, #8B5CF6, #3B82F6) !important;
-    border: none !important;
-    border-radius: 10px !important;
-    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
-    box-shadow: 0 2px 10px rgba(139,92,246,0.3) !important;
-    font-weight: 600 !important;
-    color: #fff !important;
-}
-.stButton > button[kind="primary"]:hover,
-button[data-testid="baseButton-primary"]:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 8px 24px rgba(139,92,246,0.55) !important;
-    background: linear-gradient(135deg, #7C3AED, #2563EB) !important;
-}
-
-/* ─── Custom component classes ────────────────────────────────── */
-.st-card {
-    background: rgba(30, 41, 59, 0.7);
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 1px 2px rgba(139,92,246,0.1);
-    padding: 20px 24px;
-}
-.glass-morphism {
-    background: rgba(30, 41, 59, 0.6);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 16px;
-}
-.gradient-text {
-    background: linear-gradient(135deg, #8B5CF6, #3B82F6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-weight: 700;
-    display: inline-block;
-}
-.ma-metric-card {
-    background: rgba(30, 41, 59, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 16px;
-    padding: 16px 18px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
-    height: 100%;
-    min-height: 90px;
-}
-.ma-stock-badge {
-    background: linear-gradient(135deg, rgba(139,92,246,0.15), rgba(59,130,246,0.12));
-    border: 1px solid rgba(139,92,246,0.35);
-    border-radius: 14px;
-    padding: 14px 20px;
-    margin-bottom: 14px;
-}
-.ma-gain { color: #10B981 !important; font-weight: 700; }
-.ma-loss { color: #3B82F6 !important; font-weight: 700; }
-
-/* ─── Legacy selectors (기존 기능 유지) ──────────────────────────── */
-.signal-box {
-    padding: 12px 8px; border-radius: 12px;
-    text-align: center; margin-bottom: 12px; word-break: keep-all;
-}
-.wl-item {
-    background: rgba(30, 41, 59, 0.7); border-radius: 8px;
-    padding: 8px 12px; margin: 4px 0;
-    display: flex; justify-content: space-between; align-items: center;
-    border: 1px solid rgba(255,255,255,0.06);
-}
-
-/* ─── Loading animations ──────────────────────────────────────── */
-@keyframes loading-sweep {
-    0%   { transform: translateX(-100%); }
-    50%  { transform: translateX(0%); }
-    100% { transform: translateX(100%); }
-}
-@keyframes loading-pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.5; }
-}
-.loading-bar-track {
-    background: #1e2444; border-radius: 8px; height: 6px;
-    overflow: hidden; margin-top: 16px;
-}
-.loading-bar-fill {
-    background: linear-gradient(90deg, #8B5CF6, #60a5fa, #8B5CF6);
-    height: 100%; width: 100%;
-    animation: loading-sweep 1.8s ease-in-out infinite;
-}
-.loading-icon { animation: loading-pulse 1.4s ease-in-out infinite; display: inline-block; }
-
-/* ─── Mobile ──────────────────────────────────────────────────── */
-@media (max-width: 768px) {
-    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
-        flex-direction: column-reverse !important;
-    }
-    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div[data-testid="column"] {
-        width: 100% !important;
-        flex: 0 0 100% !important;
-        max-width: 100% !important;
-    }
-}
-</style>
-""", unsafe_allow_html=True)
+_inject_midnight_aurora_css()
 
 # ─── 설정 저장소 (fundamentals.db → settings 테이블) ────────────────────────────
 WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), "watchlist.json")
@@ -1086,8 +929,160 @@ with st.sidebar:
                     save_watchlist(st.session_state.watchlist)
                     st.rerun()
 
-# ─── 헤더 ────────────────────────────────────────────────────────────────────
-st.markdown("# 📈 AI 주식 분석 대시보드")
+    # ── 포트폴리오 종목 추가 (사이드바 하단 — 로그인 시만 표시) ──────────────────
+    _sb_uid = st.session_state.get("auth_user_id")
+    _sb_tok = st.session_state.get("auth_token")
+    if _sb_tok and _sb_uid:
+        st.divider()
+        st.markdown("""
+<div style="font-size:.85rem;font-weight:700;color:#8B5CF6;letter-spacing:.5px;margin-bottom:4px">
+  ➕ 포트폴리오 종목 추가
+</div>
+""", unsafe_allow_html=True)
+        with st.expander("종목 추가", expanded=False):
+            _sb_market = st.radio(
+                "시장", ["국내 주식", "국내 ETF", "미국 주식"],
+                horizontal=True, label_visibility="collapsed", key="sb_add_market",
+            )
+            _sb_ticker_val = ""
+            if _sb_market == "국내 주식":
+                _sb_list = _krx_stocks() or {}
+                if _sb_list:
+                    _sbq = st.text_input("종목 검색", key="sb_add_krx_q",
+                                         placeholder="삼성전자, 005930 ...")
+                    _sb_opts = ({k: v for k, v in _sb_list.items() if _sbq.lower() in k.lower()}
+                                if _sbq else _sb_list) or _sb_list
+                    _sb_sel = st.selectbox(f"선택 ({len(_sb_opts):,}개)",
+                                           list(_sb_opts.keys()), key="sb_add_krx")
+                    _sb_ticker_val = _sb_opts[_sb_sel]
+            elif _sb_market == "국내 ETF":
+                _sb_list = _etf_stocks() or {}
+                if _sb_list:
+                    _sbq = st.text_input("ETF 검색", key="sb_add_etf_q",
+                                         placeholder="KODEX 200, 069500 ...")
+                    _sb_opts = ({k: v for k, v in _sb_list.items() if _sbq.lower() in k.lower()}
+                                if _sbq else _sb_list) or _sb_list
+                    _sb_sel = st.selectbox(f"선택 ({len(_sb_opts):,}개)",
+                                           list(_sb_opts.keys()), key="sb_add_etf")
+                    _sb_ticker_val = _sb_opts[_sb_sel]
+            else:
+                _sb_list = _us_stocks() or {}
+                if _sb_list:
+                    _sbq = st.text_input("종목 검색", key="sb_add_us_q",
+                                         placeholder="Apple, AAPL, 애플 ...")
+                    _sb_opts = ({k: v for k, v in _sb_list.items() if _sbq.lower() in k.lower()}
+                                if _sbq else _sb_list) or _sb_list
+                    _sb_sel = st.selectbox(f"선택 ({len(_sb_opts):,}개)",
+                                           list(_sb_opts.keys()), key="sb_add_us")
+                    _sb_ticker_val = _sb_opts[_sb_sel]
+
+            if _sb_ticker_val:
+                _sb_is_krw = _sb_ticker_val.upper().endswith((".KS", ".KQ"))
+                _sb_c1, _sb_c2 = st.columns([2, 1])
+                _sb_price = _sb_c1.number_input(
+                    "평단가", min_value=0.01, value=1.0,
+                    step=100.0 if _sb_is_krw else 0.01,
+                    format="%.0f" if _sb_is_krw else "%.2f",
+                    key="sb_add_price",
+                )
+                _sb_qty = _sb_c2.number_input(
+                    "수량", min_value=0.01, value=1.0, step=1.0,
+                    format="%.2f", key="sb_add_qty",
+                )
+                if st.button("포트폴리오에 추가", use_container_width=True,
+                             type="primary", key="sb_add_btn"):
+                    _sb_r = _db_upsert_portfolio(_sb_uid, _sb_ticker_val, _sb_price, _sb_qty)
+                    if _sb_r.get("merged"):
+                        st.toast(f"추가 매수 완료 — 평단가 자동 합산")
+                    else:
+                        st.toast(f"{_sb_ticker_val} 포트폴리오에 추가됐습니다.")
+                    st.rerun()
+
+# ─── 헤더 + 포트폴리오 대시보드 요약 카드 ────────────────────────────────────────
+st.markdown("""
+<div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;margin-top:4px">
+  <span class="gradient-text" style="font-size:1.75rem;font-weight:900">AI 주식 분석 대시보드</span>
+  <span style="font-size:.72rem;color:#8B5CF6;padding:3px 12px;
+               background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.35);
+               border-radius:20px;font-weight:700;letter-spacing:1px">PREMIUM</span>
+</div>
+""", unsafe_allow_html=True)
+
+# ── 포트폴리오 요약 3카드 (포트폴리오 탭 방문 후 갱신) ──────────────────────────
+_pf_hdr  = st.session_state.get("_pf_header_summary", {})
+_h_val   = _pf_hdr.get("total_val")
+_h_pnl   = _pf_hdr.get("total_pnl", 0.0)
+_h_pnlp  = _pf_hdr.get("total_pnl_pct", 0.0)
+_h_ovr   = _pf_hdr.get("overall_pct")
+
+_SVG_WALLET = ('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"'
+               ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+               ' stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/>'
+               '<path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/>'
+               '<path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>')
+_SVG_CHART  = ('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"'
+               ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+               ' stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/>'
+               '<line x1="12" y1="20" x2="12" y2="4"/>'
+               '<line x1="6" y1="20" x2="6" y2="14"/></svg>')
+_SVG_TREND  = ('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"'
+               ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+               ' stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>'
+               '<polyline points="16 7 22 7 22 13"/></svg>')
+
+_hc1, _hc2, _hc3 = st.columns(3)
+if _h_val is not None:
+    _pnl_c  = "#10B981" if _h_pnl  >= 0 else "#3B82F6"
+    _ovr_c  = "#10B981" if (_h_ovr or 0) >= 0 else "#3B82F6"
+    _pnl_rgb = "16,185,129" if _h_pnl >= 0 else "59,130,246"
+    _ovr_rgb = "16,185,129" if (_h_ovr or 0) >= 0 else "59,130,246"
+    _hc1.markdown(f"""
+<div class="ma-header-card" style="border:1px solid rgba(139,92,246,0.25)">
+  <div style="position:absolute;top:-15px;right:-15px;width:70px;height:70px;
+              background:radial-gradient(circle,rgba(139,92,246,.18) 0%,transparent 70%);border-radius:50%"></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+    <span style="font-size:.73rem;color:#94A3B8;font-weight:500;letter-spacing:.8px;text-transform:uppercase">총 평가금</span>
+    <span style="color:#8B5CF6">{_SVG_WALLET}</span>
+  </div>
+  <div style="font-size:1.6rem;font-weight:800;color:#E2E8F0;line-height:1.1">₩{_h_val:,.0f}</div>
+  <div style="font-size:.74rem;color:#8B5CF6;font-weight:600;margin-top:10px">포트폴리오 현재가치</div>
+</div>
+""", unsafe_allow_html=True)
+    _hc2.markdown(f"""
+<div class="ma-header-card" style="border:1px solid rgba({_pnl_rgb},.25)">
+  <div style="position:absolute;top:-15px;right:-15px;width:70px;height:70px;
+              background:radial-gradient(circle,rgba({_pnl_rgb},.15) 0%,transparent 70%);border-radius:50%"></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+    <span style="font-size:.73rem;color:#94A3B8;font-weight:500;letter-spacing:.8px;text-transform:uppercase">미실현 손익</span>
+    <span style="color:{_pnl_c}">{_SVG_CHART}</span>
+  </div>
+  <div style="font-size:1.6rem;font-weight:800;color:{_pnl_c};line-height:1.1">₩{_h_pnl:+,.0f}</div>
+  <div style="font-size:.74rem;color:{_pnl_c};font-weight:600;margin-top:10px">{_h_pnlp:+.2f}% 수익률</div>
+</div>
+""", unsafe_allow_html=True)
+    _hc3.markdown(f"""
+<div class="ma-header-card" style="border:1px solid rgba({_ovr_rgb},.25)">
+  <div style="position:absolute;top:-15px;right:-15px;width:70px;height:70px;
+              background:radial-gradient(circle,rgba({_ovr_rgb},.15) 0%,transparent 70%);border-radius:50%"></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+    <span style="font-size:.73rem;color:#94A3B8;font-weight:500;letter-spacing:.8px;text-transform:uppercase">누적 수익률</span>
+    <span style="color:{_ovr_c}">{_SVG_TREND}</span>
+  </div>
+  <div style="font-size:1.6rem;font-weight:800;color:{_ovr_c};line-height:1.1">{f"{_h_ovr:+.2f}%" if _h_ovr is not None else "—"}</div>
+  <div style="font-size:.74rem;color:{_ovr_c};font-weight:600;margin-top:10px">매도 이력 포함 전체 기간</div>
+</div>
+""", unsafe_allow_html=True)
+else:
+    _placeholder_html = (
+        '<div class="ma-header-card" style="border:1px solid rgba(255,255,255,0.06);text-align:center">'
+        '<div style="font-size:1.5rem;font-weight:700;color:#1E293B;margin-bottom:8px">—</div>'
+        '<div style="font-size:.72rem;color:#475569">💼 포트폴리오 탭 접속 후 갱신</div></div>'
+    )
+    _hc1.markdown(_placeholder_html, unsafe_allow_html=True)
+    _hc2.markdown(_placeholder_html, unsafe_allow_html=True)
+    _hc3.markdown(_placeholder_html, unsafe_allow_html=True)
+
+st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
 
 # 탭 위에 항상 표시되는 로딩 배너 플레이스홀더
 _loading_ph = st.empty()
@@ -4512,95 +4507,18 @@ def _render_portfolio_tab():
     _cum_profit_krw = sum(_krw(t["net_profit"],                 t["ticker"]) for t in _trade_history)
     _cum_buy_krw    = sum(_krw(t["buy_price"]  * t["quantity"], t["ticker"]) for t in _trade_history)
 
-    # ── 종목 추가 (목록 검색) ─────────────────────────────────────────────────
-    with st.expander("➕ 종목 추가", expanded=False):
-        _fa_market = st.radio(
-            "시장 선택", ["국내 주식", "국내 ETF", "미국 주식"],
-            horizontal=True, label_visibility="collapsed", key="pf_add_market",
-        )
-
-        _fa_ticker_val = ""
-        if _fa_market == "국내 주식":
-            with st.spinner("종목 목록 로딩 중..."):
-                _fa_list = _krx_stocks()
-            if _fa_list:
-                _pf_krx_q = st.text_input(
-                    "종목 검색", key="pf_add_krx_q",
-                    placeholder="종목명 또는 코드 (예: 삼성전자, 005930)",
-                )
-                _pf_krx_opts = (
-                    {k: v for k, v in _fa_list.items() if _pf_krx_q.lower() in k.lower()}
-                    if _pf_krx_q else _fa_list
-                ) or _fa_list
-                _fa_sel = st.selectbox(
-                    f"종목 선택 ({len(_pf_krx_opts):,}개)", list(_pf_krx_opts.keys()),
-                    key="pf_add_krx",
-                )
-                _fa_ticker_val = _pf_krx_opts[_fa_sel]
-            else:
-                st.warning("국내 종목 목록 로드 실패")
-
-        elif _fa_market == "국내 ETF":
-            with st.spinner("ETF 목록 로딩 중..."):
-                _fa_list = _etf_stocks()
-            if _fa_list:
-                _pf_etf_q = st.text_input(
-                    "ETF 검색", key="pf_add_etf_q",
-                    placeholder="ETF명 또는 코드 (예: KODEX 200, 069500)",
-                )
-                _pf_etf_opts = (
-                    {k: v for k, v in _fa_list.items() if _pf_etf_q.lower() in k.lower()}
-                    if _pf_etf_q else _fa_list
-                ) or _fa_list
-                _fa_sel = st.selectbox(
-                    f"ETF 선택 ({len(_pf_etf_opts):,}개)", list(_pf_etf_opts.keys()),
-                    key="pf_add_etf",
-                )
-                _fa_ticker_val = _pf_etf_opts[_fa_sel]
-            else:
-                st.warning("ETF 목록 로드 실패")
-
-        else:
-            with st.spinner("미국 종목 목록 로딩 중..."):
-                _fa_list = _us_stocks()
-            if _fa_list:
-                _pf_us_q = st.text_input(
-                    "종목 검색", key="pf_add_us_q",
-                    placeholder="회사명 또는 티커 (예: Apple, AAPL, 애플)",
-                )
-                _pf_us_opts = (
-                    {k: v for k, v in _fa_list.items() if _pf_us_q.lower() in k.lower()}
-                    if _pf_us_q else _fa_list
-                ) or _fa_list
-                _fa_sel = st.selectbox(
-                    f"종목 선택 ({len(_pf_us_opts):,}개)", list(_pf_us_opts.keys()),
-                    key="pf_add_us",
-                )
-                _fa_ticker_val = _pf_us_opts[_fa_sel]
-            else:
-                st.warning("미국 종목 목록 로드 실패")
-
-        if _fa_ticker_val:
-            _fa_is_krw = _fa_ticker_val.upper().endswith((".KS", ".KQ"))
-            _fa_c1, _fa_c2 = st.columns([2, 1])
-            _fa_price = _fa_c1.number_input(
-                "평단가", min_value=0.01, value=1.0,
-                step=100.0 if _fa_is_krw else 0.01,
-                format="%.0f" if _fa_is_krw else "%.2f",
-                key="pf_add_price",
-            )
-            _fa_qty = _fa_c2.number_input(
-                "수량", min_value=0.01, value=1.0, step=1.0, format="%.2f",
-                key="pf_add_qty",
-            )
-            if st.button("포트폴리오에 추가", use_container_width=True,
-                         type="primary", key="pf_add_btn"):
-                _up_r2 = _db_upsert_portfolio(_uid, _fa_ticker_val, _fa_price, _fa_qty)
-                if _up_r2.get("merged"):
-                    st.toast(f"{_fa_ticker_val} 추가 매수 완료 — 평단가 자동 합산")
-                else:
-                    st.toast(f"{_fa_ticker_val} 추가됐습니다.")
-                st.rerun(scope="fragment")
+    # ── 종목 추가 안내 (사이드바에서 추가) ──────────────────────────────────────
+    st.markdown("""
+<div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);
+            border-radius:12px;padding:12px 16px;margin-bottom:8px;
+            display:flex;align-items:center;gap:10px">
+  <span style="font-size:1.2rem">➕</span>
+  <div>
+    <div style="font-size:.85rem;font-weight:600;color:#C4B5FD">종목 추가는 사이드바(좌측)에서</div>
+    <div style="font-size:.75rem;color:#94A3B8;margin-top:2px">로그인 상태에서 사이드바 하단 '포트폴리오 종목 추가' 섹션 이용</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
     # ── 보유 종목 테이블 ──────────────────────────────────────────────────────
     if not _items:
@@ -4616,6 +4534,16 @@ def _render_portfolio_tab():
         )
         _total_pnl  = _total_val - _total_cost
         _total_pnl_pct = (_total_pnl / _total_cost * 100) if _total_cost else 0.0
+
+        # 헤더 3카드용 — 매 포트폴리오 탭 렌더 시 갱신
+        _hdr_total_in = _total_cost + _cum_buy_krw
+        st.session_state["_pf_header_summary"] = {
+            "total_val":     _total_val,
+            "total_pnl":     _total_pnl,
+            "total_pnl_pct": _total_pnl_pct,
+            "overall_pct":   ((_total_val + _cum_sell_krw) / _hdr_total_in * 100 - 100)
+                             if _hdr_total_in > 0 else None,
+        }
 
         _pnl_color    = "#10B981" if _total_pnl >= 0 else "#3B82F6"
         _profit_color = "#10B981" if _cum_profit_krw >= 0 else "#3B82F6"
