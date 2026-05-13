@@ -266,9 +266,24 @@ if _saved_settings.get("krx_pw") and not os.environ.get("KRX_PW"):
     os.environ["KRX_PW"] = _saved_settings["krx_pw"]
 
 # ─── 캐시 래퍼 ────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
-def _stock_data(ticker, period):
+
+def _market_bucket() -> str:
+    """장중(평일 09:00~15:30 KST) → 1분 단위 버킷, 장외 → 1시간 단위 버킷.
+    @st.cache_data의 TTL을 런타임에 바꿀 수 없으므로 bucket 인자로 사실상 TTL을 제어한다.
+    """
+    now = _now_kst()
+    m = now.hour * 60 + now.minute
+    if now.weekday() < 5 and 9 * 60 <= m < 15 * 60 + 30:
+        return now.strftime("%Y%m%d-%H%M")
+    return now.strftime("%Y%m%d-%H")
+
+@st.cache_data(ttl=3600)
+def _stock_data_inner(ticker: str, period: str, bucket: str) -> "pd.DataFrame":
+    _ = bucket  # 캐시 키 분리용 — 함수 본문에서는 사용하지 않음
     return get_stock_data(ticker, period)
+
+def _stock_data(ticker: str, period: str) -> "pd.DataFrame":
+    return _stock_data_inner(ticker, period, _market_bucket())
 
 @st.cache_data(ttl=300)
 def _movers(n: int = 100):
@@ -418,8 +433,22 @@ def _top_nasdaq(n: int = 500):  return get_top_nasdaq_stocks(n)
 @st.cache_data(ttl=86400)
 def _us_stocks():   return get_us_stock_list()
 
+@st.cache_data(ttl=3600)
+def _etf_stocks_inner(bucket: str) -> dict:
+    _ = bucket  # 캐시 키 분리용
+    return get_krx_etf_list()
+
+def _etf_stocks() -> dict:
+    return _etf_stocks_inner(_market_bucket())
+
 @st.cache_data(ttl=86400)
-def _etf_stocks():  return get_krx_etf_list()
+def _all_stocks_merged() -> dict:
+    """세 종목 사전을 합산한 결과를 하루 단위로 캐싱."""
+    result: dict = {}
+    result.update(_krx_stocks() or {})
+    result.update(_etf_stocks() or {})
+    result.update(_us_stocks() or {})
+    return result
 
 # 종목 목록 백그라운드 사전 로딩
 if "stock_lists_preloaded" not in st.session_state:
@@ -449,7 +478,7 @@ def _check_is_etf(ticker: str) -> bool:
     if not (ticker.endswith(".KS") or ticker.endswith(".KQ")):
         return False
     try:
-        etf_list = get_krx_etf_list()
+        etf_list = _etf_stocks()
         code = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
         return f"{code}.KS" in etf_list.values() or f"{code}.KQ" in etf_list.values()
     except Exception:
@@ -698,10 +727,7 @@ def _render_sector_etf_prices():
 # ═════════════════════════════════════════════════════════════════════════════
 # 사이드바
 # ═════════════════════════════════════════════════════════════════════════════
-_all_stocks: dict = {}
-_all_stocks.update(_krx_stocks() or {})
-_all_stocks.update(_etf_stocks() or {})
-_all_stocks.update(_us_stocks() or {})
+_all_stocks: dict = _all_stocks_merged()
 
 _sidebar_result = render_sidebar(
     all_stocks        = _all_stocks,

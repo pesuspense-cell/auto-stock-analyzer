@@ -71,11 +71,16 @@ def save_settings_db(data: dict) -> None:
         pass
 
 
+_DB_INITIALIZED = False
+
 @contextmanager
 def _get_conn():
+    global _DB_INITIALIZED
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    _init_db(conn)
+    if not _DB_INITIALIZED:
+        _init_db(conn)
+        _DB_INITIALIZED = True
     try:
         yield conn
     finally:
