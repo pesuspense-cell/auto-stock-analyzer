@@ -1858,6 +1858,40 @@ with tab_rec:
             """)
 
         st.divider()
+
+        # ── 인사이트 요약 카드 (항상 표시) ──────────────────────────────────────
+        _top_picks = rec_df[rec_df["종합점수"] >= 3.0].head(3)
+        if not _top_picks.empty:
+            st.markdown("### 🎯 TOP 매수 후보")
+            _pick_cols = st.columns(min(len(_top_picks), 3))
+            for _i, (_idx, _row) in enumerate(zip(range(3), _top_picks.itertuples())):
+                _sc    = getattr(_row, "종합점수", 0)
+                _name  = getattr(_row, "종목명", "—")
+                _price = getattr(_row, "현재가", 0)
+                _ret   = getattr(_row, "예상수익률__", getattr(_row, "예상수익률(%)", 0))
+                _chg   = getattr(_row, "등락률_1일___", getattr(_row, "등락률(1일)%", 0))
+                _rec_lbl = getattr(_row, "종합추천", "—")
+                _is_krw_p = _price > 500
+                _pfmt   = "{:,.0f}" if _is_krw_p else "{:,.2f}"
+                _chg_c  = "#10B981" if _chg >= 0 else "#ef4444"
+                _sc_c   = "#10B981" if _sc >= 3 else "#fbbf24"
+                _pick_cols[_i].markdown(f"""
+<div style="background:linear-gradient(135deg,#0d1b2a,#1a2f3a);
+            border:1px solid rgba(16,185,129,0.4);border-radius:14px;
+            padding:14px;box-shadow:0 0 16px rgba(16,185,129,0.1);">
+  <div style="font-size:0.7rem;color:#94A3B8;letter-spacing:1px;margin-bottom:4px;">#{_i+1} PICK</div>
+  <div style="font-size:1rem;font-weight:800;color:#E2E8F0;margin-bottom:4px;">{_name}</div>
+  <div style="font-size:1.3rem;font-weight:700;color:#E2E8F0;">{_pfmt.format(_price)}</div>
+  <div style="font-size:0.85rem;color:{_chg_c};margin:3px 0;">{_chg:+.2f}% 등락</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;
+              border-top:1px solid rgba(255,255,255,0.07);padding-top:8px;">
+    <span style="font-size:0.78rem;color:{_sc_c};font-weight:700;">종합 {_sc:+.2f}</span>
+    <span style="font-size:0.78rem;color:#a5d6a7;">+{_ret:.1f}% 예상</span>
+  </div>
+  <div style="font-size:0.75rem;color:#8B5CF6;margin-top:4px;">{_rec_lbl}</div>
+</div>""", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+
         st.markdown("### 📋 종목별 종합 분석표")
 
         def _row_style(row):
@@ -1893,72 +1927,71 @@ with tab_rec:
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
-        # ── 리스크-리턴 산점도 (마커 색 = 종합점수) ──────────────────────────
-        st.markdown("### 📊 리스크 - 리턴 매트릭스")
-        st.caption("마커 색상: 🟢 종합점수 ≥ 3  /  🟡 0 ~ 3  /  🔴 < 0")
-        fig_sc = go.Figure()
-        for _, row in rec_df.iterrows():
-            cs = row["종합점수"]
-            if cs >= 3.0:
-                color, size = "#66bb6a", 16
-            elif cs >= 0:
-                color, size = "#ffa726", 13
-            else:
-                color, size = "#ef5350", 13
-            fig_sc.add_trace(go.Scatter(
-                x=[row["변동성(%)"]],
-                y=[row["예상수익률(%)"]],
-                mode="markers+text",
-                text=[row["종목명"]],
-                textposition="top center",
-                marker=dict(size=size, color=color, line=dict(width=1, color="#fff")),
-                customdata=[[row["종합점수"], row["기술점수"], row["샤프지수"]]],
-                hovertemplate=(
-                    "<b>%{text}</b><br>"
-                    "변동성: %{x:.1f}%<br>"
-                    "예상수익률: %{y:+.2f}%<br>"
-                    "종합점수: %{customdata[0]:+.2f}<br>"
-                    "기술점수: %{customdata[1]:+.1f}<br>"
-                    "샤프지수: %{customdata[2]:.2f}<extra></extra>"
-                ),
-                showlegend=False,
-            ))
-        fig_sc.add_hline(y=0, line_color="rgba(255,255,255,0.25)", line_dash="dash")
-        fig_sc.update_layout(
-            height=420, template="plotly_dark",
-            xaxis_title="변동성 (%)", yaxis_title="예상 수익률 (%)",
-            margin=dict(t=10),
-        )
-        st.plotly_chart(fig_sc, use_container_width=True)
+        # ── 리스크-리턴 산점도 (기본 숨김 — Expander) ──────────────────────────
+        with st.expander("📊 리스크 - 리턴 매트릭스", expanded=False):
+            st.caption("마커 색상: 🟢 종합점수 ≥ 3  /  🟡 0 ~ 3  /  🔴 < 0")
+            fig_sc = go.Figure()
+            for _, row in rec_df.iterrows():
+                cs = row["종합점수"]
+                if cs >= 3.0:
+                    color, size = "#66bb6a", 16
+                elif cs >= 0:
+                    color, size = "#ffa726", 13
+                else:
+                    color, size = "#ef5350", 13
+                fig_sc.add_trace(go.Scatter(
+                    x=[row["변동성(%)"]],
+                    y=[row["예상수익률(%)"]],
+                    mode="markers+text",
+                    text=[row["종목명"]],
+                    textposition="top center",
+                    marker=dict(size=size, color=color, line=dict(width=1, color="#fff")),
+                    customdata=[[row["종합점수"], row["기술점수"], row["샤프지수"]]],
+                    hovertemplate=(
+                        "<b>%{text}</b><br>"
+                        "변동성: %{x:.1f}%<br>"
+                        "예상수익률: %{y:+.2f}%<br>"
+                        "종합점수: %{customdata[0]:+.2f}<br>"
+                        "기술점수: %{customdata[1]:+.1f}<br>"
+                        "샤프지수: %{customdata[2]:.2f}<extra></extra>"
+                    ),
+                    showlegend=False,
+                ))
+            fig_sc.add_hline(y=0, line_color="rgba(255,255,255,0.25)", line_dash="dash")
+            fig_sc.update_layout(
+                height=420, template="plotly_dark",
+                xaxis_title="변동성 (%)", yaxis_title="예상 수익률 (%)",
+                margin=dict(t=10),
+            )
+            st.plotly_chart(fig_sc, use_container_width=True)
 
-        # ── 종합점수 vs 기술점수 비교 막대 ──────────────────────────────────
-        st.markdown("### 🏆 종합점수 순위 (기술점수 비교)")
-        st.caption("회색 = 기술점수 / 색상 = 종합점수 — 두 점수 차이가 클수록 수익률·샤프 영향이 큰 종목")
-        fig_rank = go.Figure()
-        fig_rank.add_trace(go.Bar(
-            name="기술점수",
-            x=rec_df["종목명"],
-            y=rec_df["기술점수"],
-            marker_color="rgba(120,120,120,0.45)",
-            text=[f"{v:+.1f}" for v in rec_df["기술점수"]],
-            textposition="outside",
-        ))
-        fig_rank.add_trace(go.Bar(
-            name="종합점수",
-            x=rec_df["종목명"],
-            y=rec_df["종합점수"],
-            marker_color=["#66bb6a" if v >= 0 else "#ef5350" for v in rec_df["종합점수"]],
-            text=[f"{v:+.2f}" for v in rec_df["종합점수"]],
-            textposition="outside",
-        ))
-        fig_rank.update_layout(
-            height=360, template="plotly_dark",
-            barmode="overlay",
-            yaxis_title="점수", margin=dict(t=10, b=60),
-            xaxis_tickangle=-30,
-            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
-        )
-        st.plotly_chart(fig_rank, use_container_width=True)
+        with st.expander("🏆 종합점수 순위 차트 (기술점수 비교)", expanded=False):
+            st.caption("회색 = 기술점수 / 색상 = 종합점수 — 두 점수 차이가 클수록 수익률·샤프 영향이 큰 종목")
+            fig_rank = go.Figure()
+            fig_rank.add_trace(go.Bar(
+                name="기술점수",
+                x=rec_df["종목명"],
+                y=rec_df["기술점수"],
+                marker_color="rgba(120,120,120,0.45)",
+                text=[f"{v:+.1f}" for v in rec_df["기술점수"]],
+                textposition="outside",
+            ))
+            fig_rank.add_trace(go.Bar(
+                name="종합점수",
+                x=rec_df["종목명"],
+                y=rec_df["종합점수"],
+                marker_color=["#66bb6a" if v >= 0 else "#ef5350" for v in rec_df["종합점수"]],
+                text=[f"{v:+.2f}" for v in rec_df["종합점수"]],
+                textposition="outside",
+            ))
+            fig_rank.update_layout(
+                height=360, template="plotly_dark",
+                barmode="overlay",
+                yaxis_title="점수", margin=dict(t=10, b=60),
+                xaxis_tickangle=-30,
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_rank, use_container_width=True)
 
     else:
         st.info("'분석 실행' 버튼을 클릭하면 AI가 주요 종목을 분석합니다.")
@@ -2132,18 +2165,55 @@ with tab_news:
                 llm_badge = "&nbsp;|&nbsp; 🔑 키워드 분석"
             summary_html = f'<div style="font-size:0.88rem;color:#ccc;margin-top:6px;">{s_summary}</div>' if s_summary else ""
 
+            # ── 감성 게이지 바 (항상 표시) ──────────────────────────────────────
+            _gauge_pct = int((s_score + 5) / 10 * 100)  # -5~+5 → 0~100%
+            _gauge_clr = (
+                "#10B981" if s_score >= 1.5 else
+                ("#ef4444" if s_score <= -1.5 else "#eab308")
+            )
             st.markdown(
-                f'<div style="background:{banner_color};border-radius:10px;padding:12px 18px;margin-bottom:14px;">'
+                f'<div style="background:{banner_color};border-radius:10px;padding:12px 18px;margin-bottom:8px;">'
                 f'<div style="font-size:1.05rem;font-weight:bold;color:{text_color};">'
                 f'뉴스 감성: {s_label} &nbsp;'
                 f'<span style="font-size:0.95rem;font-weight:normal;">({s_score:+.1f}점 / ±5)</span>'
                 f'{sector_html}{indiv_html}'
                 f'{llm_badge}'
                 f'</div>'
+                f'<div style="position:relative;background:#2a2d3e;border-radius:4px;height:8px;margin-top:8px;">'
+                f'<div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:rgba(255,255,255,0.2);"></div>'
+                f'<div style="background:{_gauge_clr};width:{_gauge_pct}%;height:8px;border-radius:4px;transition:width .4s;"></div>'
+                f'</div>'
+                f'<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#666;margin-top:2px;"><span>-5 악재</span><span>0 중립</span><span>+5 호재</span></div>'
                 f'{summary_html}'
                 f'</div>',
                 unsafe_allow_html=True
             )
+
+            # ── 핵심 키워드 Top 3 (항상 표시) ──────────────────────────────────
+            _top_kw_list: list[str] = []
+            for _kw_item in sent.get("detail", [])[:8]:
+                _kw_title = _kw_item.get("title", "")
+                if _kw_title and not _kw_item.get("skipped") and not _kw_item.get("hidden"):
+                    # 제목에서 핵심어를 추출하거나 tier 기준으로 키워드 선정
+                    _kw_reason = _kw_item.get("reason", "")
+                    _kw_score  = _kw_item.get("score", 0.0)
+                    if abs(_kw_score) >= 0.3 and _kw_reason and len(_top_kw_list) < 3:
+                        _kw_word = _kw_reason.split("—")[0].strip()[:20] if "—" in _kw_reason else _kw_reason[:20]
+                        _top_kw_list.append((_kw_word, _kw_score))
+            if _top_kw_list:
+                _kw_tags = "".join(
+                    f'<span style="background:{"#1b5e20" if sc >= 0 else "#7f0000"};'
+                    f'color:{"#a5d6a7" if sc >= 0 else "#ff8a80"};'
+                    f'border-radius:14px;padding:3px 12px;margin:2px 4px;display:inline-block;font-size:0.82rem;font-weight:600;">'
+                    f'{"📈" if sc >= 0 else "📉"} {kw}</span>'
+                    for kw, sc in _top_kw_list
+                )
+                st.markdown(
+                    f'<div style="margin-bottom:10px;">'
+                    f'<span style="font-size:0.75rem;color:#888;margin-right:6px;">🔑 핵심 키워드</span>'
+                    f'{_kw_tags}</div>',
+                    unsafe_allow_html=True,
+                )
 
             # 기사별 표시
             def _render_article(item, art_idx, d, *, faded=False):
@@ -2215,11 +2285,17 @@ with tab_news:
                 else:
                     main_items.append((item, d))
 
-            for art_idx, (item, d) in enumerate(main_items):
-                _render_article(item, art_idx, d)
+            # ── 뉴스 원문 목록 (기본 숨김) ──────────────────────────────────────
+            with st.expander(
+                f"📰 뉴스 원문 목록 ({len(main_items)}건) — 클릭하여 펼치기",
+                expanded=False,
+            ):
+                for art_idx, (item, d) in enumerate(main_items):
+                    _render_article(item, art_idx, d)
 
-            if other_items:
-                with st.expander(f"기타 뉴스 ({len(other_items)}건) — C급·제외 항목", expanded=False):
+                if other_items:
+                    st.divider()
+                    st.caption(f"C급·제외 항목 ({len(other_items)}건)")
                     for art_idx, (item, d) in enumerate(other_items):
                         _render_article(item, len(main_items) + art_idx, d, faded=True)
 
@@ -2925,6 +3001,26 @@ with tab_fund:
 
             > 📘 참고: 《현명한 투자자》(그레이엄) · 《전설로 떠나는 월가의 영웅》(린치) · 《최고의 주식 최적의 타이밍》(오닐)
             """)
+@st.dialog("📊 차트 분석", width="large")
+def _show_chart_dialog(fig: "go.Figure", ticker_sym: str) -> None:
+    """차트를 모달 창에서 렌더링한다."""
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={
+            "scrollZoom": False,
+            "displayModeBar": True,
+            "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
+            "modeBarButtonsToAdd":    ["pan2d", "zoomIn2d", "zoomOut2d"],
+            "toImageButtonOptions": {
+                "format": "png",
+                "filename": f"{ticker_sym}_chart",
+                "scale": 2,
+            },
+        },
+    )
+
+
 def generate_signal(data, advanced, hybrid, news_result, expected, signals):
     """신호등 3단 판정: BUY / WAIT / SELL + 액션 메시지 + 근거 리스트 반환"""
     if data.empty or len(data) < 2:
@@ -3064,6 +3160,104 @@ with tab_chart:
             f'</div>',
             unsafe_allow_html=True,
         )
+
+    # ══ AI 종합 리포트 배너 (항상 최상단 — 전체 너비) ═══════════════════════════
+    if _data_ready:
+        _rpt_signal, _rpt_action, _rpt_reasons = generate_signal(
+            data=data, advanced=advanced, hybrid=hybrid,
+            news_result=news_result, expected=expected, signals=signals,
+        )
+        _rpt_h_score = hybrid.get("hybrid_score", 0.0)
+        _rpt_h_label = hybrid.get("label", "중립/관망")
+        _rpt_h_badge = hybrid.get("badge", "⚪")
+        _rpt_ns      = news_result.get("score", 0.0) if isinstance(news_result, dict) else 0.0
+        _rpt_fs      = fund_score_data.get("fund_score", 0)
+        _rpt_f_label = fund_score_data.get("fund_label", "N/A")
+
+        if _rpt_signal == "BUY":
+            _rpt_grad  = "linear-gradient(135deg,#0a2318 0%,#0d2f1c 50%,#0a1f14 100%)"
+            _rpt_border = "#22c55e"
+            _rpt_fc     = "#4ade80"
+            _rpt_glow   = "rgba(34,197,94,0.15)"
+        elif _rpt_signal == "SELL":
+            _rpt_grad  = "linear-gradient(135deg,#1f0808 0%,#2d1010 50%,#1a0707 100%)"
+            _rpt_border = "#ef4444"
+            _rpt_fc     = "#f87171"
+            _rpt_glow   = "rgba(239,68,68,0.15)"
+        else:
+            _rpt_grad  = "linear-gradient(135deg,#1c1a0a 0%,#2a2510 50%,#1a180a 100%)"
+            _rpt_border = "#eab308"
+            _rpt_fc     = "#facc15"
+            _rpt_glow   = "rgba(234,179,8,0.12)"
+
+        _rpt_emoji   = "🟢" if _rpt_signal == "BUY" else ("🔴" if _rpt_signal == "SELL" else "🟡")
+        _rpt_tech_c  = "#10B981" if _rpt_h_score >= 0 else "#ef4444"
+        _rpt_news_c  = "#10B981" if _rpt_ns >= 0 else "#ef4444"
+        _rpt_fund_c  = "#80cbc4" if _rpt_fs >= 3 else ("#ffcc80" if _rpt_fs <= -2 else "#94A3B8")
+        _rpt_reasons_html = "".join(
+            f'<span style="display:inline-block;background:rgba(255,255,255,0.06);'
+            f'border-radius:20px;padding:3px 12px;margin:3px 4px;font-size:0.78rem;color:#CBD5E1;">'
+            f'{_rpt_emoji} {r}</span>'
+            for r in _rpt_reasons[:3]
+        )
+
+        _sl_rpt = get_stop_loss_targets(data) if not data.empty else None
+        _has_rpt_price = not close.empty
+        _rpt_cur  = float(close.iloc[-1]) if _has_rpt_price else 0
+        _rpt_is_krw = _rpt_cur > 500
+        _rpt_fmt  = "{:,.0f}" if _rpt_is_krw else "{:,.2f}"
+        _rpt_sl   = _rpt_fmt.format(_sl_rpt["stop_8pct"]) if _sl_rpt else "—"
+        _rpt_tgt  = _rpt_fmt.format(_sl_rpt["target_2r"])  if _sl_rpt else "—"
+
+        st.markdown(f"""
+<div style="background:{_rpt_grad};border:1px solid {_rpt_border}55;border-radius:18px;
+            padding:20px 24px;margin-bottom:18px;
+            box-shadow:0 0 40px {_rpt_glow},inset 0 1px 0 rgba(255,255,255,0.05);">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:260px;">
+      <div style="font-size:0.65rem;color:#64748B;letter-spacing:3px;text-transform:uppercase;margin-bottom:8px;">
+        ✦ AI 종합 리포트
+      </div>
+      <div style="font-size:2.2rem;font-weight:900;color:{_rpt_fc};letter-spacing:3px;line-height:1.1;">
+        {_rpt_emoji} {_rpt_signal}
+      </div>
+      <div style="font-size:0.9rem;color:{_rpt_fc}cc;margin-top:8px;line-height:1.6;">
+        {_rpt_action}
+      </div>
+      <div style="margin-top:10px;">{_rpt_reasons_html}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;min-width:280px;">
+      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">단타 신호</div>
+        <div style="font-size:0.95rem;font-weight:700;color:{_rpt_tech_c};margin-top:3px;">{_rpt_h_badge} {_rpt_h_label}</div>
+        <div style="font-size:0.75rem;color:{_rpt_tech_c};opacity:.8;">{_rpt_h_score:+.1f}점</div>
+      </div>
+      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">뉴스 감성</div>
+        <div style="font-size:0.95rem;font-weight:700;color:{_rpt_news_c};margin-top:3px;">{_rpt_ns:+.1f}점</div>
+        <div style="font-size:0.75rem;color:#64748B;">±5 기준</div>
+      </div>
+      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">장투 신호</div>
+        <div style="font-size:0.95rem;font-weight:700;color:{_rpt_fund_c};margin-top:3px;">{_rpt_f_label}</div>
+        <div style="font-size:0.75rem;color:{_rpt_fund_c};opacity:.8;">{_rpt_fs:+.1f}점</div>
+      </div>
+      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">현재가</div>
+        <div style="font-size:0.95rem;font-weight:700;color:#E2E8F0;margin-top:3px;">{_rpt_fmt.format(_rpt_cur) if _has_rpt_price else "—"}</div>
+      </div>
+      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">1차 목표가</div>
+        <div style="font-size:0.95rem;font-weight:700;color:#a5d6a7;margin-top:3px;">{_rpt_tgt}</div>
+      </div>
+      <div style="background:rgba(0,0,0,0.25);border-radius:10px;padding:10px 12px;text-align:center;">
+        <div style="font-size:0.65rem;color:#64748B;letter-spacing:1px;">손절가</div>
+        <div style="font-size:0.95rem;font-weight:700;color:#ef9a9a;margin-top:3px;">{_rpt_sl}</div>
+      </div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
     col_chart, col_sig = st.columns([1, 1])
 
@@ -3353,21 +3547,20 @@ with tab_chart:
             hovermode="x unified", # 모든 패널 동시 툴팁
         )
 
-        st.plotly_chart(
-            fig,
+        # ── 차트 모달 버튼 ───────────────────────────────────────────────────────
+        st.markdown("""
+<div style="margin-bottom:6px;font-size:0.8rem;color:#94A3B8;">
+  캔들·EMA·볼린저밴드·RSI·MACD·ADX·KOSPI 6개 패널 포함
+</div>
+""", unsafe_allow_html=True)
+        if st.button(
+            "📊 차트 보기 (새 창)",
+            type="primary",
             use_container_width=True,
-            config={
-                "scrollZoom": False,              # 터치 스크롤 줌 비활성화
-                "displayModeBar": True,
-                "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
-                "modeBarButtonsToAdd":    ["pan2d", "zoomIn2d", "zoomOut2d"],
-                "toImageButtonOptions": {
-                    "format": "png",
-                    "filename": f"{ticker}_chart",
-                    "scale": 2,
-                },
-            },
-        )
+            key="show_chart_btn",
+            help="클릭하면 차트 분석 창이 열립니다.",
+        ):
+            _show_chart_dialog(fig, ticker)
 
     # ── 신호 패널 ─────────────────────────────────────────────────────────────
     with col_sig:
