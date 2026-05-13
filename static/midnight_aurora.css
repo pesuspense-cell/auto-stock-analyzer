@@ -106,30 +106,47 @@ div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="
   color: var(--loss) !important;
 }
 
-/* ─── Tab bar ──────────────────────────────────────────────────── */
+/* ─── Tab bar (sticky fixed top) ───────────────────────────────── */
+[data-testid="stTabBar"],
 .stTabs [data-baseweb="tab-list"] {
-  background: var(--surface) !important;
-  border-radius: var(--radius-lg) !important;
-  padding: 4px !important;
-  border: 1px solid var(--border) !important;
-  gap: 2px !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 200 !important;
+  background: rgba(14,17,23,0.97) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  border-radius: 0 !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 6px 4px !important;
+  gap: 4px !important;
+  margin-left: -1rem !important;
+  margin-right: -1rem !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
 }
 .stTabs [data-baseweb="tab"] {
-  border-radius: 10px !important;
+  border-radius: 8px !important;
   color: var(--text-2) !important;
   font-weight: 500 !important;
-  font-size: 0.88rem !important;
-  transition: all 0.2s ease !important;
+  font-size: 0.85rem !important;
+  padding: 7px 14px !important;
+  transition: all 0.18s ease !important;
+  white-space: nowrap !important;
 }
 .stTabs [aria-selected="true"] {
-  background: rgba(139,92,246,0.18) !important;
+  background: rgba(139,92,246,0.20) !important;
   color: var(--text) !important;
   border-bottom: 2px solid var(--accent) !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
 }
 .stTabs [data-baseweb="tab"]:hover {
-  background: rgba(255,255,255,0.06) !important;
+  background: rgba(255,255,255,0.07) !important;
   color: var(--text) !important;
+}
+/* 탭 패널 상단 여백 — sticky bar 아래 내용이 붙지 않도록 */
+.stTabs [data-baseweb="tab-panel"] {
+  padding-top: 1.2rem !important;
 }
 
 /* ─── Primary 버튼 ─────────────────────────────────────────────── */

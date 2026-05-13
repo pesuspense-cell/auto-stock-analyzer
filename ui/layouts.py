@@ -671,6 +671,12 @@ def render_market_tab(
     with tab:
         st.subheader("🌐 시장 현황")
 
+        # ── 섹터 ETF 실시간 등락표 (최상단) ─────────────────────────────────
+        st.markdown("### 🗺️ 주요 섹터 ETF 실시간 등락표")
+        st.caption("미국 ETF 15개 + 국내 섹터별 대표 ETF 20개 · 전일 대비 등락률 · 10분 캐시")
+        sector_etf_prices_fn()
+
+        st.divider()
         st.markdown("### 🏆 전체 시장 급등·급락 TOP 10 (KOSPI+KOSDAQ)")
         _fm_gainers, _fm_losers = full_movers_fn()
 
@@ -789,11 +795,6 @@ def render_market_tab(
             except Exception:
                 pass
 
-        # ── 섹터 ETF 실시간 등락표 ────────────────────────────────────────────
-        st.divider()
-        st.markdown("### 🗺️ 주요 섹터 ETF 실시간 등락표")
-        st.caption("미국 ETF 15개 + 국내 섹터별 대표 ETF 20개 · 전일 대비 등락률 · 10분 캐시")
-        sector_etf_prices_fn()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1293,49 +1294,43 @@ def render_chart_tab(
                 unsafe_allow_html=True,
             )
 
-        # ── 차트 | 신호 2컬럼 ─────────────────────────────────────────────
-        col_chart, col_sig = st.columns([1, 1])
+        # ── 차트 생성 (dialog용) ───────────────────────────────────────────
+        try:
+            _kospi_raw = yf.download("^KS11", period=aperiod, auto_adjust=True, progress=False)
+            _kospi_raw = _flatten_columns(_kospi_raw)
+            _kospi_df  = _kospi_raw[["Open", "High", "Low", "Close"]].dropna()
+        except Exception:
+            _kospi_df = pd.DataFrame()
 
-        with col_chart:
-            title_label = f"{sname} ({ticker})" if sname != ticker else ticker
-            _badge_is_krw = ticker.upper().endswith((".KS", ".KQ"))
-            _badge_price_str = (
-                ("₩" if _badge_is_krw else "$") +
-                ("{:,.0f}" if _badge_is_krw else "{:,.2f}").format(rt_price)
-            ) if (rt_price > 0 and data_ready) else "—"
+        data = _flatten_columns(data)
+        fig  = _build_plotly_chart(data, _kospi_df, ticker, aperiod)
+
+        # ── 종목 배지 + 차트 보기 버튼 (인라인) ───────────────────────────
+        title_label = f"{sname} ({ticker})" if sname != ticker else ticker
+        _badge_is_krw = ticker.upper().endswith((".KS", ".KQ"))
+        _badge_price_str = (
+            ("₩" if _badge_is_krw else "$") +
+            ("{:,.0f}" if _badge_is_krw else "{:,.2f}").format(rt_price)
+        ) if (rt_price > 0 and data_ready) else "—"
+
+        _badge_col, _btn_col = st.columns([9, 1])
+        with _badge_col:
             st.markdown(
                 stock_badge_html(title_label, _badge_price_str, rt_realtime and data_ready and rt_price > 0),
                 unsafe_allow_html=True,
             )
-
-            # KOSPI 데이터 사전 수집
-            try:
-                _kospi_raw = yf.download("^KS11", period=aperiod, auto_adjust=True, progress=False)
-                _kospi_raw = _flatten_columns(_kospi_raw)
-                _kospi_df  = _kospi_raw[["Open", "High", "Low", "Close"]].dropna()
-            except Exception:
-                _kospi_df = pd.DataFrame()
-
-            data = _flatten_columns(data)
-
-            fig = _build_plotly_chart(data, _kospi_df, ticker, aperiod)
-
-            st.markdown("""
-<div style="margin-bottom:6px;font-size:0.8rem;color:#94A3B8;">
-  캔들·EMA·볼린저밴드·RSI·MACD·ADX·KOSPI 6개 패널 포함
-</div>""", unsafe_allow_html=True)
-            if st.button("📊 차트 보기 (새 창)", type="primary", use_container_width=True,
-                         key="show_chart_btn", help="클릭하면 차트 분석 창이 열립니다."):
+        with _btn_col:
+            if st.button("📊 차트", key="show_chart_btn",
+                         help="캔들·EMA·볼린저밴드·RSI·MACD·ADX·KOSPI 6패널"):
                 chart_dialog(fig, ticker)
 
-        # ── 신호 패널 ──────────────────────────────────────────────────────
-        with col_sig:
-            _render_signal_panel(
-                state=state,
-                inv_data_fn=inv_data_fn,
-                gemini_key=gemini_key,
-                groq_key=groq_key,
-            )
+        # ── AI 매매 신호 패널 (풀 너비) ──────────────────────────────────
+        _render_signal_panel(
+            state=state,
+            inv_data_fn=inv_data_fn,
+            gemini_key=gemini_key,
+            groq_key=groq_key,
+        )
 
         # ── 차트 하단 추가 분석 섹션들 ────────────────────────────────────
         if data_ready:
