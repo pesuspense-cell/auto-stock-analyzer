@@ -34,8 +34,15 @@
   background: var(--bg) !important;
   color: var(--text) !important;
 }
+
+/* Streamlit 상단 툴바 숨김 — 콘텐츠가 38px 툴바에 가려지는 문제 해결 */
+header[data-testid="stHeader"] {
+  display: none !important;
+}
+#MainMenu, footer { visibility: hidden; }
+
 .block-container {
-  padding-top: 1rem;
+  padding-top: 1.5rem;
 }
 .main .block-container {
   background: transparent !important;
