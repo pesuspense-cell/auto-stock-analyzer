@@ -695,12 +695,6 @@ def _render_sector_etf_prices():
         else:
             st.caption("국내 ETF 데이터 없음")
 
-# ─── 분석 초기화 콜백 ─────────────────────────────────────────────────────────
-def _clear_analysis():
-    st.session_state.pop("analyzed_ticker", None)
-    st.session_state.pop("analyzed_sname", None)
-    st.session_state.pop("analyzed_period", None)
-
 # ═════════════════════════════════════════════════════════════════════════════
 # 사이드바
 # ═════════════════════════════════════════════════════════════════════════════
@@ -726,7 +720,6 @@ _sidebar_result = render_sidebar(
     etf_stocks_fn     = _etf_stocks,
     us_stocks_fn      = _us_stocks,
     now_kst_fn        = _now_kst,
-    clear_analysis_fn = _clear_analysis,
 )
 
 ticker         = _sidebar_result["ticker"]
