@@ -113,42 +113,169 @@ except Exception:
 
 st.markdown("""
 <style>
-    .block-container { padding-top: 1rem; }
-    div[data-testid="metric-container"] { background:#1e2130; border-radius:8px; padding:8px 12px; }
-    .signal-box { padding:12px 8px; border-radius:12px; text-align:center; margin-bottom:12px; word-break:keep-all; }
-    .wl-item { background:#1e2130; border-radius:8px; padding:8px 12px; margin:4px 0;
-               display:flex; justify-content:space-between; align-items:center; }
-    @keyframes loading-sweep {
-        0%   { transform: translateX(-100%); }
-        50%  { transform: translateX(0%); }
-        100% { transform: translateX(100%); }
-    }
-    @keyframes loading-pulse {
-        0%, 100% { opacity: 1; }
-        50%       { opacity: 0.5; }
-    }
-    .loading-bar-track {
-        background: #1e2444; border-radius: 8px; height: 6px;
-        overflow: hidden; margin-top: 16px;
-    }
-    .loading-bar-fill {
-        background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6);
-        height: 100%; width: 100%;
-        animation: loading-sweep 1.8s ease-in-out infinite;
-    }
-    .loading-icon { animation: loading-pulse 1.4s ease-in-out infinite; display: inline-block; }
+/* ═══════════════════════════════════════════════════════════════════
+   MIDNIGHT AURORA THEME — 프리미엄 AI 투자 비서
+   Main: #8B5CF6 (Violet) ↔ #3B82F6 (Blue) gradient
+   BG:   #0F172A  Surface: rgba(30,41,59,0.7)
+   Up:   #10B981 (Emerald)  Down: #3B82F6 (Sky Blue)
+═══════════════════════════════════════════════════════════════════ */
 
-    /* 모바일: 차트분석탭 — 신호 패널을 위로, 차트를 아래로 */
-    @media (max-width: 768px) {
-        div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
-            flex-direction: column-reverse !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div[data-testid="column"] {
-            width: 100% !important;
-            flex: 0 0 100% !important;
-            max-width: 100% !important;
-        }
+/* ─── App background ───────────────────────────────────────────── */
+.stApp { background: #0F172A !important; }
+.block-container { padding-top: 1rem; }
+.main .block-container { background: transparent !important; }
+
+/* ─── Sidebar ──────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: rgba(10, 16, 34, 0.98) !important;
+    border-right: 1px solid rgba(139, 92, 246, 0.2) !important;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input {
+    background: rgba(30, 41, 59, 0.9) !important;
+    border: 1px solid rgba(139, 92, 246, 0.3) !important;
+    color: #E2E8F0 !important;
+    border-radius: 8px !important;
+}
+[data-testid="stSidebar"] .stSelectbox > div > div {
+    background: rgba(30, 41, 59, 0.9) !important;
+    border: 1px solid rgba(139, 92, 246, 0.3) !important;
+    border-radius: 8px !important;
+}
+
+/* ─── Metric containers (st.metric) ─────────────────────────────── */
+div[data-testid="metric-container"] {
+    background: rgba(30, 41, 59, 0.7) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 16px !important;
+    padding: 16px 20px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* ─── Tab bar ──────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(15, 23, 42, 0.95) !important;
+    border-radius: 14px !important;
+    padding: 4px !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    gap: 2px !important;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 10px !important;
+    color: #94A3B8 !important;
+    font-weight: 500 !important;
+    transition: all 0.25s ease !important;
+}
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, rgba(139,92,246,0.25), rgba(59,130,246,0.25)) !important;
+    color: #E2E8F0 !important;
+    border-bottom: 2px solid #8B5CF6 !important;
+}
+
+/* ─── Primary button — Midnight Aurora gradient + hover effect ──── */
+.stButton > button[kind="primary"],
+button[data-testid="baseButton-primary"] {
+    background: linear-gradient(135deg, #8B5CF6, #3B82F6) !important;
+    border: none !important;
+    border-radius: 10px !important;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
+    box-shadow: 0 2px 10px rgba(139,92,246,0.3) !important;
+    font-weight: 600 !important;
+    color: #fff !important;
+}
+.stButton > button[kind="primary"]:hover,
+button[data-testid="baseButton-primary"]:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 24px rgba(139,92,246,0.55) !important;
+    background: linear-gradient(135deg, #7C3AED, #2563EB) !important;
+}
+
+/* ─── Custom component classes ────────────────────────────────── */
+.st-card {
+    background: rgba(30, 41, 59, 0.7);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 1px 2px rgba(139,92,246,0.1);
+    padding: 20px 24px;
+}
+.glass-morphism {
+    background: rgba(30, 41, 59, 0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+}
+.gradient-text {
+    background: linear-gradient(135deg, #8B5CF6, #3B82F6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 700;
+    display: inline-block;
+}
+.ma-metric-card {
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    height: 100%;
+    min-height: 90px;
+}
+.ma-stock-badge {
+    background: linear-gradient(135deg, rgba(139,92,246,0.15), rgba(59,130,246,0.12));
+    border: 1px solid rgba(139,92,246,0.35);
+    border-radius: 14px;
+    padding: 14px 20px;
+    margin-bottom: 14px;
+}
+.ma-gain { color: #10B981 !important; font-weight: 700; }
+.ma-loss { color: #3B82F6 !important; font-weight: 700; }
+
+/* ─── Legacy selectors (기존 기능 유지) ──────────────────────────── */
+.signal-box {
+    padding: 12px 8px; border-radius: 12px;
+    text-align: center; margin-bottom: 12px; word-break: keep-all;
+}
+.wl-item {
+    background: rgba(30, 41, 59, 0.7); border-radius: 8px;
+    padding: 8px 12px; margin: 4px 0;
+    display: flex; justify-content: space-between; align-items: center;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ─── Loading animations ──────────────────────────────────────── */
+@keyframes loading-sweep {
+    0%   { transform: translateX(-100%); }
+    50%  { transform: translateX(0%); }
+    100% { transform: translateX(100%); }
+}
+@keyframes loading-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
+}
+.loading-bar-track {
+    background: #1e2444; border-radius: 8px; height: 6px;
+    overflow: hidden; margin-top: 16px;
+}
+.loading-bar-fill {
+    background: linear-gradient(90deg, #8B5CF6, #60a5fa, #8B5CF6);
+    height: 100%; width: 100%;
+    animation: loading-sweep 1.8s ease-in-out infinite;
+}
+.loading-icon { animation: loading-pulse 1.4s ease-in-out infinite; display: inline-block; }
+
+/* ─── Mobile ──────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+        flex-direction: column-reverse !important;
     }
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div[data-testid="column"] {
+        width: 100% !important;
+        flex: 0 0 100% !important;
+        max-width: 100% !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -3020,7 +3147,28 @@ with tab_chart:
 
     with col_chart:
         title_label = f"{sname} ({ticker})" if sname != ticker else ticker
-        st.subheader(f"📈 {title_label} 기술적 분석")
+        _badge_is_krw = ticker.upper().endswith((".KS", ".KQ"))
+        _badge_price_str = (
+            ("₩" if _badge_is_krw else "$") +
+            ("{:,.0f}" if _badge_is_krw else "{:,.2f}").format(_rt_price)
+        ) if (_rt_price > 0 and _data_ready) else "—"
+        st.markdown(f"""
+<div class="ma-stock-badge">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div>
+      <div class="gradient-text" style="font-size:1.15rem;font-weight:800">{title_label}</div>
+      <div style="font-size:.72rem;color:#94A3B8;margin-top:3px">
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        기술적 분석 · AI 매매 신호
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:1.3rem;font-weight:700;color:#E2E8F0">{_badge_price_str}</div>
+      <div style="font-size:.68rem;color:#8B5CF6;margin-top:2px">{"● 실시간" if (_rt_realtime and _data_ready and _rt_price > 0) else "○ 장마감"}</div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
         # KOSPI 데이터 사전 수집
         try:
@@ -3381,10 +3529,43 @@ with tab_chart:
         _bt_data = get_buy_target_price(data, mode="classic") if _has_price else None
         _m1, _m2, _m3, _m4 = st.columns(4)
         _cur_label = "현재가(실시간)" if (_rt_realtime and _rt_price > 0 and _data_ready) else "현재가"
-        _m1.metric(_cur_label, _fmt.format(last_price) if _has_price else "—")
-        _m2.metric("추천 매수가", _fmt.format(_bt_data["buy_target"]) if _bt_data else "—")
-        _m3.metric("손절가", _fmt.format(_sl_data["stop_8pct"])  if _sl_data else "—")
-        _m4.metric("등락률", f"{daily_chg:+.2f}%"               if _has_price else "—")
+        _chg_color = "#10B981" if daily_chg >= 0 else "#3B82F6"
+        _m1.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+    <span style="font-size:.7rem;color:#94A3B8;font-weight:500">{_cur_label}</span>
+    <span style="color:#8B5CF6"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+  </div>
+  <div style="font-size:1.2rem;font-weight:700;color:#E2E8F0">{_fmt.format(last_price) if _has_price else "—"}</div>
+</div>
+""", unsafe_allow_html=True)
+        _m2.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+    <span style="font-size:.7rem;color:#94A3B8;font-weight:500">추천 매수가</span>
+    <span style="color:#10B981"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span>
+  </div>
+  <div style="font-size:1.2rem;font-weight:700;color:#E2E8F0">{_fmt.format(_bt_data["buy_target"]) if _bt_data else "—"}</div>
+</div>
+""", unsafe_allow_html=True)
+        _m3.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+    <span style="font-size:.7rem;color:#94A3B8;font-weight:500">손절가</span>
+    <span style="color:#F59E0B"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>
+  </div>
+  <div style="font-size:1.2rem;font-weight:700;color:#E2E8F0">{_fmt.format(_sl_data["stop_8pct"]) if _sl_data else "—"}</div>
+</div>
+""", unsafe_allow_html=True)
+        _m4.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+    <span style="font-size:.7rem;color:#94A3B8;font-weight:500">등락률</span>
+    <span style="color:{_chg_color}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>
+  </div>
+  <div style="font-size:1.2rem;font-weight:700;color:{_chg_color}">{f"{daily_chg:+.2f}%" if _has_price else "—"}</div>
+</div>
+""", unsafe_allow_html=True)
 
         # ═══════════════════════════════════════════════════════════════════
         # LAYER 2 — 근거 레이어
@@ -4436,31 +4617,50 @@ def _render_portfolio_tab():
         _total_pnl  = _total_val - _total_cost
         _total_pnl_pct = (_total_pnl / _total_cost * 100) if _total_cost else 0.0
 
+        _pnl_color    = "#10B981" if _total_pnl >= 0 else "#3B82F6"
+        _profit_color = "#10B981" if _cum_profit_krw >= 0 else "#3B82F6"
+        _pnl_pct_str  = f"{_total_pnl_pct:+.2f}%"
         _m1, _m2, _m3, _m4 = st.columns(4)
-        _m1.metric(
-            "총 매수 금액",
-            f"₩{_total_cost:,.0f}",
-            help="현재 보유 종목 평단가 × 수량 합계",
-        )
-        _m2.metric(
-            "현재 평가금",
-            f"₩{_total_val:,.0f}",
-            delta=f"{_total_pnl_pct:+.2f}%",
-            delta_color="normal",
-            help=f"실시간 시세 반영 (USD/KRW ≈ {_usd_krw:,.0f})",
-        )
-        _m3.metric(
-            "누적 매도금",
-            f"₩{_cum_sell_krw:,.0f}",
-            help="지금까지 매도로 회수된 총 금액 (원금+수익)",
-        )
-        _m4.metric(
-            "누적 실현 손익",
-            f"₩{_cum_profit_krw:+,.0f}",
-            delta=f"₩{_cum_profit_krw:+,.0f}" if _cum_profit_krw else None,
-            delta_color="normal",
-            help="매도 완료된 종목들의 순수 손익 합계",
-        )
+        _m1.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">총 매수 금액</span>
+    <span style="color:#8B5CF6"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg></span>
+  </div>
+  <div style="font-size:1.35rem;font-weight:700;color:#E2E8F0;line-height:1.2">₩{_total_cost:,.0f}</div>
+  <div style="font-size:.72rem;color:#64748B;margin-top:6px">평단가 × 수량 합계</div>
+</div>
+""", unsafe_allow_html=True)
+        _m2.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">현재 평가금</span>
+    <span style="color:#3B82F6"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+  </div>
+  <div style="font-size:1.35rem;font-weight:700;color:#E2E8F0;line-height:1.2">₩{_total_val:,.0f}</div>
+  <div style="font-size:.72rem;color:{_pnl_color};margin-top:6px;font-weight:600">{_pnl_pct_str} &nbsp;·&nbsp; USD/KRW≈{_usd_krw:,.0f}</div>
+</div>
+""", unsafe_allow_html=True)
+        _m3.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">누적 매도금</span>
+    <span style="color:#94A3B8"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+  </div>
+  <div style="font-size:1.35rem;font-weight:700;color:#E2E8F0;line-height:1.2">₩{_cum_sell_krw:,.0f}</div>
+  <div style="font-size:.72rem;color:#64748B;margin-top:6px">매도 회수 총액 (원금+수익)</div>
+</div>
+""", unsafe_allow_html=True)
+        _m4.markdown(f"""
+<div class="ma-metric-card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">누적 실현 손익</span>
+    <span style="color:{_profit_color}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>
+  </div>
+  <div style="font-size:1.35rem;font-weight:700;color:{_profit_color};line-height:1.2">₩{_cum_profit_krw:+,.0f}</div>
+  <div style="font-size:.72rem;color:#64748B;margin-top:6px">매도 완료 종목 손익 합계</div>
+</div>
+""", unsafe_allow_html=True)
 
         # 전체 기간 수익률: (현재 평가금 + 누적 매도금) / (보유 원가 + 매도 원가)
         _total_in = _total_cost + _cum_buy_krw
@@ -4617,8 +4817,8 @@ def _render_portfolio_tab():
 .pf-tbl td:first-child{text-align:left;color:#e0e0e0;font-weight:600}
 .pf-tbl tr:last-child td{border-bottom:none}
 .pf-tbl tr:hover td{background:#1a1d2e}
-.pp{color:#ff4d4d;font-weight:700}
-.pn{color:#4d88ff;font-weight:700}
+.pp{color:#10B981;font-weight:700}
+.pn{color:#3B82F6;font-weight:700}
 .pz{color:#888}
 .ai-op{text-align:left!important;font-size:.8rem;max-width:200px;word-break:keep-all;line-height:1.4}
 </style>"""
