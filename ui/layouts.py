@@ -1168,9 +1168,10 @@ def render_news_tab(
                 st.markdown("#### 📊 관련 섹터 성과")
                 if _sec_perf:
                     for _sec, _pct in list(_sec_perf.items())[:5]:
-                        if _pct is None:
+                        try:
+                            _pct = float(_pct)
+                        except (TypeError, ValueError):
                             continue
-                        _pct = float(_pct)
                         _sc = COLORS["gain"] if _pct >= 0 else COLORS["loss"]
                         st.markdown(
                             f'<div style="display:flex;justify-content:space-between;'
