@@ -689,12 +689,32 @@ def _render_sector_etf_prices():
     _avg = float(_etf_df["등락률(%)"].mean())
     _us_avg = float(_etf_df[_etf_df["국가"] == "미국"]["등락률(%)"].mean()) if "미국" in _etf_df["국가"].values else 0.0
     _kr_avg = float(_etf_df[_etf_df["국가"] == "국내"]["등락률(%)"].mean()) if "국내" in _etf_df["국가"].values else 0.0
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("🔺 상승", f"{_up}개")
-    c2.metric("🔻 하락", f"{_dn}개")
-    c3.metric("전체 평균", f"{_avg:+.2f}%")
-    c4.metric("🇺🇸 미국 평균", f"{_us_avg:+.2f}%")
-    c5.metric("🇰🇷 국내 평균", f"{_kr_avg:+.2f}%")
+    _up_c  = "#ef5350" if _up  > _dn else "#8B949E"
+    _dn_c  = "#42a5f5" if _dn  > _up else "#8B949E"
+    _av_c  = "#ef5350" if _avg > 0 else ("#42a5f5" if _avg < 0 else "#8B949E")
+    _us_c  = "#ef5350" if _us_avg > 0 else ("#42a5f5" if _us_avg < 0 else "#8B949E")
+    _kr_c  = "#ef5350" if _kr_avg > 0 else ("#42a5f5" if _kr_avg < 0 else "#8B949E")
+
+    def _stat_chip(label: str, value: str, color: str) -> str:
+        return (
+            f'<div style="flex:1;min-width:0;background:#161B22;border:1px solid #30363D;'
+            f'border-radius:10px;padding:7px 6px;text-align:center;">'
+            f'<div style="font-size:.6rem;color:#8B949E;white-space:nowrap;overflow:hidden;'
+            f'text-overflow:ellipsis;margin-bottom:3px">{label}</div>'
+            f'<div style="font-size:.85rem;font-weight:700;color:{color};white-space:nowrap">{value}</div>'
+            f'</div>'
+        )
+
+    st.markdown(
+        '<div style="display:flex;gap:6px;margin-bottom:8px">'
+        + _stat_chip("🔺 상승",   f"{_up}개",          _up_c)
+        + _stat_chip("🔻 하락",   f"{_dn}개",          _dn_c)
+        + _stat_chip("전체 평균", f"{_avg:+.2f}%",      _av_c)
+        + _stat_chip("🇺🇸 미국",  f"{_us_avg:+.2f}%",  _us_c)
+        + _stat_chip("🇰🇷 국내",  f"{_kr_avg:+.2f}%",  _kr_c)
+        + '</div>',
+        unsafe_allow_html=True,
+    )
 
     def _row_style(row):
         chg = row["등락률(%)"]
