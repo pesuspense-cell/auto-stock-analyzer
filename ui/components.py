@@ -269,10 +269,22 @@ def stock_badge_html(
     title_label: str,
     price_str: str,
     is_realtime: bool,
+    chg_pct: float | None = None,
 ) -> str:
-    """차트 탭 상단 종목명 + 현재가 배지 HTML."""
+    """차트 탭 상단 종목명 + 현재가 + 등락률 배지 HTML."""
     rt_label = "● 실시간" if is_realtime else "○ 장마감"
     rt_color = COLORS["gain"] if is_realtime else COLORS["text_2"]
+
+    if chg_pct is not None:
+        _chg_c = "#10B981" if chg_pct >= 0 else "#ef4444"
+        _chg_arrow = "▲" if chg_pct >= 0 else "▼"
+        chg_html = (
+            f'<span style="font-size:0.85rem;font-weight:700;color:{_chg_c};margin-left:8px;">'
+            f'{_chg_arrow} {chg_pct:+.2f}%</span>'
+        )
+    else:
+        chg_html = ""
+
     return f"""
 <div class="ma-stock-badge">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -288,7 +300,7 @@ def stock_badge_html(
       </div>
     </div>
     <div style="text-align:right">
-      <div style="font-size:1.3rem;font-weight:700;color:#E2E8F0">{price_str}</div>
+      <div style="font-size:1.3rem;font-weight:700;color:#E2E8F0;display:flex;align-items:center;">{price_str}{chg_html}</div>
       <div style="font-size:.68rem;color:{rt_color};margin-top:2px">{rt_label}</div>
     </div>
   </div>

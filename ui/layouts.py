@@ -1305,7 +1305,7 @@ def render_chart_tab(
         data = _flatten_columns(data)
         fig  = _build_plotly_chart(data, _kospi_df, ticker, aperiod)
 
-        # ── 종목 배지 + 차트 보기 버튼 (인라인) ───────────────────────────
+        # ── 종목 배지 + 차트 보기 버튼 + 진단기준 (한 줄) ───────────────
         title_label = f"{sname} ({ticker})" if sname != ticker else ticker
         _badge_is_krw = ticker.upper().endswith((".KS", ".KQ"))
         _badge_price_str = (
@@ -1313,16 +1313,36 @@ def render_chart_tab(
             ("{:,.0f}" if _badge_is_krw else "{:,.2f}").format(rt_price)
         ) if (rt_price > 0 and data_ready) else "—"
 
-        _badge_col, _btn_col = st.columns([9, 1])
+        # 등락률 계산
+        _has_close2 = not close.empty and len(close) >= 2
+        if _has_close2:
+            _c_last = float(close.iloc[-1])
+            _c_prev = float(close.iloc[-2])
+            _c_cur  = rt_price if (rt_price > 0 and data_ready) else _c_last
+            _badge_chg = (_c_cur - _c_prev) / _c_prev * 100
+        else:
+            _badge_chg = None
+
+        _badge_col, _btn_chart_col, _btn_diag_col = st.columns([6, 1, 1])
         with _badge_col:
             st.markdown(
-                stock_badge_html(title_label, _badge_price_str, rt_realtime and data_ready and rt_price > 0),
+                stock_badge_html(title_label, _badge_price_str,
+                                 rt_realtime and data_ready and rt_price > 0,
+                                 chg_pct=_badge_chg),
                 unsafe_allow_html=True,
             )
-        with _btn_col:
+        with _btn_chart_col:
             if st.button("📊 차트", key="show_chart_btn",
-                         help="캔들·EMA·볼린저밴드·RSI·MACD·ADX·KOSPI 6패널"):
+                         help="캔들·EMA·볼린저밴드·RSI·MACD·ADX·KOSPI 6패널",
+                         use_container_width=True):
                 chart_dialog(fig, ticker)
+        with _btn_diag_col:
+            with st.expander("🔍 진단기준"):
+                st.caption(
+                    "역추세 기술적 진단 — RSI·MACD·볼린저밴드·ADX·일목균형표 등 10개+ 지표 종합.  \n"
+                    "Naver·RSS·YouTube 멀티소스 뉴스 LLM 감성 포함. "
+                    "포트폴리오 탭 AI 모멘텀 추천과 결과가 다를 수 있습니다."
+                )
 
         # ── AI 매매 신호 패널 (풀 너비) ──────────────────────────────────
         _render_signal_panel(
@@ -1578,13 +1598,6 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
     rt_stale    = state["rt_stale"]
     rt_stale_msg = state["rt_stale_msg"]
 
-    with st.expander("🔍 진단 기준", expanded=False):
-        st.caption(
-            "역추세 기술적 진단 — RSI·MACD·볼린저밴드·ADX·일목균형표 등 10개+ 지표 종합.  \n"
-            "Naver·RSS·YouTube 멀티소스 뉴스 LLM 감성 포함. "
-            "포트폴리오 탭 AI 모멘텀 추천과 결과가 다를 수 있습니다."
-        )
-
     h_score = hybrid.get("hybrid_score", 0.0)
     h_label = hybrid.get("label", "중립/관망")
     h_badge = hybrid.get("badge", "⚪")
@@ -1603,10 +1616,8 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
         last_price = prev_price = daily_chg = 0.0
         _is_krw, _fmt = True, "{:,.0f}"
 
-    # 실시간 시세 배지
+    # 실시간 시세 상태
     if data_ready and rt_price > 0:
-        if rt_stale:
-            st.warning(rt_stale_msg or "장이 열리지 않은 상태입니다. 가장 최근 종가를 표시합니다.", icon="⏸️")
         _rt_label = "실시간 시세 (KST)" if rt_realtime else "장마감 종가 (KST)"
         _rt_color = COLORS["gain"] if rt_realtime else COLORS["text_2"]
         st.markdown(
@@ -1620,64 +1631,62 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
             unsafe_allow_html=True,
         )
 
+    # ── 추천 매수가 4모드 (왼쪽) + 추세·탄력·에너지 (오른쪽) ──────────
+    _buy_col, _score_col = st.columns([1, 1])
 
-    # Key Metrics
-    _sl_data = get_stop_loss_targets(data) if _has_price else None
-    _bt_data = get_buy_target_price(data, mode="classic") if _has_price else None
-    _m1, _m2, _m3, _m4 = st.columns(4)
-    _cur_label = "현재가(실시간)" if (rt_realtime and rt_price > 0 and data_ready) else "현재가"
-    _chg_color = "#10B981" if daily_chg >= 0 else "#3B82F6"
+    with _buy_col:
+        if _has_price:
+            for _mode, _mode_short in [
+                ("classic",  "🎯 종합"),
+                ("sale",     "🏷️ 세일"),
+                ("breakout", "⚡ 추격"),
+                ("vwap",     "📊 VWAP"),
+            ]:
+                _bt = get_buy_target_price(data, mode=_mode)
+                if not _bt:
+                    continue
+                _bt_val   = _bt.get("buy_target")
+                _bt_color = _bt.get("mode_color", "#E2E8F0")
+                _timing   = _bt.get("timing", "")
+                _t_color  = _bt.get("timing_color", "#aaa")
+                _bt_str   = _fmt.format(_bt_val) if _bt_val else "—"
+                st.markdown(
+                    f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+                    f'border-left:3px solid {_bt_color};border-radius:10px;padding:8px 12px;margin-bottom:6px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<span style="font-size:0.72rem;color:{_bt_color};font-weight:600;">{_mode_short}</span>'
+                    f'<span style="font-size:0.95rem;font-weight:700;color:#E2E8F0;">{_bt_str}</span>'
+                    f'</div>'
+                    f'<div style="font-size:0.72rem;color:{_t_color};margin-top:3px;">{_timing}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.caption("데이터 없음")
 
-    for _col, _lbl, _val_str, _icon_color, _icon_svg in [
-        (_m1, _cur_label,  _fmt.format(last_price) if _has_price else "—",
-         "#8B5CF6",
-         '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
-        (_m2, "추천 매수가", _fmt.format(_bt_data["buy_target"]) if _bt_data else "—",
-         "#10B981",
-         '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>'),
-        (_m3, "손절가",     _fmt.format(_sl_data["stop_8pct"]) if _sl_data else "—",
-         "#F59E0B",
-         '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'
-         '<line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'),
-        (_m4, "등락률",     f"{daily_chg:+.2f}%" if _has_price else "—",
-         _chg_color,
-         '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>'),
-    ]:
-        _col.markdown(f"""
-<div class="ma-metric-card">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-    <span style="font-size:.7rem;color:#94A3B8;font-weight:500">{_lbl}</span>
-    <span style="color:{_icon_color}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
-      viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-      stroke-linecap="round" stroke-linejoin="round">{_icon_svg}</svg></span>
-  </div>
-  <div style="font-size:1.2rem;font-weight:700;color:#E2E8F0">{_val_str}</div>
-</div>""", unsafe_allow_html=True)
-
-    # ── 추세·탄력·에너지 — 3컬럼 컴팩트 카드 ────────────────────────────
-    _ts = advanced.get("trend_score",    50.0)
-    _ms = advanced.get("momentum_score", 50.0)
-    _vs = advanced.get("volume_score",   50.0)
-    _sc1, _sc2, _sc3 = st.columns(3)
-    for _col, _label, _score, _icon in [
-        (_sc1, "추세",  _ts, "📈"),
-        (_sc2, "탄력",  _ms, "⚡"),
-        (_sc3, "에너지", _vs, "🔋"),
-    ]:
-        _sc = "#26a69a" if _score >= 65 else ("#ef5350" if _score <= 35 else "#eab308")
-        _bg = "rgba(38,166,154,0.12)" if _score >= 65 else ("rgba(239,83,80,0.12)" if _score <= 35 else "rgba(234,179,8,0.12)")
-        _col.markdown(
-            f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
-            f'border-radius:10px;padding:9px 12px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-            f'<span style="color:{COLORS["text_2"]};font-size:0.78rem;">{_icon} {_label}</span>'
-            f'<span style="background:{_bg};color:{_sc};border-radius:20px;'
-            f'padding:1px 8px;font-size:0.73rem;font-weight:700;">{_score:.0f}</span></div>'
-            f'<div style="background:{COLORS["border_md"]};border-radius:4px;height:5px;">'
-            f'<div style="background:{_sc};width:{int(_score)}%;height:5px;border-radius:4px;"></div>'
-            f'</div></div>',
-            unsafe_allow_html=True,
-        )
+    with _score_col:
+        _ts = advanced.get("trend_score",    50.0)
+        _ms = advanced.get("momentum_score", 50.0)
+        _vs = advanced.get("volume_score",   50.0)
+        for _label, _score, _icon in [
+            ("추세",  _ts, "📈"),
+            ("탄력",  _ms, "⚡"),
+            ("에너지", _vs, "🔋"),
+        ]:
+            _sc = "#26a69a" if _score >= 65 else ("#ef5350" if _score <= 35 else "#eab308")
+            _bg = "rgba(38,166,154,0.12)" if _score >= 65 else ("rgba(239,83,80,0.12)" if _score <= 35 else "rgba(234,179,8,0.12)")
+            st.markdown(
+                f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+                f'border-radius:10px;padding:9px 12px;margin-bottom:6px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+                f'<span style="color:{COLORS["text_2"]};font-size:0.78rem;">{_icon} {_label}</span>'
+                f'<span style="background:{_bg};color:{_sc};border-radius:20px;'
+                f'padding:1px 8px;font-size:0.73rem;font-weight:700;">{_score:.0f}</span></div>'
+                f'<div style="background:{COLORS["border_md"]};border-radius:4px;height:5px;">'
+                f'<div style="background:{_sc};width:{int(_score)}%;height:5px;border-radius:4px;"></div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
 
     # 수급 동향 (KRX 종목만)
     if data_ready and (ticker.endswith(".KS") or ticker.endswith(".KQ")):
@@ -1745,67 +1754,6 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
                 unsafe_allow_html=True,
             )
 
-    # 종합 스코어보드 (progress bar는 위에서 표시했으므로 수치표+다이버전스만)
-    with st.expander("📊 종합 스코어보드 상세", expanded=False):
-        ts = advanced.get("trend_score",    50.0)
-        ms = advanced.get("momentum_score", 50.0)
-        vs = advanced.get("volume_score",   50.0)
-
-        def _sc_color(s):
-            return "#a5d6a7" if s >= 65 else ("#ef9a9a" if s <= 35 else "#fff176")
-
-        st.markdown(
-            '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
-            "".join(
-                f'<div style="flex:1;background:#1a1d2e;border-radius:8px;padding:7px 10px;text-align:center;">'
-                f'<div style="font-size:0.7rem;color:#888;margin-bottom:3px;">{lbl} ({wt})</div>'
-                f'<div style="font-size:0.95rem;font-weight:700;color:{_sc_color(sv)};">{sv:.0f}점</div>'
-                f'<div style="font-size:0.68rem;color:#555;margin-top:2px;">{desc}</div></div>'
-                for lbl, sv, wt, desc in [
-                    ("추세", ts, "40%", "EMA·ADX·일목"),
-                    ("탄력", ms, "30%", "MACD·RSI·ROC"),
-                    ("에너지", vs, "30%", "OBV·MFI"),
-                ]
-            ) + '</div>',
-            unsafe_allow_html=True,
-        )
-
-        composite = round(ts * 0.4 + ms * 0.3 + vs * 0.3, 1)
-        if composite >= 65:
-            adv_txt, adv_clr = "강세 우위 — 에너지와 추세 모두 양호", "#a5d6a7"
-        elif composite <= 35:
-            adv_txt, adv_clr = "약세 우위 — 지표 전반 약화 중", "#ef9a9a"
-        else:
-            adv_txt, adv_clr = "중립 — 방향 확인 필요", "#fff176"
-        st.markdown(
-            f'<div style="background:#1e2130;border-radius:6px;padding:8px 12px;margin-top:6px;">'
-            f'<span style="font-size:0.88rem;color:#888;">가중 종합: </span>'
-            f'<b style="color:{adv_clr};">{composite:.0f}점 — {adv_txt}</b>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        items = advanced.get("summary_items", [])
-        if items:
-            st.markdown('<div style="margin-top:10px;font-size:0.75rem;color:#888;">추가 분석 항목</div>',
-                        unsafe_allow_html=True)
-            for it in items:
-                st.markdown(
-                    f'<div style="display:flex;justify-content:space-between;'
-                    f'background:#12141f;border-radius:5px;padding:6px 10px;margin-top:4px;'
-                    f'border-left:3px solid {it["색상"]};">'
-                    f'<span style="color:#9e9e9e;font-size:0.9rem;">{it["항목"]}</span>'
-                    f'<span style="color:{it["색상"]};font-size:0.9rem;font-weight:bold;">{it["상태"]}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-        div_descs = advanced.get("divergence", {}).get("descriptions", [])
-        for d in div_descs:
-            if "하락" in d:
-                st.warning(d, icon="⚠️")
-            else:
-                st.success(d, icon="✅")
 
 
 def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn) -> None:
