@@ -645,12 +645,6 @@ def render_header(portfolio_summary: dict) -> None:
             ),
             unsafe_allow_html=True,
         )
-    else:
-        ph = placeholder_card_html()
-        hc1.markdown(ph, unsafe_allow_html=True)
-        hc2.markdown(ph, unsafe_allow_html=True)
-        hc3.markdown(ph, unsafe_allow_html=True)
-
     st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
 
 
@@ -1810,7 +1804,7 @@ def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn
             _exp_ret  = expected.get("expected_return_pct", 0.0)
             _sharpe   = expected.get("sharpe", 0.0)
             _max_dd   = expected.get("max_drawdown_pct", 0.0)
-            _win_prob = expected.get("win_prob", 0.5) * 100
+            _win_prob = expected.get("win_prob", 50.0)
             _exp_color = COLORS["gain"] if _exp_ret >= 0 else COLORS["loss"]
             st.markdown(
                 f'<div style="background:#1a1d2e;border-radius:8px;padding:12px 16px;">'
@@ -3071,9 +3065,11 @@ def _render_pf_body(
 
         _rec_c1, _rec_c2, _rec_c3 = st.columns([3, 1, 1])
         _inv_amt = _rec_c1.number_input(
-            "투자 예정 금액 (원)", min_value=100_000, max_value=1_000_000_000,
-            value=5_000_000, step=500_000, format="%d", key="rec_investment_amount",
+            "투자 예정 금액 (원)", min_value=0, max_value=1_000_000_000,
+            value=0, step=500_000, format="%d", key="rec_investment_amount",
         )
+        if _inv_amt > 0:
+            _rec_c1.caption(f"₩ {int(_inv_amt):,}")
         _risk_profile = _rec_c2.selectbox("투자 성향", ["중립형", "보수형", "공격형"], key="rec_risk_profile")
         _rec_c3.write("")
         _rec_run = _rec_c3.button("모멘텀 추천 실행", type="primary", key="rec_run", use_container_width=True)
