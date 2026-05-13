@@ -1322,7 +1322,8 @@ def render_chart_tab(
             st.markdown(
                 stock_badge_html(title_label, _badge_price_str,
                                  rt_realtime and data_ready and rt_price > 0,
-                                 chg_pct=_badge_chg),
+                                 chg_pct=_badge_chg,
+                                 rt_ts=rt_ts if (data_ready and rt_price > 0) else ""),
                 unsafe_allow_html=True,
             )
         with _btn_chart_col:
@@ -1610,22 +1611,13 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
         last_price = prev_price = daily_chg = 0.0
         _is_krw, _fmt = True, "{:,.0f}"
 
-    # 실시간 시세 상태
-    if data_ready and rt_price > 0:
-        _rt_label = "실시간 시세 (KST)" if rt_realtime else "장마감 종가 (KST)"
-        _rt_color = COLORS["gain"] if rt_realtime else COLORS["text_2"]
-        st.markdown(
-            f'<div style="font-size:0.75rem;color:{_rt_color};margin-bottom:8px;'
-            f'display:flex;align-items:center;gap:6px;">'
-            f'<span style="width:6px;height:6px;border-radius:50%;background:{_rt_color};'
-            f'display:inline-block;"></span>{_rt_label} &nbsp;·&nbsp; '
-            f'<span style="color:{COLORS["text_2"]};">기준 시각: '
-            f'<b style="color:{COLORS["text"]};">{rt_ts}</b></span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
     # ── 추천 매수가 4모드 (왼쪽) + 추세·탄력·에너지 (오른쪽) ──────────
+    st.markdown(
+        f'<div style="font-size:0.72rem;font-weight:600;color:{COLORS["text_2"]};'
+        f'letter-spacing:0.8px;text-transform:uppercase;margin-bottom:8px;">'
+        f'추천 매수가 (4가지 모드)</div>',
+        unsafe_allow_html=True,
+    )
     _buy_col, _score_col = st.columns([1, 1])
 
     with _buy_col:

@@ -386,6 +386,12 @@ hr {
 }
 
 /* ─── 헤더 요약 카드 ─────────────────────────────────────────────── */
+/* 컬럼 내부 stVerticalBlock 계층을 늘려서 카드가 컬럼 전체 높이를 채우게 함 */
+[data-testid="stColumns"]:has(.ma-header-card) [data-testid="stColumn"] > div,
+[data-testid="stColumns"]:has(.ma-header-card) [data-testid="stColumn"] > div > div,
+[data-testid="stColumns"]:has(.ma-header-card) [data-testid="stColumn"] > div > div > div {
+  height: 100%;
+}
 .ma-header-card {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -395,6 +401,11 @@ hr {
   position: relative;
   overflow: hidden;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
 .ma-header-card:hover {
   transform: translateY(-2px);
