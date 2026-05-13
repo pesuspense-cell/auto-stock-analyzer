@@ -115,14 +115,26 @@ st.set_page_config(
 )
 inject_css()
 
-# ─── 쿠키 매니저 ──────────────────────────────────────────────────────────────
-try:
-    import extra_streamlit_components as _stx
-    _cookie_mgr = _stx.CookieManager(key="_auth_cm")
-    _HAS_COOKIE_MGR = True
-except Exception:
-    _cookie_mgr = None
-    _HAS_COOKIE_MGR = False
+# ─── 쿠키 헬퍼 (JS window.parent 방식 — 외부 컴포넌트 없음) ──────────────────
+def _set_cookie(name: str, value: str, days: int = 3650) -> None:
+    """로그인 토큰을 브라우저 쿠키에 기록한다."""
+    import streamlit.components.v1 as _cv1
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    expires = (_dt.now(_tz.utc) + _td(days=days)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    _cv1.html(
+        f"<script>try{{window.parent.document.cookie="
+        f"'{name}={value};path=/;expires={expires};SameSite=Lax'}}catch(e){{}}</script>",
+        height=0,
+    )
+
+def _delete_cookie(name: str) -> None:
+    """브라우저 쿠키를 만료시킨다."""
+    import streamlit.components.v1 as _cv1
+    _cv1.html(
+        f"<script>try{{window.parent.document.cookie="
+        f"'{name}=;path=/;expires=Thu, 01 Jan 1970 00:00:00 GMT'}}catch(e){{}}</script>",
+        height=0,
+    )
 
 # ─── 설정 관리 ────────────────────────────────────────────────────────────────
 WATCHLIST_FILE   = os.path.join(os.path.dirname(__file__), "watchlist.json")
@@ -1092,6 +1104,6 @@ render_portfolio_tab(
     realtime_price_fn     = _realtime_price_1m,
     get_stock_data_fn     = _stock_data,
     now_kst_fn            = _now_kst,
-    cookie_mgr            = _cookie_mgr,
-    has_cookie_mgr        = _HAS_COOKIE_MGR,
+    set_cookie_fn         = _set_cookie,
+    delete_cookie_fn      = _delete_cookie,
 )

@@ -2508,8 +2508,8 @@ def _render_pf_body(
     realtime_price_fn,
     get_stock_data_fn,
     now_kst_fn,
-    cookie_mgr,
-    has_cookie_mgr,
+    set_cookie_fn=None,
+    delete_cookie_fn=None,
 ) -> None:
     """로그인된 포트폴리오 본문 — @st.fragment로 매도·삭제·초기화 시 탭만 재렌더링."""
     _tok  = st.session_state.get("auth_token")
@@ -2524,8 +2524,8 @@ def _render_pf_body(
             st.session_state["auth_token"]   = None
             st.session_state["auth_user_id"] = None
             st.session_state["auth_email"]   = None
-            if has_cookie_mgr and cookie_mgr:
-                cookie_mgr.delete("auth_token")
+            if delete_cookie_fn:
+                delete_cookie_fn("auth_token")
             st.rerun()
 
     st.divider()
@@ -2534,8 +2534,8 @@ def _render_pf_body(
         st.session_state["auth_token"]   = None
         st.session_state["auth_user_id"] = None
         st.session_state["auth_email"]   = None
-        if has_cookie_mgr and cookie_mgr:
-            cookie_mgr.delete("auth_token")
+        if delete_cookie_fn:
+            delete_cookie_fn("auth_token")
         st.warning("세션이 만료되었습니다. 다시 로그인해 주세요.")
         st.rerun()
         return
@@ -3389,8 +3389,8 @@ def render_portfolio_tab(
     realtime_price_fn,
     get_stock_data_fn,
     now_kst_fn,
-    cookie_mgr=None,
-    has_cookie_mgr: bool = False,
+    set_cookie_fn=None,
+    delete_cookie_fn=None,
 ) -> None:
     """포트폴리오 탭: 로그인 폼은 여기서, 본문은 @st.fragment인 _render_pf_body에 위임."""
     with tab:
@@ -3424,9 +3424,8 @@ def render_portfolio_tab(
                         st.session_state["auth_token"]   = _r["token"]
                         st.session_state["auth_user_id"] = _r["user_id"]
                         st.session_state["auth_email"]   = _r["email"]
-                        if has_cookie_mgr and cookie_mgr:
-                            from datetime import datetime as _dt
-                            cookie_mgr.set("auth_token", _r["token"], expires_at=_dt(2099, 1, 1))
+                        if set_cookie_fn:
+                            set_cookie_fn("auth_token", _r["token"])
                         st.rerun()
                     else:
                         st.error(_r["error"])
@@ -3447,6 +3446,6 @@ def render_portfolio_tab(
             realtime_price_fn=realtime_price_fn,
             get_stock_data_fn=get_stock_data_fn,
             now_kst_fn=now_kst_fn,
-            cookie_mgr=cookie_mgr,
-            has_cookie_mgr=has_cookie_mgr,
+            set_cookie_fn=set_cookie_fn,
+            delete_cookie_fn=delete_cookie_fn,
         )
