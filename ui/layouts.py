@@ -1034,7 +1034,7 @@ def render_news_tab(
             st.markdown(f"#### 📰 최신 뉴스 ({len(raw_news)}건)")
             if not raw_news:
                 st.info("수집된 뉴스가 없습니다.")
-            for n in raw_news:
+            for _ni, n in enumerate(raw_news):
                 title      = n.get("title", "")
                 link       = n.get("link", "#")
                 publisher  = n.get("publisher", "")
@@ -1052,7 +1052,7 @@ def render_news_tab(
                         unsafe_allow_html=True,
                     )
                 with _ai_btn_col:
-                    if st.button("AI", key=f"ai_{hash(title)}", help="AI 기사 요약", use_container_width=True):
+                    if st.button("AI", key=f"ai_{ticker}_{_ni}", help="AI 기사 요약", use_container_width=True):
                         article_dialog(title, link, ticker, gemini_key, groq_key)
 
         with sent_col:
