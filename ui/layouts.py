@@ -290,6 +290,27 @@ def render_sidebar(
     """
     result: dict = {}
 
+    # 분석 시작 버튼 클릭 후 사이드바 자동 닫기
+    if st.session_state.pop("_collapse_sidebar", False):
+        import streamlit.components.v1 as _cmp
+        _cmp.html(
+            """<script>
+            setTimeout(function() {
+                var btn = window.parent.document.querySelector(
+                    '[data-testid="stSidebarCollapseButton"]'
+                );
+                if (btn) { btn.click(); return; }
+                // 모바일: 오버레이 닫기 버튼
+                var mBtn = window.parent.document.querySelector(
+                    '[data-testid="stSidebar"] button'
+                );
+                if (mBtn) mBtn.click();
+            }, 200);
+            </script>""",
+            height=0,
+            scrolling=False,
+        )
+
     def _clear_analysis():
         st.session_state.pop("analyzed_ticker", None)
         st.session_state.pop("analyzed_sname",  None)
@@ -332,6 +353,7 @@ def render_sidebar(
             st.session_state["_pending_ticker"] = ticker
             st.session_state["_pending_sname"]  = sname
             st.session_state["_pending_period"] = period
+            st.session_state["_collapse_sidebar"] = True
             st.rerun()
 
         # ── API 키 ──────────────────────────────────────────────────────────
@@ -518,21 +540,12 @@ def render_sidebar(
                 _sb_all.update(etf_stocks_fn() or {})
                 _sb_all.update(us_stocks_fn() or {})
                 if _sb_all:
-                    _sbq = st.text_input(
-                        "종목 검색",
-                        key="sb_add_q",
-                        placeholder="종목명, 코드, 티커 입력 (예: 삼성전자, AAPL, KODEX 200)",
-                    )
-                    _sb_opts = (
-                        {k: v for k, v in _sb_all.items() if _sbq.lower() in k.lower()}
-                        if _sbq else _sb_all
-                    ) or _sb_all
                     _sb_sel = st.selectbox(
-                        f"선택 ({len(_sb_opts):,}개)",
-                        list(_sb_opts.keys()),
+                        f"선택 ({len(_sb_all):,}개)",
+                        list(_sb_all.keys()),
                         key="sb_add_unified",
                     )
-                    _sb_ticker_val = _sb_opts[_sb_sel]
+                    _sb_ticker_val = _sb_all[_sb_sel]
 
                 if _sb_ticker_val:
                     _sb_is_krw = _sb_ticker_val.upper().endswith((".KS", ".KQ"))
