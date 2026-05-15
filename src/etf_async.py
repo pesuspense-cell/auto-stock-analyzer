@@ -93,7 +93,8 @@ def _get_krx_cookie_str() -> str:
         return ""
 
     try:
-        from pykrx.website.comm.auth import build_krx_session
+        from pykrx.website.comm.auth import build_krx_session, set_auth_session
+        from pykrx.website.comm.webio import set_session
         sess = build_krx_session(krx_id, krx_pw)
         if sess and sess.is_authenticated:
             cookie_str = "; ".join(
@@ -101,6 +102,12 @@ def _get_krx_cookie_str() -> str:
             )
             _KRX_AUTH["cookie"]   = cookie_str
             _KRX_AUTH["expires"]  = time.time() + 3000  # 50분
+            # pykrx 전역 세션 주입 — get_etf_tracking_error 등이 이 세션 사용
+            try:
+                set_auth_session(sess)
+                set_session(sess)
+            except Exception:
+                pass
             logger.info("KRX 로그인 성공 (세션 50분 캐시)")
             return cookie_str
     except Exception as e:
@@ -285,8 +292,12 @@ async def _krx_fetch_nav(
             return {
                 "nav":            nav_raw,
                 "nav_premium":    _to_float(_pick(
-                    row, "DVDNDRTO", "dvdndrto", "NAV_DISRATE", "navDisrate",
+                    row, "NAV_DISRATE", "navDisrate",
                     "DISRATE", "disrate", "괴리율", "DSRT_RT", "ETF_DSRT_RT",
+                )),
+                # DVDNDRTO = 배당(분배금)수익률, 괴리율이 아님
+                "dividend_yield": _to_float(_pick(
+                    row, "DVDNDRTO", "dvdndrto", "DVDND_RT", "배당수익률", "분배금수익률",
                 )),
                 "tracking_error": _to_float(_pick(
                     row, "TRKNG_ERR_RT", "trkngErrRt", "TRACE_ERR_RT", "traceErrRt",
@@ -425,18 +436,18 @@ async def _naver_fetch_etf(code: str, client: "httpx.AsyncClient") -> dict:
                     break
             break
 
-    # ── AUM (시가총액 또는 순자산 기반 추정) ────────────────────────────────
+    # ── AUM / 총보수 / 분배금수익률 ─────────────────────────────────────────
     import re as _re
     shares: float | None = None
     for tbl in tables:
         for tr in tbl.find_all("tr"):
             tds = tr.find_all(["th", "td"])
             if len(tds) >= 2:
-                label = tds[0].get_text(strip=True)
-                val_txt = tds[1].get_text(strip=True)
+                label   = tds[0].get_text(strip=True)
+                val_txt = tds[-1].get_text(strip=True)
+
                 # 시가총액: "26조\n...4,023억원" 형태
                 if "시가총액" in label or "순자산" in label:
-                    # 조 + 억 파싱: "26조4,023억원"
                     trillion = _re.search(r"([\d,]+)조", val_txt)
                     billion  = _re.search(r"([\d,]+)억", val_txt)
                     try:
@@ -446,12 +457,33 @@ async def _naver_fetch_etf(code: str, client: "httpx.AsyncClient") -> dict:
                             out["aum"] = round(t_val + b_val, 0)
                     except (ValueError, AttributeError):
                         pass
-                # 상장주식수: 숫자만 있는 경우
+                # 상장주식수
                 elif "상장주식수" in label or "좌수" in label:
                     try:
                         shares = float(val_txt.replace(",", ""))
                     except ValueError:
                         pass
+                # 총보수 (운용보수): "0.15%" 또는 "0.150 %" 형태
+                elif "총보수" in label or "운용보수" in label or ("보수" in label and "%" in val_txt):
+                    m = _re.search(r"[\d]+\.?[\d]*", val_txt.replace(",", ""))
+                    if m and "expense_ratio" not in out:
+                        try:
+                            v = float(m.group())
+                            # 네이버는 % 단위로 표시하므로 그대로 사용 (예: 0.15)
+                            # 간혹 15처럼 100배로 표시되는 경우 보정
+                            if v > 10:
+                                v = round(v / 100, 4)
+                            out["expense_ratio"] = v
+                        except ValueError:
+                            pass
+                # 분배금수익률 / 배당수익률
+                elif any(k in label for k in ("분배금수익률", "배당수익률", "분배수익률", "분배율")):
+                    m = _re.search(r"-?[\d]+\.?[\d]*", val_txt.replace(",", ""))
+                    if m and "dividend_yield" not in out:
+                        try:
+                            out["dividend_yield"] = float(m.group())
+                        except ValueError:
+                            pass
 
     # 시가총액 파싱 실패 시 주식수 × 현재가로 추정
     if out.get("aum") is None and shares and out.get("price"):
@@ -568,13 +600,8 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
         naver_task    = asyncio.create_task(_naver_fetch_etf(code, client))
         holdings_task = asyncio.create_task(_krx_fetch_holdings(isu_cd, client, trade_date, cookie_str=_cookie))
         fdr_task      = asyncio.create_task(_fdr_fetch_price(ticker))
-        # pykrx extras (추적오차·구성종목) — KRX 인증 시에만 유효, 동기라 executor 사용
-        if _cookie:
-            pykrx_task = loop.run_in_executor(None, _pykrx_extras, code, date_str)
-        else:
-            async def _no_extras():
-                return {}
-            pykrx_task = asyncio.create_task(_no_extras())
+        # pykrx extras (추적오차·구성종목) — 항상 실행, 인증 없으면 내부에서 조용히 실패
+        pykrx_task = loop.run_in_executor(None, _pykrx_extras, code, date_str)
         naver_raw, holdings, fdr_price_result, pykrx_raw = await asyncio.gather(
             naver_task, holdings_task, fdr_task, pykrx_task, return_exceptions=True
         )
@@ -591,6 +618,8 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
             "tracking_error": nav_data.get("tracking_error"),
             "aum":            nav_data.get("aum"),
         })
+        if nav_data.get("dividend_yield") is not None:
+            result["dividend_yield"] = nav_data["dividend_yield"]
         if nav_data.get("price"):
             result["price"] = nav_data["price"]
     else:
@@ -608,6 +637,12 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
             hint = "KRX_ID/KRX_PW 미설정" if not _cookie else "KRX API 일시 장애"
             result["data_status"] = f"데이터 수집 실패 ({hint})"
             logger.warning("ETF 데이터 수집 실패 [%s]: %s", code, hint)
+
+    # ── Naver Finance 보완 — expense_ratio·dividend_yield (KRX 미수집분) ────
+    if naver_data.get("expense_ratio") is not None and result["expense_ratio"] is None:
+        result["expense_ratio"] = naver_data["expense_ratio"]
+    if naver_data.get("dividend_yield") is not None and result["dividend_yield"] is None:
+        result["dividend_yield"] = naver_data["dividend_yield"]
 
     # ── pykrx extras 보완 (추적오차·괴리율 KRX 정식 집계값) ─────────────────
     if pykrx_data.get("tracking_error") is not None:
