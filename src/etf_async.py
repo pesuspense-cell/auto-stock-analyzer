@@ -152,6 +152,8 @@ def _init_cache() -> None:
                 updated_at TEXT NOT NULL
             )
         """)
+        # 이전 버전의 bad status 캐시 자동 정리
+        conn.execute("DELETE FROM etf_cache WHERE data_json LIKE '%krx_api_일시_장애%'")
         conn.commit()
 
 
@@ -169,7 +171,11 @@ def _load_cache(code: str) -> dict | None:
         if not row:
             return None
         if (datetime.now() - datetime.fromisoformat(row[1])).total_seconds() < _cache_ttl():
-            return json.loads(row[0])
+            data = json.loads(row[0])
+            # bad status 캐시는 무시하고 재수집
+            if data.get("data_status") == "krx_api_일시_장애":
+                return None
+            return data
         return None
     except Exception:
         return None
