@@ -2427,7 +2427,7 @@ def _render_pf_body(
     realtime_price_fn,
     get_stock_data_fn,
     now_kst_fn,
-    get_exchange_rates_fn=None,
+    usd_krw: float = 1300.0,
     set_cookie_fn=None,
     delete_cookie_fn=None,
 ) -> None:
@@ -2509,22 +2509,9 @@ def _render_pf_body(
             except Exception:
                 pass
 
-    # 실시간 환율: app.py의 캐시된 _rates() 주입 → 실패 시 yfinance 직접 조회 → 최종 fallback 1300
-    _usd_krw = 1300.0
-    _usd_krw_fetched = False
-    if get_exchange_rates_fn is not None:
-        try:
-            _ex_rates = get_exchange_rates_fn()
-            for _pk, _pi in _ex_rates.items():
-                if "USD" in _pk and "KRW" in _pk:
-                    _r = float(_pi.get("rate", 0.0))
-                    if _r > 100:
-                        _usd_krw = _r
-                        _usd_krw_fetched = True
-                    break
-        except Exception:
-            pass
-    if not _usd_krw_fetched:
+    # 환율: render_portfolio_tab에서 계산된 값 사용 (비정상 시 yfinance 재시도)
+    _usd_krw = usd_krw if usd_krw > 100 else 1300.0
+    if _usd_krw == 1300.0:
         try:
             _fx_raw = yf.download("USDKRW=X", period="2d", auto_adjust=True, progress=False)
             if not _fx_raw.empty:
@@ -3377,6 +3364,20 @@ def render_portfolio_tab(
                         st.error(_r["error"])
             return
 
+        # 환율 사전 계산 — @st.cache_data 함수를 fragment에 직접 넘기면 해시 실패
+        _pf_usd_krw = 1300.0
+        if get_exchange_rates_fn is not None:
+            try:
+                _ex = get_exchange_rates_fn()
+                for _pk, _pi in _ex.items():
+                    if "USD" in _pk and "KRW" in _pk:
+                        _r = float(_pi.get("rate", 0.0))
+                        if _r > 100:
+                            _pf_usd_krw = _r
+                        break
+            except Exception:
+                pass
+
         # 로그인 상태: fragment에 위임 — 매도·삭제·초기화 시 탭만 재렌더링
         _render_pf_body(
             db_logout=db_logout,
@@ -3392,7 +3393,7 @@ def render_portfolio_tab(
             realtime_price_fn=realtime_price_fn,
             get_stock_data_fn=get_stock_data_fn,
             now_kst_fn=now_kst_fn,
-            get_exchange_rates_fn=get_exchange_rates_fn,
+            usd_krw=_pf_usd_krw,
             set_cookie_fn=set_cookie_fn,
             delete_cookie_fn=delete_cookie_fn,
         )
