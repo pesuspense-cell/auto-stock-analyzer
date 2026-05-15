@@ -5222,6 +5222,9 @@ def get_etf_news_with_holdings(ticker: str, etf_data: dict, max_items: int = 15)
     - 상위 구성종목 최대 3개의 뉴스도 포함해 정확도 향상
     - ETF + 구성종목 뉴스를 ThreadPoolExecutor로 동시 수집
     """
+    if not isinstance(etf_data, dict):
+        etf_data = {}
+
     holdings = etf_data.get("top_holdings", [])
     valid_holdings = [h for h in holdings[:3] if h.get("ticker")]
 
@@ -5266,6 +5269,9 @@ def analyze_etf_news_sentiment(ticker: str, etf_data: dict, news_items: list[dic
     - 섹터 키워드를 중심으로 스코어링
     - 종목명 일치 필터를 느슨하게 적용 (ETF는 섹터 뉴스가 핵심)
     """
+    if not isinstance(etf_data, dict):
+        etf_data = {}
+
     sector = etf_data.get("sector", "")
     etf_name = etf_data.get("etf_name", "")
 

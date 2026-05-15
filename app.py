@@ -498,7 +498,7 @@ def _check_is_etf(ticker: str) -> bool:
 
 @st.cache_data(ttl=60)
 def _etf_fundamental(ticker: str) -> dict:
-    return get_etf_fundamental_data(ticker)
+    return get_etf_fundamental_data(ticker) or {}
 
 @st.cache_data(ttl=300)
 def _inv_data(ticker: str) -> dict:

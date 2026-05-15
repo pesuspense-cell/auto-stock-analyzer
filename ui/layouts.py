@@ -1032,7 +1032,7 @@ def render_news_tab(
 
                     # 뉴스 수집 완료 즉시 감성 분석 제출
                     _f_sent = _pool.submit(
-                        analyze_etf_news_sentiment, raw_news, ticker, _etf_fund_data
+                        analyze_etf_news_sentiment, ticker, _etf_fund_data, raw_news
                     ) if raw_news else None
                     st.write("🔄 AI 감성 분석 중...")
 
