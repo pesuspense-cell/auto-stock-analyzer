@@ -356,8 +356,7 @@ def render_sidebar(
             st.session_state["_collapse_sidebar"] = True
             st.rerun()
 
-        # ── API 키 ──────────────────────────────────────────────────────────
-        st.divider()
+        # API 키 값 로드 (UI 표시 전 필요)
         try:
             _gem_secret = st.secrets.get("GEMINI_API_KEY", "")
         except Exception:
@@ -378,110 +377,6 @@ def render_sidebar(
 
         _krx_ok = bool(os.environ.get("KRX_ID") and os.environ.get("KRX_PW"))
         use_llm = bool(gemini_api_key or groq_api_key)
-
-        _cur_gemini = st.session_state.get("gemini_api_key", "")
-        _cur_groq   = st.session_state.get("groq_api_key", "")
-        _cur_dart   = st.session_state.get("dart_api_key", "")
-        _cur_krx_id = saved_settings.get("krx_id", "")
-        _cur_krx_pw = saved_settings.get("krx_pw", "")
-
-        def _key_hint(v: str) -> str:
-            if not v:
-                return ""
-            return f"{v[:4]}{'*' * (len(v) - 4)}" if len(v) > 4 else "****"
-
-        _any_missing = not (gemini_api_key and groq_api_key and dart_api_key and _krx_ok)
-        with st.expander("🔧 API 키 설정", expanded=_any_missing):
-            with st.form("api_key_form"):
-                st.caption("저장된 키는 자동 로드됩니다. 변경할 키만 입력하세요.")
-                _new_gemini = st.text_input(
-                    "🤖 Gemini API 키" + (" ✅" if _cur_gemini else " ⚠️"),
-                    placeholder="저장됨 — 변경하려면 입력" if _cur_gemini else "AIza...",
-                    type="password",
-                    help=f"현재: {_key_hint(_cur_gemini)}" if _cur_gemini else "미설정",
-                )
-                _new_groq = st.text_input(
-                    "🦙 Groq API 키" + (" ✅" if _cur_groq else " ⚠️"),
-                    placeholder="저장됨 — 변경하려면 입력" if _cur_groq else "gsk_...",
-                    type="password",
-                    help=f"현재: {_key_hint(_cur_groq)}" if _cur_groq else "미설정",
-                )
-                _new_dart = st.text_input(
-                    "📑 DART API 키" + (" ✅" if _cur_dart else " ⚠️"),
-                    placeholder="저장됨 — 변경하려면 입력" if _cur_dart else "DART OpenAPI 키",
-                    type="password",
-                    help=f"현재: {_key_hint(_cur_dart)}" if _cur_dart else "미설정",
-                )
-                _new_krx_id = st.text_input(
-                    "📊 KRX 아이디" + (" ✅" if _cur_krx_id else " ⚠️"),
-                    placeholder="저장됨 — 변경하려면 입력" if _cur_krx_id else "KRX 로그인 ID",
-                    help=f"현재: {_key_hint(_cur_krx_id)}" if _cur_krx_id else "미설정",
-                )
-                _new_krx_pw = st.text_input(
-                    "📊 KRX 비밀번호" + (" ✅" if _cur_krx_pw else " ⚠️"),
-                    placeholder="저장됨 — 변경하려면 입력" if _cur_krx_pw else "KRX 로그인 PW",
-                    type="password",
-                    help=f"현재: {_key_hint(_cur_krx_pw)}" if _cur_krx_pw else "미설정",
-                )
-                if st.form_submit_button("💾 저장", use_container_width=True, type="primary"):
-                    _to_save = {**load_settings_fn()}
-                    _to_save["gemini_api_key"] = _new_gemini or _cur_gemini
-                    _to_save["groq_api_key"]   = _new_groq   or _cur_groq
-                    _to_save["dart_api_key"]   = _new_dart   or _cur_dart
-                    _to_save["krx_id"]         = _new_krx_id or _cur_krx_id
-                    _to_save["krx_pw"]         = _new_krx_pw or _cur_krx_pw
-                    save_settings_fn(_to_save)
-                    st.session_state["gemini_api_key"] = _to_save["gemini_api_key"]
-                    st.session_state["groq_api_key"]   = _to_save["groq_api_key"]
-                    st.session_state["dart_api_key"]   = _to_save["dart_api_key"]
-                    if _to_save["krx_id"]:
-                        os.environ["KRX_ID"] = _to_save["krx_id"]
-                    if _to_save["krx_pw"]:
-                        os.environ["KRX_PW"] = _to_save["krx_pw"]
-                    st.success("저장되었습니다!")
-                    st.rerun()
-
-        # ── 환율 ────────────────────────────────────────────────────────────
-        st.divider()
-        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">💱 실시간 환율</p>', unsafe_allow_html=True)
-
-        def _sb_row(label, value, change, chg_color):
-            return (
-                f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                f'padding:5px 0;border-bottom:1px solid #21262D;">'
-                f'<span style="font-size:.78rem;color:#8B949E;">{label}</span>'
-                f'<div style="text-align:right">'
-                f'<div style="font-size:.88rem;font-weight:700;color:#E6EDF3;">{value}</div>'
-                f'<div style="font-size:.72rem;color:{chg_color};">{change}</div>'
-                f'</div></div>'
-            )
-
-        rate_html = ""
-        for pair, info in rates.items():
-            chg_val = info["change"]
-            chg_color = "#3FB950" if chg_val >= 0 else "#F85149"
-            chg_sign = "+" if chg_val >= 0 else ""
-            rate_html += _sb_row(pair, f"{info['rate']:,.2f}", f"{chg_sign}{chg_val:.3f}%", chg_color)
-        st.markdown(rate_html, unsafe_allow_html=True)
-
-        # ── 주요 지수 ────────────────────────────────────────────────────────
-        st.divider()
-        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">📊 주요 지수</p>', unsafe_allow_html=True)
-
-        idx_html = ""
-        for idx_name, idx_sym in indices.items():
-            try:
-                d = get_index_data(idx_sym)
-                if len(d) >= 2:
-                    p   = float(d["Close"].iloc[-1])
-                    chg = (p - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2]) * 100
-                    chg_color = "#3FB950" if chg >= 0 else "#F85149"
-                    chg_sign = "+" if chg >= 0 else ""
-                    idx_html += _sb_row(idx_name, f"{p:,.2f}", f"{chg_sign}{chg:.2f}%", chg_color)
-            except Exception:
-                pass
-        if idx_html:
-            st.markdown(idx_html, unsafe_allow_html=True)
 
         # ── 관심종목 ──────────────────────────────────────────────────────────
         st.divider()
@@ -569,6 +464,48 @@ def render_sidebar(
                             st.toast(f"{_sb_ticker_val} 포트폴리오에 추가됐습니다.")
                         st.rerun()
 
+        # ── 환율 ────────────────────────────────────────────────────────────
+        st.divider()
+        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">💱 실시간 환율</p>', unsafe_allow_html=True)
+
+        def _sb_row(label, value, change, chg_color):
+            return (
+                f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                f'padding:5px 0;border-bottom:1px solid #21262D;">'
+                f'<span style="font-size:.78rem;color:#8B949E;">{label}</span>'
+                f'<div style="text-align:right">'
+                f'<div style="font-size:.88rem;font-weight:700;color:#E6EDF3;">{value}</div>'
+                f'<div style="font-size:.72rem;color:{chg_color};">{change}</div>'
+                f'</div></div>'
+            )
+
+        rate_html = ""
+        for pair, info in rates.items():
+            chg_val = info["change"]
+            chg_color = "#3FB950" if chg_val >= 0 else "#F85149"
+            chg_sign = "+" if chg_val >= 0 else ""
+            rate_html += _sb_row(pair, f"{info['rate']:,.2f}", f"{chg_sign}{chg_val:.3f}%", chg_color)
+        st.markdown(rate_html, unsafe_allow_html=True)
+
+        # ── 주요 지수 ────────────────────────────────────────────────────────
+        st.divider()
+        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">📊 주요 지수</p>', unsafe_allow_html=True)
+
+        idx_html = ""
+        for idx_name, idx_sym in indices.items():
+            try:
+                d = get_index_data(idx_sym)
+                if len(d) >= 2:
+                    p   = float(d["Close"].iloc[-1])
+                    chg = (p - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2]) * 100
+                    chg_color = "#3FB950" if chg >= 0 else "#F85149"
+                    chg_sign = "+" if chg >= 0 else ""
+                    idx_html += _sb_row(idx_name, f"{p:,.2f}", f"{chg_sign}{chg:.2f}%", chg_color)
+            except Exception:
+                pass
+        if idx_html:
+            st.markdown(idx_html, unsafe_allow_html=True)
+
         # ── 시스템 연동 상태 (비활성 항목만) ─────────────────────────────────
         _inactive = []
         if not gemini_api_key:
@@ -595,6 +532,70 @@ def render_sidebar(
                     f'<div style="color:#78716C;margin-top:1px">{_ih}</div></div>',
                     unsafe_allow_html=True,
                 )
+
+        # ── API 키 ──────────────────────────────────────────────────────────
+        _cur_gemini = st.session_state.get("gemini_api_key", "")
+        _cur_groq   = st.session_state.get("groq_api_key", "")
+        _cur_dart   = st.session_state.get("dart_api_key", "")
+        _cur_krx_id = saved_settings.get("krx_id", "")
+        _cur_krx_pw = saved_settings.get("krx_pw", "")
+
+        def _key_hint(v: str) -> str:
+            if not v:
+                return ""
+            return f"{v[:4]}{'*' * (len(v) - 4)}" if len(v) > 4 else "****"
+
+        _any_missing = not (gemini_api_key and groq_api_key and dart_api_key and _krx_ok)
+        st.divider()
+        with st.expander("🔧 API 키 설정", expanded=_any_missing):
+            with st.form("api_key_form"):
+                st.caption("저장된 키는 자동 로드됩니다. 변경할 키만 입력하세요.")
+                _new_gemini = st.text_input(
+                    "🤖 Gemini API 키" + (" ✅" if _cur_gemini else " ⚠️"),
+                    placeholder="저장됨 — 변경하려면 입력" if _cur_gemini else "AIza...",
+                    type="password",
+                    help=f"현재: {_key_hint(_cur_gemini)}" if _cur_gemini else "미설정",
+                )
+                _new_groq = st.text_input(
+                    "🦙 Groq API 키" + (" ✅" if _cur_groq else " ⚠️"),
+                    placeholder="저장됨 — 변경하려면 입력" if _cur_groq else "gsk_...",
+                    type="password",
+                    help=f"현재: {_key_hint(_cur_groq)}" if _cur_groq else "미설정",
+                )
+                _new_dart = st.text_input(
+                    "📑 DART API 키" + (" ✅" if _cur_dart else " ⚠️"),
+                    placeholder="저장됨 — 변경하려면 입력" if _cur_dart else "DART OpenAPI 키",
+                    type="password",
+                    help=f"현재: {_key_hint(_cur_dart)}" if _cur_dart else "미설정",
+                )
+                _new_krx_id = st.text_input(
+                    "📊 KRX 아이디" + (" ✅" if _cur_krx_id else " ⚠️"),
+                    placeholder="저장됨 — 변경하려면 입력" if _cur_krx_id else "KRX 로그인 ID",
+                    help=f"현재: {_key_hint(_cur_krx_id)}" if _cur_krx_id else "미설정",
+                )
+                _new_krx_pw = st.text_input(
+                    "📊 KRX 비밀번호" + (" ✅" if _cur_krx_pw else " ⚠️"),
+                    placeholder="저장됨 — 변경하려면 입력" if _cur_krx_pw else "KRX 로그인 PW",
+                    type="password",
+                    help=f"현재: {_key_hint(_cur_krx_pw)}" if _cur_krx_pw else "미설정",
+                )
+                if st.form_submit_button("💾 저장", use_container_width=True, type="primary"):
+                    _to_save = {**load_settings_fn()}
+                    _to_save["gemini_api_key"] = _new_gemini or _cur_gemini
+                    _to_save["groq_api_key"]   = _new_groq   or _cur_groq
+                    _to_save["dart_api_key"]   = _new_dart   or _cur_dart
+                    _to_save["krx_id"]         = _new_krx_id or _cur_krx_id
+                    _to_save["krx_pw"]         = _new_krx_pw or _cur_krx_pw
+                    save_settings_fn(_to_save)
+                    st.session_state["gemini_api_key"] = _to_save["gemini_api_key"]
+                    st.session_state["groq_api_key"]   = _to_save["groq_api_key"]
+                    st.session_state["dart_api_key"]   = _to_save["dart_api_key"]
+                    if _to_save["krx_id"]:
+                        os.environ["KRX_ID"] = _to_save["krx_id"]
+                    if _to_save["krx_pw"]:
+                        os.environ["KRX_PW"] = _to_save["krx_pw"]
+                    st.success("저장되었습니다!")
+                    st.rerun()
 
     result.update(
         ticker=ticker,
