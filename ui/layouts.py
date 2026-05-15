@@ -2427,6 +2427,7 @@ def _render_pf_body(
     realtime_price_fn,
     get_stock_data_fn,
     now_kst_fn,
+    get_exchange_rates_fn=None,
     set_cookie_fn=None,
     delete_cookie_fn=None,
 ) -> None:
@@ -2508,15 +2509,32 @@ def _render_pf_body(
             except Exception:
                 pass
 
+    # 실시간 환율: app.py의 캐시된 _rates() 주입 → 실패 시 yfinance 직접 조회 → 최종 fallback 1300
     _usd_krw = 1300.0
-    try:
-        _fx_raw = yf.download("USDKRW=X", period="2d", auto_adjust=True, progress=False)
-        if not _fx_raw.empty:
-            _fx_s = (_fx_raw["Close"] if "Close" in _fx_raw.columns else _fx_raw.iloc[:, 0]).dropna()
-            if not _fx_s.empty:
-                _usd_krw = float(_fx_s.iloc[-1])
-    except Exception:
-        pass
+    _usd_krw_fetched = False
+    if get_exchange_rates_fn is not None:
+        try:
+            _ex_rates = get_exchange_rates_fn()
+            for _pk, _pi in _ex_rates.items():
+                if "USD" in _pk and "KRW" in _pk:
+                    _r = float(_pi.get("rate", 0.0))
+                    if _r > 100:
+                        _usd_krw = _r
+                        _usd_krw_fetched = True
+                    break
+        except Exception:
+            pass
+    if not _usd_krw_fetched:
+        try:
+            _fx_raw = yf.download("USDKRW=X", period="2d", auto_adjust=True, progress=False)
+            if not _fx_raw.empty:
+                _fx_s = (_fx_raw["Close"] if "Close" in _fx_raw.columns else _fx_raw.iloc[:, 0]).dropna()
+                if not _fx_s.empty:
+                    _v = float(_fx_s.iloc[-1])
+                    if _v > 100:
+                        _usd_krw = _v
+        except Exception:
+            pass
 
     def _krw(price: float, ticker: str) -> float:
         return price if ticker.upper().endswith((".KS", ".KQ")) else price * _usd_krw
@@ -2736,7 +2754,7 @@ def _render_pf_body(
         _tbl_head = (
             '<table class="pf-tbl"><thead><tr>'
             '<th>종목</th><th>수량</th><th>평단가</th>'
-            '<th>현재가</th><th>수익률(%)</th><th>평가손익</th><th>AI 의견</th>'
+            '<th>현재가</th><th>수익률(%)</th><th>평가손익</th><th>평가금(₩)</th><th>AI 의견</th>'
             '</tr></thead><tbody>'
         )
         _tbl_rows_html = []
@@ -2749,14 +2767,19 @@ def _render_pf_body(
             _fp  = (lambda v, k=_is_krw_item: f"₩{v:,.0f}" if k else f"${v:,.2f}")
             _nm  = _pf_nm.get(_t, "")
             if _cur is not None:
-                _pnl_val = (_cur - _avg) * _qty
-                _pnl_pct = (_cur / _avg - 1) * 100 if _avg else 0.0
-                _cls     = "pp" if _pnl_pct > 0 else ("pn" if _pnl_pct < 0 else "pz")
-                _cur_str = _fp(_cur)
-                _pct_str = f"{_pnl_pct:+.2f}%"
-                _pnl_str = (f"+{_fp(abs(_pnl_val))}" if _pnl_val >= 0 else f"-{_fp(abs(_pnl_val))}")
+                _pnl_val   = (_cur - _avg) * _qty
+                _pnl_pct   = (_cur / _avg - 1) * 100 if _avg else 0.0
+                _cls       = "pp" if _pnl_pct > 0 else ("pn" if _pnl_pct < 0 else "pz")
+                _cur_str   = _fp(_cur)
+                _pct_str   = f"{_pnl_pct:+.2f}%"
+                _pnl_str   = (f"+{_fp(abs(_pnl_val))}" if _pnl_val >= 0 else f"-{_fp(abs(_pnl_val))}")
+                # 현재평가금 원화 환산 — USD 종목은 실시간 환율 적용
+                _val_krw   = _krw(_cur, _t) * _qty
+                _val_str   = f"₩{_val_krw:,.0f}"
+                if not _is_krw_item:
+                    _val_str += f"<div style='font-size:.68rem;color:#555'>@{_usd_krw:,.0f}</div>"
             else:
-                _cls = "pz"; _cur_str = "-"; _pct_str = "-"; _pnl_str = "-"
+                _cls = "pz"; _cur_str = "-"; _pct_str = "-"; _pnl_str = "-"; _val_str = "-"
             _nr   = _pf_per_news.get(_t)
             _nsc  = _nr.get("score", 0.0) if _nr else None
             _nlb  = _nr.get("label", "중립") if _nr else None
@@ -2783,6 +2806,7 @@ def _render_pf_body(
                 f"<tr><td style='text-align:left'>{_name_cell}</td>"
                 f"<td>{_qty:g}</td><td>{_fp(_avg)}</td><td>{_cur_str}</td>"
                 f"<td class='{_cls}'>{_pct_str}</td><td class='{_cls}'>{_pnl_str}</td>"
+                f"<td>{_val_str}</td>"
                 f"<td class='ai-op' style='color:{_ai_c}'>{_ai_txt}</td></tr>"
             )
         st.markdown(_tbl_css + _tbl_head + "".join(_tbl_rows_html) + "</tbody></table>", unsafe_allow_html=True)
@@ -3310,6 +3334,7 @@ def render_portfolio_tab(
     realtime_price_fn,
     get_stock_data_fn,
     now_kst_fn,
+    get_exchange_rates_fn=None,
     set_cookie_fn=None,
     delete_cookie_fn=None,
 ) -> None:
@@ -3367,6 +3392,7 @@ def render_portfolio_tab(
             realtime_price_fn=realtime_price_fn,
             get_stock_data_fn=get_stock_data_fn,
             now_kst_fn=now_kst_fn,
+            get_exchange_rates_fn=get_exchange_rates_fn,
             set_cookie_fn=set_cookie_fn,
             delete_cookie_fn=delete_cookie_fn,
         )

@@ -1128,6 +1128,7 @@ render_portfolio_tab(
     realtime_price_fn     = _realtime_price_1m,
     get_stock_data_fn     = _stock_data,
     now_kst_fn            = _now_kst,
+    get_exchange_rates_fn = _rates,
     set_cookie_fn         = _set_cookie,
     delete_cookie_fn      = _delete_cookie,
 )
