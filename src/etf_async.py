@@ -363,6 +363,39 @@ async def _krx_fetch_holdings(
     return []
 
 
+async def _krx_fetch_etf_detail(
+    isu_cd: str, client: "httpx.AsyncClient", cookie_str: str = "",
+) -> dict:
+    """
+    KRX MDCSTAT04701 → ETF 개요 정보 (운용보수 등).
+    isu_cd는 전체 ISU 코드 (예: KR7396500001). 인증 필수.
+    """
+    if not isu_cd or not cookie_str:
+        return {}
+    headers = {**_KRX_HEADERS, "Cookie": cookie_str}
+    try:
+        resp = await client.post(
+            _KRX_URL,
+            data={
+                "bld":         "dbms/MDC/STAT/standard/MDCSTAT04701",
+                "locale":      "ko_KR",
+                "isuCd":       isu_cd,
+                "csvxls_isNo": "false",
+            },
+            headers=headers,
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        fee = _to_float(body.get("ETF_TOT_FEE"))
+        if fee is None or fee == 0:
+            return {}
+        return {"expense_ratio": fee}
+    except Exception as e:
+        logger.debug("KRX MDCSTAT04701 (detail) failed: %s", e)
+        return {}
+
+
 async def _fdr_fetch_price(ticker: str) -> float | None:
     """FinanceDataReader로 현재가 보완 (동기 라이브러리 → executor 오프로드)"""
     try:
@@ -595,18 +628,20 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
             isu_cd     = nav_data.pop("_isu_cd", "")
             trade_date = nav_data.get("trade_date", date_str)
 
-        # 2) Naver·Holdings(KRX)·FDR·pykrx extras 병렬 수집
+        # 2) Naver·Holdings(KRX)·FDR·ETF detail·pykrx extras 병렬 수집
         loop = asyncio.get_event_loop()
         naver_task    = asyncio.create_task(_naver_fetch_etf(code, client))
         holdings_task = asyncio.create_task(_krx_fetch_holdings(isu_cd, client, trade_date, cookie_str=_cookie))
         fdr_task      = asyncio.create_task(_fdr_fetch_price(ticker))
+        detail_task   = asyncio.create_task(_krx_fetch_etf_detail(isu_cd, client, cookie_str=_cookie))
         # pykrx extras (추적오차·구성종목) — 항상 실행, 인증 없으면 내부에서 조용히 실패
         pykrx_task = loop.run_in_executor(None, _pykrx_extras, code, date_str)
-        naver_raw, holdings, fdr_price_result, pykrx_raw = await asyncio.gather(
-            naver_task, holdings_task, fdr_task, pykrx_task, return_exceptions=True
+        naver_raw, holdings, fdr_price_result, detail_raw, pykrx_raw = await asyncio.gather(
+            naver_task, holdings_task, fdr_task, detail_task, pykrx_task, return_exceptions=True
         )
 
     naver_data: dict  = naver_raw  if isinstance(naver_raw,  dict) else {}
+    detail_data: dict = detail_raw if isinstance(detail_raw, dict) else {}
     pykrx_data: dict  = pykrx_raw  if isinstance(pykrx_raw,  dict) else {}
 
     # ── NAV / 괴리율 / 추적오차 / AUM / 기준가격 ─────────────────────────────
@@ -638,9 +673,12 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
             result["data_status"] = f"데이터 수집 실패 ({hint})"
             logger.warning("ETF 데이터 수집 실패 [%s]: %s", code, hint)
 
-    # ── Naver Finance 보완 — expense_ratio·dividend_yield (KRX 미수집분) ────
-    if naver_data.get("expense_ratio") is not None and result["expense_ratio"] is None:
+    # ── expense_ratio: 정적 맵 → KRX MDCSTAT04701 → Naver 순 ────────────────
+    if result["expense_ratio"] is None and detail_data.get("expense_ratio") is not None:
+        result["expense_ratio"] = detail_data["expense_ratio"]
+    if result["expense_ratio"] is None and naver_data.get("expense_ratio") is not None:
         result["expense_ratio"] = naver_data["expense_ratio"]
+    # ── dividend_yield: Naver 폴백 ───────────────────────────────────────────
     if naver_data.get("dividend_yield") is not None and result["dividend_yield"] is None:
         result["dividend_yield"] = naver_data["dividend_yield"]
 
