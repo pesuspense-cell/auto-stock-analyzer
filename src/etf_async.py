@@ -2,14 +2,15 @@
 etf_async.py - KRX 공공 데이터 API 기반 ETF 지표 비동기 수집
 
 데이터 우선순위:
-  1. KRX 공공 데이터 API (data.krx.co.kr) → NAV, 괴리율, 추적오차, AUM, 구성종목
-  2. FinanceDataReader → 현재가 보완
-  3. 정적 운용보수 맵 → 오프라인 안정 보장 (외부 API 불필요)
-  4. SQLite 캐시 (fundamentals.db) → API 장애 시 최근 데이터 서빙
+  1. KRX data.krx.co.kr (로그인 세션) → NAV, 괴리율, 추적오차, AUM, 구성종목
+  2. 네이버 금융 스크래핑 → NAV, 괴리율, AUM, 현재가 (KRX 인증 실패 시 폴백)
+  3. FinanceDataReader → 현재가 보완
+  4. 정적 운용보수 맵 → expense_ratio 오프라인 보장
+  5. SQLite 캐시 (fundamentals.db) → 전체 실패 시 최근 데이터 서빙
 
-환경 변수:
-  KRX_API_KEY : KRX Open API 인증키 (선택)
-                설정 시 openapi.krx.co.kr 사용, 미설정 시 data.krx.co.kr 사용 (인증 불필요)
+인증:
+  KRX_ID / KRX_PW 환경변수 또는 Streamlit secrets 설정 시 KRX 로그인 자동 수행.
+  미설정 시 네이버 금융 폴백 사용.
 """
 from __future__ import annotations
 
@@ -62,6 +63,49 @@ def _extract_rows(body: dict) -> list[dict]:
         if isinstance(val, list) and val:
             return val
     return []
+
+
+# ─── KRX 인증 세션 캐시 ───────────────────────────────────────────────────────
+_KRX_AUTH: dict[str, Any] = {"cookie": "", "expires": 0.0}
+
+
+def _get_krx_cookie_str() -> str:
+    """
+    KRX 인증 쿠키 문자열 반환 (50분 캐시).
+    KRX_ID / KRX_PW를 환경변수 → Streamlit secrets 순서로 탐색.
+    로그인 실패 또는 미설정 시 빈 문자열 반환 (Naver 폴백 사용).
+    """
+    if _KRX_AUTH["cookie"] and time.time() < _KRX_AUTH["expires"]:
+        return _KRX_AUTH["cookie"]
+
+    krx_id = os.getenv("KRX_ID", "")
+    krx_pw = os.getenv("KRX_PW", "")
+
+    if not (krx_id and krx_pw):
+        try:
+            import streamlit as st
+            krx_id = st.secrets.get("KRX_ID", "")
+            krx_pw = st.secrets.get("KRX_PW", "")
+        except Exception:
+            pass
+
+    if not (krx_id and krx_pw):
+        return ""
+
+    try:
+        from pykrx.website.comm.auth import build_krx_session
+        sess = build_krx_session(krx_id, krx_pw)
+        if sess and sess.is_authenticated:
+            cookie_str = "; ".join(
+                f"{k}={v['value']}" for k, v in sess.cookies.items()
+            )
+            _KRX_AUTH["cookie"]   = cookie_str
+            _KRX_AUTH["expires"]  = time.time() + 3000  # 50분
+            logger.info("KRX 로그인 성공 (세션 50분 캐시)")
+            return cookie_str
+    except Exception as e:
+        logger.warning("KRX 로그인 실패: %s", e)
+    return ""
 
 # ─── 운용보수 정적 맵 (출처: 각 운용사 공시 자료 2025년 기준) ─────────────────
 _EXPENSE_RATIO_MAP: dict[str, float] = {
@@ -181,13 +225,15 @@ def _to_aum(raw: Any) -> float | None:
 
 # ─── KRX 공공 API 비동기 수집 ─────────────────────────────────────────────────
 async def _krx_fetch_nav(
-    code: str, client: "httpx.AsyncClient", date_str: str
+    code: str, client: "httpx.AsyncClient", date_str: str,
+    cookie_str: str = "",
 ) -> dict | None:
     """
     KRX data.krx.co.kr → ETF NAV / 괴리율 / 추적오차 / AUM / 현재가.
     MDCSTAT04301은 전체 ETF 일괄 조회 엔드포인트이므로 trdDd 파라미터로 호출 후
     code(ISU_SRT_CD)로 필터링. _isu_cd(전체 ISU 코드)도 함께 반환 (구성종목 조회용).
     """
+    headers = {**_KRX_HEADERS, **({"Cookie": cookie_str} if cookie_str else {})}
     for delta in range(6):
         d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=delta)).strftime("%Y%m%d")
         try:
@@ -201,7 +247,7 @@ async def _krx_fetch_nav(
                     "money":       "1",
                     "csvxls_isNo": "false",
                 },
-                headers=_KRX_HEADERS,
+                headers=headers,
                 timeout=20.0,
             )
             resp.raise_for_status()
@@ -223,6 +269,13 @@ async def _krx_fetch_nav(
             if not nav_raw:
                 continue
 
+            # AUM: INVSTASST_NETASST_TOTAMT 또는 MKTCAP (원 단위 → 억원)
+            aum_raw = _to_float(_pick(row, "INVSTASST_NETASST_TOTAMT", "NETASST_TOTAMT",
+                                      "netasstTotamt", "순자산총액", "NET_ASST"))
+            if not aum_raw or aum_raw == 0:
+                aum_raw = _to_float(row.get("MKTCAP"))
+            aum = round(aum_raw / 1e8, 0) if aum_raw and aum_raw > 0 else None
+
             return {
                 "nav":            nav_raw,
                 "nav_premium":    _to_float(_pick(
@@ -233,10 +286,7 @@ async def _krx_fetch_nav(
                     row, "TRKNG_ERR_RT", "trkngErrRt", "TRACE_ERR_RT", "traceErrRt",
                     "추적오차율", "TCKR_ERSS_RT", "ETF_TCKR_ERSS_RT",
                 )),
-                "aum":            _to_aum(_pick(
-                    row, "NETASST_TOTAMT", "netasstTotamt", "순자산총액",
-                    "NET_ASST", "ETF_NASS_TOT_AMT",
-                )),
+                "aum":            aum,
                 "price":          _to_float(_pick(
                     row, "TDD_CLSPRC", "기준가격", "기준가", "CLSPRC", "ETF_CLSPRC",
                 )),
@@ -249,11 +299,13 @@ async def _krx_fetch_nav(
 
 
 async def _krx_fetch_holdings(
-    isu_cd: str, client: "httpx.AsyncClient", date_str: str
+    isu_cd: str, client: "httpx.AsyncClient", date_str: str,
+    cookie_str: str = "",
 ) -> list[dict]:
     """KRX PDF(구성종목) 상위 10개 수집. isu_cd는 전체 ISU 코드(예: KR7069500007)."""
     if not isu_cd:
         return []
+    headers = {**_KRX_HEADERS, **({"Cookie": cookie_str} if cookie_str else {})}
     for delta in range(6):
         d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=delta)).strftime("%Y%m%d")
         try:
@@ -266,7 +318,7 @@ async def _krx_fetch_holdings(
                     "trdDd":       d,
                     "csvxls_isNo": "false",
                 },
-                headers=_KRX_HEADERS,
+                headers=headers,
                 timeout=15.0,
             )
             resp.raise_for_status()
@@ -402,6 +454,69 @@ async def _naver_fetch_etf(code: str, client: "httpx.AsyncClient") -> dict:
     return out
 
 
+def _pykrx_extras(code: str, date_str: str) -> dict:
+    """
+    pykrx로 추적오차·괴리율·구성종목 추가 수집 (동기, thread executor용).
+    KRX 인증 성공 시에만 유효 데이터를 반환.
+    """
+    out: dict = {"tracking_error": None, "nav_premium_krx": None, "top_holdings": []}
+    try:
+        import pykrx.stock as _stock  # type: ignore
+        end_d   = date_str
+        start_d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
+
+        # 추적오차
+        try:
+            te_df = _stock.get_etf_tracking_error(start_d, end_d, code)
+            if te_df is not None and not te_df.empty and "추적오차율" in te_df.columns:
+                # 오늘 값이 0이면 전일 값 사용
+                for row in reversed(te_df["추적오차율"].tolist()):
+                    if row and row != 0:
+                        out["tracking_error"] = round(float(row), 2)
+                        break
+        except Exception as e:
+            logger.debug("pykrx tracking_error failed: %s", e)
+
+        # 괴리율 (KRX MDCSTAT04301은 오늘 값이 intraday라 부정확할 수 있음)
+        try:
+            dev_df = _stock.get_etf_price_deviation(start_d, end_d, code)
+            if dev_df is not None and not dev_df.empty and "괴리율" in dev_df.columns:
+                vals = dev_df["괴리율"].dropna().tolist()
+                if vals:
+                    out["nav_premium_krx"] = round(float(vals[-1]), 2)
+        except Exception as e:
+            logger.debug("pykrx price_deviation failed: %s", e)
+
+        # 구성종목 PDF (당일 → 전일 → ... 순으로 시도)
+        for delta in range(5):
+            d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=delta)).strftime("%Y%m%d")
+            try:
+                pdf = _stock.get_etf_portfolio_deposit_file(d, code)
+                if pdf is not None and not pdf.empty:
+                    holdings = []
+                    for _, row in pdf.head(10).iterrows():
+                        t_code = str(row.get("종목코드", row.name) or "").strip().zfill(6)
+                        t_name = str(row.get("종목명", row.get("ISU_ABBRV", "")) or "").strip()
+                        t_wgt  = None
+                        for wk in ("비중", "구성비중", "COMPST_RT"):
+                            if wk in row.index and row[wk] not in (None, ""):
+                                try:
+                                    t_wgt = float(row[wk])
+                                    break
+                                except (ValueError, TypeError):
+                                    pass
+                        if t_code and t_name:
+                            holdings.append({"ticker": f"{t_code}.KS", "name": t_name, "weight": t_wgt})
+                    if holdings:
+                        out["top_holdings"] = holdings
+                        break
+            except Exception as e:
+                logger.debug("pykrx portfolio_deposit_file (delta=%d) failed: %s", delta, e)
+    except Exception as e:
+        logger.debug("pykrx_extras overall failed: %s", e)
+    return out
+
+
 # ─── 통합 비동기 수집 ─────────────────────────────────────────────────────────
 async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
     code     = ticker.replace(".KS", "").replace(".KQ", "").strip().zfill(6)
@@ -429,9 +544,12 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
         result["data_status"] = "httpx 미설치 (pip install httpx)"
         return result
 
+    # KRX 인증 쿠키 (동기 호출 — 캐시 히트 시 즉시 반환, 미스 시 로그인 수행)
+    _cookie = _get_krx_cookie_str()
+
     async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
         # 1) KRX NAV 먼저 (ISU_CD 획득 후 구성종목 조회)
-        nav_data = await _krx_fetch_nav(code, client, date_str)
+        nav_data = await _krx_fetch_nav(code, client, date_str, cookie_str=_cookie)
 
         isu_cd     = ""
         trade_date = date_str
@@ -439,19 +557,28 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
             isu_cd     = nav_data.pop("_isu_cd", "")
             trade_date = nav_data.get("trade_date", date_str)
 
-        # 2) Naver·Holdings·FDR 병렬 수집
+        # 2) Naver·Holdings(KRX)·FDR·pykrx extras 병렬 수집
+        loop = asyncio.get_event_loop()
         naver_task    = asyncio.create_task(_naver_fetch_etf(code, client))
-        holdings_task = asyncio.create_task(_krx_fetch_holdings(isu_cd, client, trade_date))
+        holdings_task = asyncio.create_task(_krx_fetch_holdings(isu_cd, client, trade_date, cookie_str=_cookie))
         fdr_task      = asyncio.create_task(_fdr_fetch_price(ticker))
-        naver_raw, holdings, fdr_price_result = await asyncio.gather(
-            naver_task, holdings_task, fdr_task, return_exceptions=True
+        # pykrx extras (추적오차·구성종목) — KRX 인증 시에만 유효, 동기라 executor 사용
+        if _cookie:
+            pykrx_task = loop.run_in_executor(None, _pykrx_extras, code, date_str)
+        else:
+            async def _no_extras():
+                return {}
+            pykrx_task = asyncio.create_task(_no_extras())
+        naver_raw, holdings, fdr_price_result, pykrx_raw = await asyncio.gather(
+            naver_task, holdings_task, fdr_task, pykrx_task, return_exceptions=True
         )
 
-    naver_data: dict = naver_raw if isinstance(naver_raw, dict) else {}
+    naver_data: dict  = naver_raw  if isinstance(naver_raw,  dict) else {}
+    pykrx_data: dict  = pykrx_raw  if isinstance(pykrx_raw,  dict) else {}
 
     # ── NAV / 괴리율 / 추적오차 / AUM / 기준가격 ─────────────────────────────
     if isinstance(nav_data, dict) and nav_data:
-        # KRX 성공 (우선 사용)
+        # KRX MDCSTAT04301 성공
         result.update({
             "nav":            nav_data.get("nav"),
             "nav_premium":    nav_data.get("nav_premium"),
@@ -462,7 +589,7 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
             result["price"] = nav_data["price"]
     else:
         # KRX 실패 → Naver Finance 폴백
-        logger.info("KRX NAV unavailable for %s, falling back to Naver Finance", code)
+        logger.info("KRX NAV 미수집 (%s) → 네이버 금융 폴백", code)
         if naver_data.get("nav"):
             result.update({
                 "nav":         naver_data.get("nav"),
@@ -472,12 +599,22 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
             result["source"]      = "naver"
             result["data_status"] = "ok"
         else:
-            result["data_status"] = "krx_api_일시_장애"
-            logger.warning("KRX NAV fetch returned no data for %s", code)
+            hint = "KRX_ID/KRX_PW 미설정" if not _cookie else "KRX API 일시 장애"
+            result["data_status"] = f"데이터 수집 실패 ({hint})"
+            logger.warning("ETF 데이터 수집 실패 [%s]: %s", code, hint)
 
-    # ── 구성종목 ────────────────────────────────────────────────────────────
+    # ── pykrx extras 보완 (추적오차·괴리율 KRX 정식 집계값) ─────────────────
+    if pykrx_data.get("tracking_error") is not None:
+        result["tracking_error"] = pykrx_data["tracking_error"]
+    # pykrx 괴리율은 종가 기준이라 더 정확 — nav_premium이 없거나 오늘 intraday라면 교체
+    if pykrx_data.get("nav_premium_krx") is not None and result["nav_premium"] is None:
+        result["nav_premium"] = pykrx_data["nav_premium_krx"]
+
+    # ── 구성종목 (httpx KRX → pykrx 순) ─────────────────────────────────────
     if isinstance(holdings, list) and holdings:
         result["top_holdings"] = holdings
+    elif pykrx_data.get("top_holdings"):
+        result["top_holdings"] = pykrx_data["top_holdings"]
     elif not isinstance(holdings, list):
         logger.debug("Holdings task raised: %s", holdings)
 
