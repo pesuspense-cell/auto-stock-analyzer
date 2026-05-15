@@ -42,15 +42,26 @@ logger.setLevel(logging.INFO)
 # ─── KRX 공공 데이터 API 상수 ─────────────────────────────────────────────────
 _KRX_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
 _KRX_HEADERS = {
-    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-    "Referer": "https://data.krx.co.kr/",
+    "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+    "Origin":           "https://data.krx.co.kr",
+    "Referer":          "https://data.krx.co.kr/contents/MDC/MDI/mdistats/MDCSTAT04301.cmd",
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept":           "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language":  "ko-KR,ko;q=0.9,en-US;q=0.8",
     "X-Requested-With": "XMLHttpRequest",
 }
+
+
+def _extract_rows(body: dict) -> list[dict]:
+    """KRX API 응답 바디에서 row 리스트 추출 (엔드포인트마다 키가 다름)."""
+    for key in ("OutBlock_1", "output", "block1", "etfList", "Output1", "data"):
+        val = body.get(key)
+        if isinstance(val, list) and val:
+            return val
+    return []
 
 # ─── 운용보수 정적 맵 (출처: 각 운용사 공시 자료 2025년 기준) ─────────────────
 _EXPENSE_RATIO_MAP: dict[str, float] = {
@@ -174,7 +185,8 @@ async def _krx_fetch_nav(
 ) -> dict | None:
     """
     KRX data.krx.co.kr → ETF NAV / 괴리율 / 추적오차 / AUM / 현재가.
-    최근 6거래일 중 데이터가 있는 가장 최근 날짜 사용.
+    MDCSTAT04301은 전체 ETF 일괄 조회 엔드포인트이므로 trdDd 파라미터로 호출 후
+    code(ISU_SRT_CD)로 필터링. _isu_cd(전체 ISU 코드)도 함께 반환 (구성종목 조회용).
     """
     for delta in range(6):
         d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=delta)).strftime("%Y%m%d")
@@ -184,31 +196,51 @@ async def _krx_fetch_nav(
                 data={
                     "bld":         "dbms/MDC/STAT/standard/MDCSTAT04301",
                     "locale":      "ko_KR",
-                    "isuCd":       code,
-                    "isuCd2":      code,
-                    "strtDd":      d,
-                    "endDd":       d,
+                    "trdDd":       d,
+                    "share":       "1",
+                    "money":       "1",
                     "csvxls_isNo": "false",
                 },
                 headers=_KRX_HEADERS,
-                timeout=12.0,
+                timeout=20.0,
             )
             resp.raise_for_status()
-            rows = resp.json().get("output", [])
+            rows = _extract_rows(resp.json())
             if not rows:
                 continue
-            row = rows[0]
 
-            nav_raw = _to_float(_pick(row, "NAV", "ETF_NAV", "nav"))
+            # 전체 ETF 목록에서 해당 코드 필터링
+            row = None
+            for r in rows:
+                short = str(r.get("ISU_SRT_CD", r.get("isuSrtCd", ""))).strip().zfill(6)
+                if short == code:
+                    row = r
+                    break
+            if row is None:
+                continue
+
+            nav_raw = _to_float(_pick(row, "NAV", "ETF_NAV", "NAV_PRC", "navPrc", "nav"))
             if not nav_raw:
                 continue
 
             return {
                 "nav":            nav_raw,
-                "nav_premium":    _to_float(_pick(row, "괴리율", "DSRT_RT", "ETF_DSRT_RT")),
-                "tracking_error": _to_float(_pick(row, "추적오차율", "TCKR_ERSS_RT", "ETF_TCKR_ERSS_RT")),
-                "aum":            _to_aum(_pick(row, "순자산총액", "NETASST_TOTAMT", "ETF_NASS_TOT_AMT")),
-                "price":          _to_float(_pick(row, "기준가격", "TDD_CLSPRC", "기준가", "CLSPRC", "ETF_CLSPRC")),
+                "nav_premium":    _to_float(_pick(
+                    row, "DVDNDRTO", "dvdndrto", "NAV_DISRATE", "navDisrate",
+                    "DISRATE", "disrate", "괴리율", "DSRT_RT", "ETF_DSRT_RT",
+                )),
+                "tracking_error": _to_float(_pick(
+                    row, "TRKNG_ERR_RT", "trkngErrRt", "TRACE_ERR_RT", "traceErrRt",
+                    "추적오차율", "TCKR_ERSS_RT", "ETF_TCKR_ERSS_RT",
+                )),
+                "aum":            _to_aum(_pick(
+                    row, "NETASST_TOTAMT", "netasstTotamt", "순자산총액",
+                    "NET_ASST", "ETF_NASS_TOT_AMT",
+                )),
+                "price":          _to_float(_pick(
+                    row, "TDD_CLSPRC", "기준가격", "기준가", "CLSPRC", "ETF_CLSPRC",
+                )),
+                "_isu_cd":        str(row.get("ISU_CD", row.get("isuCd", ""))).strip(),
                 "trade_date":     d,
             }
         except Exception as e:
@@ -217,37 +249,41 @@ async def _krx_fetch_nav(
 
 
 async def _krx_fetch_holdings(
-    code: str, client: "httpx.AsyncClient", date_str: str
+    isu_cd: str, client: "httpx.AsyncClient", date_str: str
 ) -> list[dict]:
-    """KRX PDF 구성종목 상위 10개 수집"""
+    """KRX PDF(구성종목) 상위 10개 수집. isu_cd는 전체 ISU 코드(예: KR7069500007)."""
+    if not isu_cd:
+        return []
     for delta in range(6):
         d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=delta)).strftime("%Y%m%d")
         try:
             resp = await client.post(
                 _KRX_URL,
                 data={
-                    "bld":         "dbms/MDC/STAT/standard/MDCSTAT04601",
+                    "bld":         "dbms/MDC/STAT/standard/MDCSTAT04302",
                     "locale":      "ko_KR",
-                    "isuCd":       code,
+                    "isuCd":       isu_cd,
                     "trdDd":       d,
                     "csvxls_isNo": "false",
                 },
                 headers=_KRX_HEADERS,
-                timeout=12.0,
+                timeout=15.0,
             )
             resp.raise_for_status()
-            rows = resp.json().get("output", [])
+            rows = _extract_rows(resp.json())
             if not rows:
                 continue
 
             holdings = []
             for r in rows[:10]:
-                t_code = str(_pick(r, "ISU_CD", "종목코드") or "").strip()
-                t_name = str(_pick(r, "ISU_ABBRV", "종목명", "ISU_NM") or "").strip()
-                t_wgt  = _to_float(_pick(r, "COMPST_RT", "비중", "WGT_RT", "WGFT"))
+                t_code = str(_pick(r, "ISU_SRT_CD", "isuSrtCd", "ISU_CD", "종목코드") or "").strip()
+                t_name = str(_pick(r, "ISU_ABBRV", "isuAbbrv", "종목명", "ISU_NM") or "").strip()
+                t_wgt  = _to_float(_pick(r, "COMPST_RT", "compstRt", "비중", "WGHT", "wght"))
                 if t_code and t_name:
+                    mkt = str(r.get("MKT_ID", r.get("mktId", ""))).upper()
+                    suffix = ".KQ" if mkt in ("KOSDAQ", "KQ") else ".KS"
                     holdings.append({
-                        "ticker": f"{t_code.zfill(6)}.KS",
+                        "ticker": f"{t_code.zfill(6)}{suffix}",
                         "name":   t_name,
                         "weight": t_wgt,
                     })
@@ -271,6 +307,99 @@ async def _fdr_fetch_price(ticker: str) -> float | None:
     except Exception:
         pass
     return None
+
+
+async def _naver_fetch_etf(code: str, client: "httpx.AsyncClient") -> dict:
+    """
+    Naver Finance ETF 종목 페이지 스크래핑.
+    KRX 포털이 인증을 요구할 때의 폴백 소스.
+    - 현재가: .no_today .blind
+    - NAV·괴리율: 날짜/가격/NAV/괴리율 테이블 최신 행
+    - AUM: 순자산총액 행 (백만원 단위 → 억원 환산)
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return {}
+
+    url = f"https://finance.naver.com/item/main.naver?code={code}"
+    try:
+        resp = await client.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer":    "https://finance.naver.com/",
+                "Accept-Language": "ko-KR,ko;q=0.9",
+            },
+            timeout=12.0,
+        )
+        # httpx가 Content-Type charset(euc-kr)을 자동 감지해 Unicode str로 반환
+        soup = BeautifulSoup(resp.text, "lxml")
+    except Exception:
+        return {}
+
+    out: dict = {}
+
+    # ── 현재가 ──────────────────────────────────────────────────────────────
+    for sel in (".no_today .blind", "#_nowVal", ".today .num"):
+        tag = soup.select_one(sel)
+        if tag:
+            try:
+                out["price"] = float(tag.get_text(strip=True).replace(",", ""))
+                break
+            except ValueError:
+                pass
+
+    tables = soup.find_all("table")
+
+    # ── NAV·괴리율 테이블 (header: 날짜/가격/NAV/괴리율) ───────────────────
+    for tbl in tables:
+        ths = [th.get_text(strip=True) for th in tbl.find_all("th")]
+        if "NAV" in ths and any(k in ths for k in ("괴리율", "愿대━���")):
+            for tr in tbl.find_all("tr"):
+                tds = [td.get_text(strip=True).replace(",", "").replace("%", "") for td in tr.find_all("td")]
+                if len(tds) >= 3:
+                    try:
+                        out["nav"]         = float(tds[2])
+                        out["nav_premium"] = float(tds[3]) if len(tds) > 3 else None
+                    except (ValueError, IndexError):
+                        pass
+                    break
+            break
+
+    # ── AUM (시가총액 또는 순자산 기반 추정) ────────────────────────────────
+    import re as _re
+    shares: float | None = None
+    for tbl in tables:
+        for tr in tbl.find_all("tr"):
+            tds = tr.find_all(["th", "td"])
+            if len(tds) >= 2:
+                label = tds[0].get_text(strip=True)
+                val_txt = tds[1].get_text(strip=True)
+                # 시가총액: "26조\n...4,023억원" 형태
+                if "시가총액" in label or "순자산" in label:
+                    # 조 + 억 파싱: "26조4,023억원"
+                    trillion = _re.search(r"([\d,]+)조", val_txt)
+                    billion  = _re.search(r"([\d,]+)억", val_txt)
+                    try:
+                        t_val = float(trillion.group(1).replace(",", "")) * 10000 if trillion else 0.0
+                        b_val = float(billion.group(1).replace(",", ""))           if billion  else 0.0
+                        if t_val + b_val > 0:
+                            out["aum"] = round(t_val + b_val, 0)
+                    except (ValueError, AttributeError):
+                        pass
+                # 상장주식수: 숫자만 있는 경우
+                elif "상장주식수" in label or "좌수" in label:
+                    try:
+                        shares = float(val_txt.replace(",", ""))
+                    except ValueError:
+                        pass
+
+    # 시가총액 파싱 실패 시 주식수 × 현재가로 추정
+    if out.get("aum") is None and shares and out.get("price"):
+        out["aum"] = round(shares * out["price"] / 1e8, 0)
+
+    return out
 
 
 # ─── 통합 비동기 수집 ─────────────────────────────────────────────────────────
@@ -300,17 +429,29 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
         result["data_status"] = "httpx 미설치 (pip install httpx)"
         return result
 
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        nav_task, holdings_task = (
-            asyncio.create_task(_krx_fetch_nav(code, client, date_str)),
-            asyncio.create_task(_krx_fetch_holdings(code, client, date_str)),
-        )
-        nav_data, holdings = await asyncio.gather(
-            nav_task, holdings_task, return_exceptions=True
+    async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
+        # 1) KRX NAV 먼저 (ISU_CD 획득 후 구성종목 조회)
+        nav_data = await _krx_fetch_nav(code, client, date_str)
+
+        isu_cd     = ""
+        trade_date = date_str
+        if isinstance(nav_data, dict) and nav_data:
+            isu_cd     = nav_data.pop("_isu_cd", "")
+            trade_date = nav_data.get("trade_date", date_str)
+
+        # 2) Naver·Holdings·FDR 병렬 수집
+        naver_task    = asyncio.create_task(_naver_fetch_etf(code, client))
+        holdings_task = asyncio.create_task(_krx_fetch_holdings(isu_cd, client, trade_date))
+        fdr_task      = asyncio.create_task(_fdr_fetch_price(ticker))
+        naver_raw, holdings, fdr_price_result = await asyncio.gather(
+            naver_task, holdings_task, fdr_task, return_exceptions=True
         )
 
-    # NAV / 괴리율 / 추적오차 / AUM / 기준가격
+    naver_data: dict = naver_raw if isinstance(naver_raw, dict) else {}
+
+    # ── NAV / 괴리율 / 추적오차 / AUM / 기준가격 ─────────────────────────────
     if isinstance(nav_data, dict) and nav_data:
+        # KRX 성공 (우선 사용)
         result.update({
             "nav":            nav_data.get("nav"),
             "nav_premium":    nav_data.get("nav_premium"),
@@ -320,21 +461,36 @@ async def _fetch_etf_all(ticker: str, portfolio_info: dict) -> dict:
         if nav_data.get("price"):
             result["price"] = nav_data["price"]
     else:
-        result["data_status"] = "krx_api_일시_장애"
-        logger.warning("KRX NAV fetch returned no data for %s", code)
+        # KRX 실패 → Naver Finance 폴백
+        logger.info("KRX NAV unavailable for %s, falling back to Naver Finance", code)
+        if naver_data.get("nav"):
+            result.update({
+                "nav":         naver_data.get("nav"),
+                "nav_premium": naver_data.get("nav_premium"),
+                "aum":         naver_data.get("aum"),
+            })
+            result["source"]      = "naver"
+            result["data_status"] = "ok"
+        else:
+            result["data_status"] = "krx_api_일시_장애"
+            logger.warning("KRX NAV fetch returned no data for %s", code)
 
-    # 구성종목
+    # ── 구성종목 ────────────────────────────────────────────────────────────
     if isinstance(holdings, list) and holdings:
         result["top_holdings"] = holdings
     elif not isinstance(holdings, list):
         logger.debug("Holdings task raised: %s", holdings)
 
-    # 현재가 보완 (KRX API 미수집 시)
+    _fdr_price = fdr_price_result if isinstance(fdr_price_result, float) else None
+
+    # ── 현재가 보완 (KRX 미수집 시 Naver → FDR 순) ─────────────────────────
     if result["price"] is None:
-        fdr_price = await _fdr_fetch_price(ticker)
-        if fdr_price:
-            result["price"] = fdr_price
-            result["source"] = "krx_api+fdr"
+        if naver_data.get("price"):
+            result["price"] = naver_data["price"]
+        elif _fdr_price:
+            result["price"] = _fdr_price
+            if result["source"] == "krx_api":
+                result["source"] = "krx_api+fdr"
 
     # NAV 괴리율 직접 계산 (API 미수집 시)
     if result["nav_premium"] is None and result["price"] and result["nav"]:

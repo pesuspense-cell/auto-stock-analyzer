@@ -1998,9 +1998,13 @@ def render_fund_tab(
                         help="기초지수 대비 추종 오차. 낮을수록 지수를 정밀하게 추종")
             _em5.metric("배당수익률",   f"{_div:.2f}%"     if _div  is not None else "N/A")
 
-            _src_label = {"krx_api": "KRX 공공 API", "krx_api+fdr": "KRX API + FDR", "error": "오류"}.get(
-                _etf_data.get("source", ""), _etf_data.get("source", "")
-            )
+            _src_label = {
+                "krx_api":     "KRX 공공 API",
+                "krx_api+fdr": "KRX API + FDR",
+                "naver":       "네이버 금융",
+                "static_map":  "정적 데이터",
+                "error":       "오류",
+            }.get(_etf_data.get("source", ""), _etf_data.get("source", ""))
             _aum_txt = f"순자산(AUM): **{_aum:,.0f}억원**  |  " if _aum else ""
             st.caption(f"{_aum_txt}섹터: **{_sector}**  |  데이터: {_src_label}")
             st.markdown("---")
