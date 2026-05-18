@@ -951,10 +951,15 @@ if _data_ready:
     breakout   = check_breakout_signal(data)
 
     # 각 점수를 get_enhanced_hybrid_signal 파라미터 범위로 정규화
-    _tech5    = max(-5, min(5, round(tech_score / 2)))           # -10~+10 → -5~+5
-    _news1    = max(-1.0, min(1.0, news_score / 5.0))            # -5~+5  → -1.0~+1.0
-    _raw_fund = fund_score_data.get("fund_score", 0)             # ±8
+    _tech5    = max(-5, min(5, round(tech_score / 2)))            # -10~+10 → -5~+5
+    _news1    = max(-1.0, min(1.0, news_score / 5.0))             # -5~+5  → -1.0~+1.0
+    _raw_fund = fund_score_data.get("fund_score", 0)              # ±8
     _fund_100 = max(0, min(100, int((_raw_fund + 8) / 16 * 100))) # ±8 → 0~100
+    _rsi      = (
+        float(data["RSI"].iloc[-1])
+        if not data.empty and "RSI" in data.columns and not data["RSI"].isna().iloc[-1]
+        else 0.0
+    )
 
     hybrid = get_enhanced_hybrid_signal(
         tech_score  = _tech5,
@@ -964,6 +969,8 @@ if _data_ready:
         dead_time   = dead_time,
         breakout    = breakout,
         advanced    = advanced,
+        period      = _aperiod,
+        rsi         = _rsi,
     )
 
     if expected:

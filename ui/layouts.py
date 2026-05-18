@@ -1779,39 +1779,74 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
             )
 
     # ── 신호 근거 + 리스크 경고 (Enhanced Hybrid Signal) ─────────────────
+    _h_strategy = hybrid.get("strategy", "")
     _h_reasons  = hybrid.get("reasons", [])
     _h_warnings = hybrid.get("warnings", [])
 
+    # 전략 배지 — 적용된 투자 전략을 한눈에 표시
+    if _h_strategy:
+        _s_color = (
+            "#f59e0b" if "초단기" in _h_strategy else
+            "#3b82f6" if "단기"   in _h_strategy else
+            "#22c55e"
+        )
+        st.markdown(
+            f'<div style="display:inline-flex;align-items:center;gap:6px;'
+            f'background:rgba(255,255,255,0.04);'
+            f'border:1px solid {_s_color}55;border-radius:20px;'
+            f'padding:3px 14px;margin-bottom:10px;">'
+            f'<span style="color:{_s_color};font-size:0.72rem;font-weight:600;letter-spacing:0.4px;">'
+            f'📊 {_h_strategy}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    # 양쪽 모두 있을 때만 2컬럼, 한쪽만 있으면 전체 폭 사용
+    _has_both = bool(_h_reasons) and bool(_h_warnings)
+    if _has_both:
+        _r_col, _w_col = st.columns([1, 1])
+        _reason_ctx    = _r_col
+        _warn_ctx      = _w_col
+    else:
+        _reason_ctx = st
+        _warn_ctx   = st
+
+    # 확정 매매 근거 (초록 왼쪽 테두리)
     if _h_reasons:
         _reasons_rows = "".join(
             f'<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;'
             f'border-bottom:1px solid {COLORS["border"]};">'
-            f'<span style="font-size:0.85rem;line-height:1.5;color:{COLORS["text"]};word-break:keep-all;">{r}</span>'
+            f'<span style="font-size:0.84rem;line-height:1.5;color:{COLORS["text"]};'
+            f'word-break:keep-all;">{r}</span>'
             f'</div>'
             for r in _h_reasons
         )
-        st.markdown(
+        _reason_ctx.markdown(
             f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
-            f'border-left:3px solid #22c55e;border-radius:10px;padding:10px 14px;margin-bottom:8px;">'
-            f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:.8px;'
-            f'text-transform:uppercase;margin-bottom:6px;">📋 매매 근거</div>'
+            f'border-left:3px solid #22c55e;border-radius:10px;'
+            f'padding:10px 14px;margin-bottom:8px;">'
+            f'<div style="font-size:0.65rem;color:#22c55e;letter-spacing:.8px;'
+            f'text-transform:uppercase;font-weight:600;margin-bottom:6px;">📋 확정 매매 근거</div>'
             f'{_reasons_rows}</div>',
             unsafe_allow_html=True,
         )
 
+    # 주의 신호 (황색 배경 + 강조 테두리로 시각적 분리)
     if _h_warnings:
         _warn_rows = "".join(
             f'<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;'
-            f'border-bottom:1px solid {COLORS["border"]};">'
-            f'<span style="font-size:0.85rem;line-height:1.5;color:#fbbf24;word-break:keep-all;">{w}</span>'
+            f'border-bottom:1px solid rgba(245,158,11,0.2);">'
+            f'<span style="font-size:0.84rem;line-height:1.5;color:#fbbf24;'
+            f'word-break:keep-all;">{w}</span>'
             f'</div>'
             for w in _h_warnings
         )
-        st.markdown(
-            f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
-            f'border-left:3px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:8px;">'
-            f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:.8px;'
-            f'text-transform:uppercase;margin-bottom:6px;">⚠️ 리스크 경고</div>'
+        _warn_ctx.markdown(
+            f'<div style="background:rgba(245,158,11,0.07);'
+            f'border:1px solid rgba(245,158,11,0.35);'
+            f'border-left:3px solid #f59e0b;border-radius:10px;'
+            f'padding:10px 14px;margin-bottom:8px;">'
+            f'<div style="font-size:0.65rem;color:#f59e0b;letter-spacing:.8px;'
+            f'text-transform:uppercase;font-weight:600;margin-bottom:6px;">⚠️ 주의 신호</div>'
             f'{_warn_rows}</div>',
             unsafe_allow_html=True,
         )

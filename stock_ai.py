@@ -4574,9 +4574,12 @@ def get_enhanced_hybrid_signal(
     dead_time: dict,
     breakout: dict,
     advanced: dict,
+    period: str = "3mo",
+    rsi: float = 0.0,
 ) -> dict:
     """
     Value(가치) + Momentum(추세) + Sentiment(심리) 다중 팩터 종합 매매 신호.
+    period에 따라 가중치를 동적으로 스위칭하여 예측 성공률을 극대화한다.
 
     파라미터 범위:
       tech_score  : int,   -5 ~ +5  (generate_signals 점수를 /2 정규화한 값)
@@ -4586,6 +4589,8 @@ def get_enhanced_hybrid_signal(
       dead_time   : check_dead_time() 반환 dict
       breakout    : check_breakout_signal() 반환 dict
       advanced    : get_advanced_analysis() 반환 dict
+      period      : str, "1d"|"5d"|"1mo"|"3mo"|"6mo"|"1y"|"2y"|"5y"|"max" 등
+      rsi         : float, 0~100 (RSI 값. 0이면 미제공으로 간주)
 
     반환:
       hybrid_score   : float — -10~+10 (기존 UI 호환 스케일)
@@ -4594,28 +4599,52 @@ def get_enhanced_hybrid_signal(
       badge          : str
       reasons        : list[str] — 확정적 매수·매도 근거
       warnings       : list[str] — 리스크·주의 신호
+      strategy       : str — 적용된 투자 전략 명칭
     """
-    # ── 1. 스케일 정규화 후 가중 합산 ─────────────────────────────────────────
+    # ── 0. 기간별 동적 가중치 결정 ────────────────────────────────────────────
+    # 초단기: 기술 모멘텀(50%) + 뉴스 심리(40%) + 펀더멘털(10%)
+    # 단기  : 기술 추세(40%)  + 펀더멘털(30%)   + 뉴스 심리(30%)
+    # 장기  : 펀더멘털(60%)   + 기술 정배열(30%) + 뉴스 심리(10%)
+    _ULTRASHORT = {"1d", "5d"}
+    _SHORT      = {"1mo", "3mo", "6mo"}
+
+    if period in _ULTRASHORT:
+        w_tech, w_fund, w_news = 0.50, 0.10, 0.40
+        strategy = "초단기 스캘핑/데이트레이딩"
+    elif period in _SHORT:
+        w_tech, w_fund, w_news = 0.40, 0.30, 0.30
+        strategy = "단기 스윙"
+    else:
+        w_tech, w_fund, w_news = 0.30, 0.60, 0.10
+        strategy = "장기 가치/성장주"
+
+    # ── 1. 스케일 정규화 후 동적 가중 합산 ──────────────────────────────────
     tech_scaled = (tech_score + 5) * 10         # -5~+5  → 0~100
     news_scaled = (news_score + 1.0) * 50        # -1~+1  → 0~100
     fund_scaled = float(fund_score)              # 이미 0~100
 
-    # 추세(40%) + 가치(30%) + 심리(30%)
-    combined_score = tech_scaled * 0.4 + fund_scaled * 0.3 + news_scaled * 0.3
+    combined_score = tech_scaled * w_tech + fund_scaled * w_fund + news_scaled * w_news
 
     signal_reasons: list[str] = []
     warning_signals: list[str] = []
 
-    # ── 2. 확실한 신호 근거 수집 ──────────────────────────────────────────────
+    # ── 2. 확실한 신호 근거 수집 (기간 전략에 따라 reasons/warnings 분류) ────
+    # 기술 신호: 초단기·단기에서는 핵심 근거, 장기에서 약세는 단기 노이즈로 경고 격리
     if tech_score >= 3:
         signal_reasons.append(
-            f"📈 기술적 강세: 단기·중기 이동평균선이 우상향하며 매수 모멘텀이 형성되고 있습니다. (기술 점수: {tech_score:+d})"
+            f"📈 기술적 강세: 단기·중기 이동평균선이 우상향하며 매수 모멘텀이 형성되고 있습니다. (기술: {tech_score:+d})"
         )
     elif tech_score <= -3:
-        signal_reasons.append(
-            f"📉 기술적 약세: 주요 지지선 이탈 및 매도 거래량 증가로 하락 압력이 확인됩니다. (기술 점수: {tech_score:+d})"
+        _tech_weak = (
+            f"📉 기술적 약세: 주요 지지선 이탈 및 매도 거래량 증가로 하락 압력이 확인됩니다. (기술: {tech_score:+d})"
         )
+        if period not in _ULTRASHORT and period not in _SHORT:
+            # 장기 가치투자 관점에서 단기 기술 약세는 리스크 참고로 분류
+            warning_signals.append(_tech_weak)
+        else:
+            signal_reasons.append(_tech_weak)
 
+    # 돌파 신호
     bk_status = breakout.get("status", "wait")
     bk_detail = breakout.get("detail", "")
     if bk_status == "breakout_both":
@@ -4625,41 +4654,77 @@ def get_enhanced_hybrid_signal(
     elif bk_status == "breakout_vol":
         signal_reasons.append(f"⚡ 거래량 급증 돌파: {bk_detail}")
 
+    # 펀더멘털: 초단기에서 리스크(≤30)는 낮은 가중치 팩터이므로 warnings로 격리
     if fund_score >= 70:
         signal_reasons.append(
-            f"🏛️ 우수한 펀더멘털: 밸류에이션 대비 저평가 상태이며 양호한 재무구조를 보유하고 있습니다. (재무 점수: {fund_score})"
+            f"🏛️ 우수한 펀더멘털: 밸류에이션 대비 저평가 상태이며 양호한 재무구조를 보유하고 있습니다. (재무: {fund_score})"
         )
     elif fund_score <= 30:
-        signal_reasons.append(
-            f"⚠️ 재무 리스크: 동종업계 대비 고평가되었거나 수익성·안정성 지표가 취약합니다. (재무 점수: {fund_score})"
+        _fund_bad = (
+            f"⚠️ 재무 리스크: 동종업계 대비 고평가되었거나 수익성·안정성 지표가 취약합니다. (재무: {fund_score})"
         )
+        if period in _ULTRASHORT:
+            warning_signals.append(_fund_bad)
+        else:
+            signal_reasons.append(_fund_bad)
 
+    # 뉴스 심리: 초단기 부정 뉴스는 핵심 리스크이므로 warnings에 강조 표시
     if news_score >= 0.4:
         signal_reasons.append(
             f"📰 긍정 심리: 미디어·시장 반응이 호의적이며 호재성 모멘텀이 우세합니다. (감성: {news_score:+.2f})"
         )
     elif news_score <= -0.4:
-        signal_reasons.append(
-            f"📰 부정 심리: 악재성 뉴스 노출이 빈번하고 시장 우려가 반영되어 있습니다. (감성: {news_score:+.2f})"
-        )
+        if period in _ULTRASHORT:
+            # 초단기에서 부정 뉴스는 40% 가중치 — 리스크 경고로 격리
+            warning_signals.append(
+                f"📰 부정 뉴스 심리 (초단기 고위험): 악재성 뉴스가 집중되어 단기 하락 압력이 강합니다. (감성: {news_score:+.2f})"
+            )
+        else:
+            signal_reasons.append(
+                f"📰 부정 심리: 악재성 뉴스 노출이 빈번하고 시장 우려가 반영되어 있습니다. (감성: {news_score:+.2f})"
+            )
 
+    # 거래량 급증
     vol_ratio = vol_anomaly.get("ratio", 1.0)
     if not vol_anomaly.get("is_halted") and vol_ratio >= 2.5:
         signal_reasons.append(
             f"🔥 거래량 급증: 최근 거래량이 20일 평균 대비 {vol_ratio:.1f}배 — 강한 수급 진입 신호입니다."
         )
 
-    # ── 3. 모순 신호·리스크 경고 ──────────────────────────────────────────────
-    div_data = advanced.get("divergence", {})
-    if div_data.get("bearish_divergence"):
-        warning_signals.append(
-            "⚠️ 하락 다이버전스: 주가는 상승 중이나 보조지표(RSI 등)가 하락하여 단기 고점 전환 가능성이 있습니다."
-        )
-    elif div_data.get("bullish_divergence"):
-        warning_signals.append(
-            "✨ 상승 다이버전스: 주가 하락·횡보 중 지표가 상승하여 단기 바닥권 탈출 신호가 감지됩니다."
-        )
+    # ── 3. RSI 과매수·과매도 경고 (초단기 핵심 필터) ─────────────────────────
+    if rsi > 0:
+        if period in _ULTRASHORT:
+            if rsi >= 70 and tech_score >= 3:
+                # RSI 과매수 + 기술 강세 조합 → 더 강한 복합 경고
+                warning_signals.append(
+                    f"⚠️ 초단기 과열 조합: 기술 강세 + RSI 과매수({rsi:.0f}) 동시 감지 — 단기 급등 후 조정 리스크가 높습니다."
+                )
+            elif rsi >= 70:
+                warning_signals.append(
+                    f"🔥 RSI 과매수 ({rsi:.0f}): 초단기 과열 상태입니다. 단기 조정 또는 눌림목 가능성이 있습니다."
+                )
+            elif rsi <= 30:
+                signal_reasons.append(
+                    f"💧 RSI 과매도 ({rsi:.0f}): 과매도 구간으로 단기 반등 가능성이 있습니다."
+                )
+        elif rsi >= 75:
+            warning_signals.append(
+                f"⚠️ RSI 과열 ({rsi:.0f}): 단기 과매수 상태 — 신규 진입 시 분할 매수를 권장합니다."
+            )
 
+    # ── 4. 모순 신호·다이버전스·리스크 경고 ─────────────────────────────────
+    div_data = advanced.get("divergence", {})
+    if isinstance(div_data, dict):
+        if div_data.get("bearish_divergence"):
+            warning_signals.append(
+                "⚠️ 하락 다이버전스: 주가는 상승 중이나 보조지표(RSI 등)가 하락하여 단기 고점 전환 가능성이 있습니다."
+            )
+        elif div_data.get("bullish_divergence"):
+            warning_signals.append(
+                "✨ 상승 다이버전스: 주가 하락·횡보 중 지표가 상승하여 단기 바닥권 탈출 신호가 감지됩니다."
+            )
+
+    # 신호 불일치: 기술↑ + 뉴스↓ 또는 기술↓ + 뉴스↑
     if tech_score >= 3 and news_score <= -0.3:
         warning_signals.append(
             "⚡ 신호 불일치: 기술적 주가는 강세이나 뉴스 심리가 부정적입니다. 테마성 단기 수급일 수 있으니 추격 매수에 주의하세요."
@@ -4674,20 +4739,22 @@ def get_enhanced_hybrid_signal(
             f"⚠️ 매수 유보 권장: {dead_time.get('message', '최근 거래량이 기준 대비 80% 미달 — 슬리피지·유동성 위험이 있습니다.')}"
         )
 
-    # ── 4. 강제 예외 처리 (거래정지 / 장기 소외주) ────────────────────────────
+    # ── 5. 강제 예외 처리 (거래정지 / 장기 소외주) ────────────────────────────
     forced_hold = False
 
     if vol_anomaly.get("is_halted"):
         forced_hold = True
-        _halt_msg = f"⛔ 거래정지/위험: {vol_anomaly.get('reason', '정상적인 매매가 불가능하거나 이상 급등락 상태입니다.')}"
-        warning_signals.append(_halt_msg)
+        warning_signals.append(
+            f"⛔ 거래정지/위험: {vol_anomaly.get('reason', '정상적인 매매가 불가능하거나 이상 급등락 상태입니다.')}"
+        )
 
     if dead_time.get("is_dead"):
         forced_hold = True
-        _dead_msg = f"💤 장기 소외주: {dead_time.get('message', '거래량이 극도로 저조하여 자금 장기 고착 위험이 있습니다.')}"
-        warning_signals.append(_dead_msg)
+        warning_signals.append(
+            f"💤 장기 소외주: {dead_time.get('message', '거래량이 극도로 저조하여 자금 장기 고착 위험이 있습니다.')}"
+        )
 
-    # ── 5. 최종 등급·배지 판정 ────────────────────────────────────────────────
+    # ── 6. 최종 등급·배지 판정 ────────────────────────────────────────────────
     if forced_hold:
         final_label = "매매 제한 / 관망"
         final_badge = "⛔"
@@ -4715,7 +4782,12 @@ def get_enhanced_hybrid_signal(
         "badge":          final_badge,
         "reasons":        signal_reasons or ["뚜렷한 방향성이 없는 횡보 구간입니다."],
         "warnings":       warning_signals,
+        "strategy":       strategy,
     }
+
+
+# 기간 적응형 신호 함수 별칭 (get_enhanced_hybrid_signal 와 동일)
+get_timeframe_adaptive_signal = get_enhanced_hybrid_signal
 
 
 def get_investment_recommendation(
