@@ -1463,6 +1463,176 @@ def get_investor_trading_naver(ticker: str) -> dict:
     return result
 
 
+def get_investor_trading_naver_history(ticker: str, days: int = 10) -> list:
+    """
+    Naver Finance frgn.naver에서 최근 N거래일 투자자별 매매 동향 조회.
+    반환: list of {date, 외국인, 기관합계, 개인} — 오름차순(오래된→최신), 단위: 주(株)
+    """
+    code = ticker.split(".")[0]
+    if not code.isdigit():
+        return []
+    if not HAS_BS4:
+        return []
+
+    import requests
+    from bs4 import BeautifulSoup
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": f"https://finance.naver.com/item/main.naver?code={code}",
+    }
+
+    def _parse_int(text: str):
+        t = text.strip().replace(",", "").replace("+", "").replace("\xa0", "").replace(" ", "")
+        if not t or t in ("-", ""):
+            return None
+        try:
+            return int(t)
+        except ValueError:
+            return None
+
+    frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+    records: list = []
+    try:
+        resp = requests.get(frgn_url, headers=headers, timeout=10)
+        resp.encoding = "euc-kr"
+        soup = BeautifulSoup(resp.text, "html.parser")
+        tables = soup.find_all("table", {"class": "type2"})
+        table = tables[1] if len(tables) >= 2 else (tables[0] if tables else None)
+        if table:
+            for tr in table.find_all("tr"):
+                tds = tr.find_all("td")
+                if len(tds) >= 7:
+                    date_txt = tds[0].text.strip()
+                    if len(date_txt) == 10 and date_txt[4] == ".":
+                        f_val = _parse_int(tds[5].text)
+                        i_val = _parse_int(tds[6].text)
+                        if f_val is not None or i_val is not None:
+                            rec = {
+                                "date": date_txt.replace(".", "")[:8],
+                                "외국인": f_val or 0,
+                                "기관합계": i_val or 0,
+                            }
+                            rec["개인"] = -(rec["외국인"] + rec["기관합계"])
+                            records.append(rec)
+                        if len(records) >= days:
+                            break
+    except Exception:
+        pass
+    records.reverse()  # 오름차순(오래된→최신)
+    return records
+
+
+def analyze_investor_trend(records: list) -> dict:
+    """
+    투자자별 매매의 연속성·가속도·수급 모순을 분석하여 모멘텀 스코어와 근거/경고를 반환.
+    records: get_investor_trading_naver_history() 반환값 (오름차순 정렬)
+    """
+    if not records or len(records) < 5:
+        return {
+            "score": 0,
+            "status": "데이터 부족",
+            "reasons": ["⚠️ 최근 수급 추세를 분석하기 위한 매매동향 데이터가 부족합니다."],
+            "warnings": [],
+            "summary_text": "",
+        }
+
+    rec5 = records[-5:]
+    fore_vals = [r["외국인"] for r in rec5]
+    inst_vals = [r["기관합계"] for r in rec5]
+    pers_vals = [r["개인"] for r in rec5]
+
+    foreign_total     = sum(fore_vals)
+    institution_total = sum(inst_vals)
+    personal_total    = sum(pers_vals)
+
+    # 연속 순매수일(Streak): 가장 최근부터 역순으로 카운트
+    foreign_streak = 0
+    for v in reversed(fore_vals):
+        if v > 0:
+            foreign_streak += 1
+        else:
+            break
+    institution_streak = 0
+    for v in reversed(inst_vals):
+        if v > 0:
+            institution_streak += 1
+        else:
+            break
+
+    # 가속도: 최근 2일 평균 vs 이전 3일 평균
+    def _acc(vals: list) -> float:
+        return (vals[3] + vals[4]) / 2 - (vals[0] + vals[1] + vals[2]) / 3
+
+    fore_acc = _acc(fore_vals)
+    inst_acc = _acc(inst_vals)
+
+    reasons: list = []
+    warnings: list = []
+    supply_score = 0
+
+    # 외국인 분석
+    if foreign_streak >= 3:
+        reasons.append(
+            f"🔥 외국인 {foreign_streak}일 연속 순매수: 단발성이 아닌 추세적 진입으로 방향성이 상방 전환되었습니다."
+        )
+        supply_score += 2
+    elif foreign_total > 0 and fore_acc > 0:
+        reasons.append("🔺 외국인 순매수 가속화: 주 후반으로 갈수록 매수 강도가 강해지며 상방 압력을 높이고 있습니다.")
+        supply_score += 1
+    elif foreign_total < 0 and fore_acc > 0:
+        reasons.append("📉 외국인 매도세 진정: 누적은 매도 우위이나 단기 매도 폭이 급격히 축소되고 있습니다.")
+
+    # 기관 분석
+    if institution_streak >= 3:
+        reasons.append(
+            f"🏛️ 기관 {institution_streak}일 연속 동반 매집: 연속 수급 유입이 지수 방어 및 상승을 지지합니다."
+        )
+        supply_score += 2
+    elif institution_total > 0 and inst_acc > 0:
+        reasons.append("🔺 기관 매수세 강화: 단기 매물 소화 과정에서 기관 순매수 강도가 증가하는 추세입니다.")
+        supply_score += 1
+
+    # 쌍끌이 보너스
+    if foreign_total > 0 and institution_total > 0:
+        reasons.append("💎 외인+기관 쌍끌이 매수: 메이저 수급이 동시에 유입되는 가장 이상적인 상승 전환 신호입니다.")
+        supply_score += 1
+
+    # 위험 신호
+    if personal_total > 0 and foreign_total < 0 and institution_total < 0:
+        warnings.append(
+            "⚠️ 개인 단독 매수 유의: 외국인과 기관이 던진 물량을 개인이 홀로 받아내고 있습니다. "
+            "기관/외인의 하방 압력이 강하며 주가 지지력이 약합니다."
+        )
+        supply_score -= 2
+
+    if abs(foreign_total) > 0 and foreign_total * institution_total < 0:
+        warnings.append(
+            "⚡ 세력 간 수급 엇갈림: 외국인과 기관이 서로 반대 방향으로 거래 중입니다. "
+            "추세적 방향성보다 박스권 횡보 가능성에 무게를 두세요."
+        )
+
+    if supply_score >= 4:    status = "👑 메이저 강한 매집 구간"
+    elif supply_score >= 2:  status = "📈 수급 점진적 개선"
+    elif supply_score <= -2: status = "🚨 수급 이탈 / 위험"
+    else:                    status = "⚪ 수급 공방 / 관망 중립"
+
+    if not reasons:
+        reasons = ["현재 수급 흐름에서 특이 방향성이 관찰되지 않는 개인 위주의 거래 구간입니다."]
+
+    return {
+        "score": supply_score,
+        "status": status,
+        "reasons": reasons,
+        "warnings": warnings,
+        "summary_text": f"외인 5일 누적: {foreign_total:+,}주 / 기관 5일 누적: {institution_total:+,}주",
+    }
+
+
 # ─── 배치 데이터 수집 + L1 스크리닝 ──────────────────────────────────────────
 
 _BATCH_SIZE = 50  # yf.download 1회 호출당 최대 티커 수

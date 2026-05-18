@@ -19,6 +19,8 @@ from stock_ai import (
     check_dead_time,
     check_breakout_signal,
     adjust_risk_conservative,
+    get_investor_trading_naver_history,
+    analyze_investor_trend,
 )
 
 __all__ = [
@@ -38,4 +40,6 @@ __all__ = [
     "check_dead_time",
     "check_breakout_signal",
     "adjust_risk_conservative",
+    "get_investor_trading_naver_history",
+    "analyze_investor_trend",
 ]

@@ -53,7 +53,7 @@ try:
     from src.utils import (
         KOSPI_STOCKS, US_STOCKS, INDICES,
         get_market_movers, get_full_market_movers, get_exchange_rates,
-        get_investor_trading_naver, get_recommendations,
+        get_investor_trading_naver, get_investor_trading_naver_history, get_recommendations,
         get_krx_stock_list, get_krx_etf_list, get_us_stock_list,
         get_top_kospi_stocks, get_top_kosdaq_stocks,
         get_top_us_stocks, get_top_nasdaq_stocks,
@@ -503,6 +503,10 @@ def _etf_fundamental(ticker: str) -> dict:
 @st.cache_data(ttl=300)
 def _inv_data(ticker: str) -> dict:
     return get_investor_trading_naver(ticker) or {}
+
+@st.cache_data(ttl=300)
+def _inv_data_history(ticker: str) -> list:
+    return get_investor_trading_naver_history(ticker, days=10) or []
 
 @st.cache_data(ttl=60)
 def _realtime_price_1m(ticker: str) -> dict:
@@ -1102,6 +1106,7 @@ render_chart_tab(
     state             = _state,
     api_keys          = _api_keys,
     inv_data_fn       = _inv_data,
+    inv_history_fn    = _inv_data_history,
     insider_trades_fn = _insider_trades,
     save_watchlist_fn = save_watchlist,
 )
@@ -1135,6 +1140,7 @@ render_fund_tab(
     etf_fundamental_fn = _etf_fundamental,
     check_is_etf_fn   = _check_is_etf,
     inv_data_fn       = _inv_data,
+    inv_history_fn    = _inv_data_history,
     insider_trades_fn = _insider_trades,
 )
 

@@ -39,6 +39,7 @@ from src.indicators import (
     get_advanced_analysis, calculate_vpvr,
     check_volume_anomaly, check_dead_time,
     check_breakout_signal, adjust_risk_conservative,
+    analyze_investor_trend,
 )
 from src.fundamental import (
     get_investment_recommendation,
@@ -1228,6 +1229,7 @@ def render_chart_tab(
     state: dict,
     api_keys: dict,
     inv_data_fn,
+    inv_history_fn=None,
     insider_trades_fn,
     save_watchlist_fn,
 ) -> None:
@@ -1381,6 +1383,7 @@ def render_chart_tab(
         _render_signal_panel(
             state=state,
             inv_data_fn=inv_data_fn,
+            inv_history_fn=inv_history_fn,
             gemini_key=gemini_key,
             groq_key=groq_key,
         )
@@ -1610,7 +1613,7 @@ def _build_plotly_chart(
     return fig
 
 
-def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key: str) -> None:
+def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemini_key: str, groq_key: str) -> None:
     """차트 탭 우측 신호 패널을 렌더링한다."""
     ticker      = state["ticker"]
     data        = state["data"]
@@ -1712,34 +1715,40 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
                 unsafe_allow_html=True,
             )
 
-    # 수급 동향 (KRX 종목만)
+    # 수급 모멘텀 (KRX 종목만)
     if data_ready and (ticker.endswith(".KS") or ticker.endswith(".KQ")):
         try:
-            _inv_s = inv_data_fn(ticker)
-            if _inv_s:
-                _for_n  = _inv_s.get("외국인",  0) or 0
-                _inst_n = _inv_s.get("기관합계", 0) or 0
-                if _for_n > 0 and _inst_n > 0:
-                    _inv_txt, _inv_brd = f"외국인·기관 쌍끌이 매수 중 (외국인 {_for_n:+,} / 기관 {_inst_n:+,}주)", "#22c55e"
-                elif _for_n < 0 and _inst_n < 0:
-                    _inv_txt, _inv_brd = f"외국인·기관 동반 매도 중 (외국인 {_for_n:+,} / 기관 {_inst_n:+,}주)", "#ef4444"
-                elif _for_n > 0:
-                    _inv_txt, _inv_brd = f"외국인 단독 순매수 {_for_n:+,}주 (기관 {_inst_n:+,}주)", "#4b9cf5"
-                elif _inst_n > 0:
-                    _inv_txt, _inv_brd = f"기관 단독 순매수 {_inst_n:+,}주 (외국인 {_for_n:+,}주)", "#4b9cf5"
-                else:
-                    _inv_txt, _inv_brd = f"외국인·기관 중립 (외국인 {_for_n:+,} / 기관 {_inst_n:+,}주)", "#555"
-                st.markdown(
-                    f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
-                    f'border-left:3px solid {_inv_brd};border-radius:10px;'
-                    f'padding:10px 14px;margin-bottom:8px;">'
-                    f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:0.8px;'
-                    f'text-transform:uppercase;margin-bottom:5px;">📊 수급 동향</div>'
-                    f'<div style="font-size:0.88rem;color:{COLORS["text"]};line-height:1.5;word-break:keep-all;">'
-                    f'{_inv_txt}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+            _inv_history = inv_history_fn(ticker) if inv_history_fn else []
+            _trend = analyze_investor_trend(_inv_history)
+            _t_score = _trend["score"]
+
+            if _t_score >= 3:    _inv_brd = "#22c55e"
+            elif _t_score >= 1:  _inv_brd = "#4b9cf5"
+            elif _t_score <= -2: _inv_brd = "#ef4444"
+            else:                _inv_brd = "#555"
+
+            # 가장 중요한 한 줄 — 경고 우선, 없으면 첫 번째 근거
+            _key_line = (
+                _trend["warnings"][0] if _trend["warnings"] else
+                _trend["reasons"][0]  if _trend["reasons"]  else ""
+            )
+            if len(_key_line) > 85:
+                _key_line = _key_line[:82] + "…"
+
+            st.markdown(
+                f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+                f'border-left:3px solid {_inv_brd};border-radius:10px;'
+                f'padding:10px 14px;margin-bottom:8px;">'
+                f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:0.8px;'
+                f'text-transform:uppercase;margin-bottom:5px;">📊 수급 모멘텀 (5일)</div>'
+                f'<div style="font-size:0.83rem;color:{COLORS["text"]};font-weight:600;margin-bottom:4px;">'
+                f'{_trend["status"]}</div>'
+                f'<div style="font-size:0.72rem;color:{COLORS["text_2"]};line-height:1.4;word-break:keep-all;">'
+                f'{_key_line}</div>'
+                f'<div style="font-size:0.65rem;color:#484F58;margin-top:5px;">{_trend["summary_text"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
         except Exception:
             pass
 
@@ -2022,6 +2031,7 @@ def render_fund_tab(
     etf_fundamental_fn,
     check_is_etf_fn,
     inv_data_fn,
+    inv_history_fn=None,
     insider_trades_fn,
 ) -> None:
     """펀더멘털 & ETF 분석 탭 전체를 렌더링한다."""
@@ -2411,6 +2421,70 @@ def render_fund_tab(
                             )
                 else:
                     st.caption("투자자 매매 동향 데이터를 불러올 수 없습니다.")
+
+                # 수급 모멘텀 트렌드 분석 (5거래일)
+                if inv_history_fn:
+                    with st.spinner("수급 트렌드 분석 중..."):
+                        _hist = inv_history_fn(ticker)
+                    _trend = analyze_investor_trend(_hist)
+                    _tr_score = _trend["score"]
+
+                    if _tr_score >= 3:    _tr_color = "#22c55e"
+                    elif _tr_score >= 1:  _tr_color = "#4b9cf5"
+                    elif _tr_score <= -2: _tr_color = "#ef4444"
+                    else:                 _tr_color = "#8B949E"
+
+                    st.markdown("---")
+                    st.markdown(
+                        f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+                        f'border-left:4px solid {_tr_color};border-radius:12px;padding:14px 18px;margin-bottom:14px;">'
+                        f'<div style="font-size:0.68rem;color:{COLORS["text_2"]};letter-spacing:0.8px;'
+                        f'text-transform:uppercase;margin-bottom:6px;">📈 수급 모멘텀 트렌드 분석 (최근 5거래일)</div>'
+                        f'<div style="font-size:1.05rem;font-weight:700;color:{_tr_color};">{_trend["status"]}</div>'
+                        f'<div style="font-size:0.75rem;color:{COLORS["text_2"]};margin-top:4px;">{_trend["summary_text"]}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    _tr_col1, _tr_col2 = st.columns(2)
+                    with _tr_col1:
+                        st.markdown(
+                            '<div style="font-size:0.75rem;font-weight:600;color:#22c55e;'
+                            'margin-bottom:8px;letter-spacing:0.5px;">🎯 수급 긍정 근거</div>',
+                            unsafe_allow_html=True,
+                        )
+                        for _r in _trend["reasons"]:
+                            st.markdown(
+                                f'<div style="background:rgba(38,166,154,0.07);border-left:3px solid #26a69a;'
+                                f'border-radius:8px;padding:8px 12px;margin-bottom:6px;'
+                                f'font-size:0.78rem;color:{COLORS["text"]};line-height:1.5;word-break:keep-all;">'
+                                f'{_r}</div>',
+                                unsafe_allow_html=True,
+                            )
+                    with _tr_col2:
+                        st.markdown(
+                            '<div style="font-size:0.75rem;font-weight:600;color:#ef5350;'
+                            'margin-bottom:8px;letter-spacing:0.5px;">⚠️ 수급 리스크 경고</div>',
+                            unsafe_allow_html=True,
+                        )
+                        if _trend["warnings"]:
+                            for _w in _trend["warnings"]:
+                                st.markdown(
+                                    f'<div style="background:rgba(239,83,80,0.08);border-left:3px solid #ef5350;'
+                                    f'border-radius:8px;padding:8px 12px;margin-bottom:6px;'
+                                    f'font-size:0.78rem;color:{COLORS["text"]};line-height:1.5;word-break:keep-all;">'
+                                    f'{_w}</div>',
+                                    unsafe_allow_html=True,
+                                )
+                        else:
+                            st.markdown(
+                                f'<div style="background:rgba(38,166,154,0.07);border-left:3px solid #22c55e;'
+                                f'border-radius:8px;padding:8px 12px;'
+                                f'font-size:0.78rem;color:#22c55e;line-height:1.5;">'
+                                f'✅ 메이저 수급 이탈 징후나 개인에게 물량을 떠넘기는 불리한 패턴이 발견되지 않았습니다.'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
 
             st.markdown("---")
             st.markdown("### 🛡️ 손절·익절 레벨 상세 (오닐·ATR 기반)")
