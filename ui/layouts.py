@@ -896,25 +896,75 @@ def render_rec_tab(
                     unsafe_allow_html=True,
                 )
 
+            # stage 번호 → (아이콘, 제목, 메시지 생성 함수) 매핑
+            _STAGE_META = {
+                1: ("📡", "OHLCV 데이터 수집 중",
+                    lambda m: f"{m.get('fetched', 0)}/{m.get('total', 0)}개 종목 수집 완료"),
+                2: ("📊", "L1 차트 스크리닝 중",
+                    lambda m: f"L1 필터 통과: {m.get('l1_count', 0)}개 종목"),
+                3: ("🎯", "L2·L3 심층 분석 중",
+                    lambda m: f"심층 분석 대상: {m.get('l2_count', 0)}개 종목"),
+                4: ("✅", "분석 완료",
+                    lambda m: f"추천 종목 확정: {m.get('final_count', 0)}개"),
+            }
+
             def _run_rec():
-                return get_recommendations_fn(
-                    stocks,
-                    news_fn=news_sentiment_kw_fn,
-                    progress_q=_rec_q,
-                )
+                try:
+                    # 수정: news_fn 파라미터 제거, _progress_q 이름 정정
+                    return get_recommendations_fn(
+                        stocks,
+                        _progress_q=_rec_q,
+                    )
+                except Exception as _thread_exc:
+                    _rec_q.put_nowait({
+                        "stage": 0, "icon": "🚨",
+                        "title": "분석 오류",
+                        "msg": f"분석 중 오류: {_thread_exc}",
+                    })
+                    raise
 
             _render_rec_bar(_stage_state, 0)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                _f_rec = _pool.submit(_run_rec)
-                while not _f_rec.done():
-                    _elapsed = int(time.time() - _rec_start)
-                    while not _rec_q.empty():
-                        _msg = _rec_q.get_nowait()
-                        if isinstance(_msg, dict):
-                            _stage_state.update(_msg)
-                    _render_rec_bar(_stage_state, _elapsed)
-                    time.sleep(1)
-                recs = _f_rec.result()
+            recs = []
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                    _f_rec = _pool.submit(_run_rec)
+                    while not _f_rec.done():
+                        _elapsed = int(time.time() - _rec_start)
+                        while not _rec_q.empty():
+                            _msg = _rec_q.get_nowait()
+                            if isinstance(_msg, dict):
+                                _s = _msg.get("stage", _stage_state.get("stage", 0))
+                                if _s in _STAGE_META:
+                                    _ico, _ttl, _msg_fn = _STAGE_META[_s]
+                                    _stage_state.update({
+                                        "stage": _s, "icon": _ico,
+                                        "title": _ttl, "msg": _msg_fn(_msg),
+                                    })
+                                else:
+                                    _stage_state.update(_msg)
+                        _render_rec_bar(_stage_state, _elapsed)
+                        time.sleep(1)
+                    _raw = _f_rec.result()
+                    # DataFrame → list[dict] 변환 (display 코드가 dict.get()으로 접근)
+                    if hasattr(_raw, "iterrows") and not _raw.empty:
+                        recs = [
+                            {
+                                "ticker":     str(row.get("티커", "") or ""),
+                                "score":      float(row.get("종합점수", 0) or 0),
+                                "label":      str(row.get("종합추천", "") or ""),
+                                "change_pct": float(row.get("등락률(1일)%", 0.0) or 0.0),
+                            }
+                            for _, row in _raw.iterrows()
+                        ]
+                    elif isinstance(_raw, list):
+                        recs = _raw
+            except Exception as _exc:
+                import traceback as _tb
+                st.error(
+                    f"🚨 **추천 분석 실패**: {_exc}\n\n"
+                    f"```\n{_tb.format_exc()}\n```"
+                )
+                recs = []
 
             _render_rec_bar(
                 {"icon": "✅", "title": "분석 완료", "msg": f"총 {total_stocks}개 종목 전수 분석 완료"},
@@ -923,7 +973,11 @@ def render_rec_tab(
             _rec_ph.empty()
             st.session_state["_rec_results"] = recs
             if auth_user_id and recs:
-                db_save_recommendation(auth_user_id, recs)
+                try:
+                    # save_recommendation(user_id, investment_amt, risk_profile, recommendations)
+                    db_save_recommendation(auth_user_id, 0, "전수분석", recs)
+                except Exception as _db_exc:
+                    st.warning(f"추천 결과 저장 실패 (분석 결과는 유효): {_db_exc}")
 
         # ── 결과 표시 ─────────────────────────────────────────────────────────
         recs = st.session_state.get("_rec_results", [])
