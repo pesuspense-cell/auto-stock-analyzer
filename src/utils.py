@@ -16,6 +16,7 @@ from stock_ai import (
     get_full_market_movers,
     get_exchange_rates,
     get_investor_trading_naver,
+    get_investor_trading_naver_history,
 
     # ── 종목 추천 ──────────────────────────────────────────────────────────────
     get_recommendations,
@@ -49,6 +50,7 @@ __all__ = [
     "get_full_market_movers",
     "get_exchange_rates",
     "get_investor_trading_naver",
+    "get_investor_trading_naver_history",
     "get_recommendations",
     "get_krx_stock_list",
     "get_krx_etf_list",
