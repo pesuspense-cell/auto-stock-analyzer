@@ -35,7 +35,7 @@ try:
         get_stock_data, generate_signals, calculate_expected_return,
         get_stop_loss_targets, get_buy_target_price, get_sell_target_price,
         get_advanced_analysis, calculate_vpvr, detect_divergence,
-        get_hybrid_signal, check_volume_anomaly,
+        get_hybrid_signal, get_enhanced_hybrid_signal, check_volume_anomaly,
         check_dead_time, check_breakout_signal, adjust_risk_conservative,
     )
     from src.fundamental import (
@@ -947,17 +947,37 @@ if _data_ready:
 
     news_score = news_result.get("score", 0.0) if isinstance(news_result, dict) else 0.0
     tech_score = signals.get("score", 0)       if isinstance(signals, dict)     else 0
-    hybrid     = get_hybrid_signal(tech_score, news_score)
     dead_time  = _dead_time(_aticker)
+    breakout   = check_breakout_signal(data)
+
+    # 각 점수를 get_enhanced_hybrid_signal 파라미터 범위로 정규화
+    _tech5    = max(-5, min(5, round(tech_score / 2)))           # -10~+10 → -5~+5
+    _news1    = max(-1.0, min(1.0, news_score / 5.0))            # -5~+5  → -1.0~+1.0
+    _raw_fund = fund_score_data.get("fund_score", 0)             # ±8
+    _fund_100 = max(0, min(100, int((_raw_fund + 8) / 16 * 100))) # ±8 → 0~100
+
+    hybrid = get_enhanced_hybrid_signal(
+        tech_score  = _tech5,
+        news_score  = _news1,
+        fund_score  = _fund_100,
+        vol_anomaly = vol_anomaly,
+        dead_time   = dead_time,
+        breakout    = breakout,
+        advanced    = advanced,
+    )
 
     if expected:
         _exp_ret = expected.get("expected_return_pct", 0.0)
         _sharpe  = expected.get("sharpe", 1.0)
         if _exp_ret >= 50.0 and _sharpe < 0.5:
-            hybrid = {**hybrid, "label": "주의", "badge": "🟡"}
+            hybrid["warnings"].append(
+                "⚠️ 샤프지수 주의: 예상 수익률이 높지만 샤프지수가 낮아 리스크 대비 수익이 불안정합니다."
+            )
+            if hybrid["label"] in ("강력 매수", "매수 추천"):
+                hybrid["label"] = "주의"
+                hybrid["badge"] = "🟡"
 
-    breakout      = check_breakout_signal(data)
-    risk_adj      = adjust_risk_conservative(expected) if expected else {}
+    risk_adj = adjust_risk_conservative(expected) if expected else {}
     _total_elapsed = int(time.time() - _load_start)
     _loading_ph.markdown(
         f'<div style="background:#161B22;border:1px solid #26a69a55;border-radius:12px;'
@@ -999,7 +1019,7 @@ else:
     dead_time       = {"is_dead": False, "message": ""}
     breakout        = {"status": "wait", "detail": ""}
     risk_adj        = {}
-    hybrid          = {"hybrid_score": 0.0, "label": "중립/관망", "badge": "⚪"}
+    hybrid          = {"hybrid_score": 0.0, "combined_score": 50.0, "label": "중립/관망", "badge": "⚪", "reasons": [], "warnings": []}
     news_result     = {}
     tech_score      = 0
     news_score      = 0.0

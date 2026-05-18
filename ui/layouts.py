@@ -1778,6 +1778,43 @@ def _render_signal_panel(*, state: dict, inv_data_fn, gemini_key: str, groq_key:
                 unsafe_allow_html=True,
             )
 
+    # ── 신호 근거 + 리스크 경고 (Enhanced Hybrid Signal) ─────────────────
+    _h_reasons  = hybrid.get("reasons", [])
+    _h_warnings = hybrid.get("warnings", [])
+
+    if _h_reasons:
+        _reasons_rows = "".join(
+            f'<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;'
+            f'border-bottom:1px solid {COLORS["border"]};">'
+            f'<span style="font-size:0.85rem;line-height:1.5;color:{COLORS["text"]};word-break:keep-all;">{r}</span>'
+            f'</div>'
+            for r in _h_reasons
+        )
+        st.markdown(
+            f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+            f'border-left:3px solid #22c55e;border-radius:10px;padding:10px 14px;margin-bottom:8px;">'
+            f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:.8px;'
+            f'text-transform:uppercase;margin-bottom:6px;">📋 매매 근거</div>'
+            f'{_reasons_rows}</div>',
+            unsafe_allow_html=True,
+        )
+
+    if _h_warnings:
+        _warn_rows = "".join(
+            f'<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;'
+            f'border-bottom:1px solid {COLORS["border"]};">'
+            f'<span style="font-size:0.85rem;line-height:1.5;color:#fbbf24;word-break:keep-all;">{w}</span>'
+            f'</div>'
+            for w in _h_warnings
+        )
+        st.markdown(
+            f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+            f'border-left:3px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:8px;">'
+            f'<div style="font-size:0.65rem;color:{COLORS["text_2"]};letter-spacing:.8px;'
+            f'text-transform:uppercase;margin-bottom:6px;">⚠️ 리스크 경고</div>'
+            f'{_warn_rows}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn) -> None:

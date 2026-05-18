@@ -4566,6 +4566,158 @@ def get_hybrid_signal(technical_score: float, news_score: float) -> dict:
     return {"hybrid_score": hybrid, "label": label, "badge": badge}
 
 
+def get_enhanced_hybrid_signal(
+    tech_score: int,
+    news_score: float,
+    fund_score: int,
+    vol_anomaly: dict,
+    dead_time: dict,
+    breakout: dict,
+    advanced: dict,
+) -> dict:
+    """
+    Value(가치) + Momentum(추세) + Sentiment(심리) 다중 팩터 종합 매매 신호.
+
+    파라미터 범위:
+      tech_score  : int,   -5 ~ +5  (generate_signals 점수를 /2 정규화한 값)
+      news_score  : float, -1.0 ~ +1.0 (뉴스 감성 점수를 /5 정규화한 값)
+      fund_score  : int,   0 ~ 100  (calculate_fundamental_score 를 0-100으로 변환한 값)
+      vol_anomaly : check_volume_anomaly() 반환 dict
+      dead_time   : check_dead_time() 반환 dict
+      breakout    : check_breakout_signal() 반환 dict
+      advanced    : get_advanced_analysis() 반환 dict
+
+    반환:
+      hybrid_score   : float — -10~+10 (기존 UI 호환 스케일)
+      combined_score : float — 0~100 (내부 통합 점수)
+      label          : str
+      badge          : str
+      reasons        : list[str] — 확정적 매수·매도 근거
+      warnings       : list[str] — 리스크·주의 신호
+    """
+    # ── 1. 스케일 정규화 후 가중 합산 ─────────────────────────────────────────
+    tech_scaled = (tech_score + 5) * 10         # -5~+5  → 0~100
+    news_scaled = (news_score + 1.0) * 50        # -1~+1  → 0~100
+    fund_scaled = float(fund_score)              # 이미 0~100
+
+    # 추세(40%) + 가치(30%) + 심리(30%)
+    combined_score = tech_scaled * 0.4 + fund_scaled * 0.3 + news_scaled * 0.3
+
+    signal_reasons: list[str] = []
+    warning_signals: list[str] = []
+
+    # ── 2. 확실한 신호 근거 수집 ──────────────────────────────────────────────
+    if tech_score >= 3:
+        signal_reasons.append(
+            f"📈 기술적 강세: 단기·중기 이동평균선이 우상향하며 매수 모멘텀이 형성되고 있습니다. (기술 점수: {tech_score:+d})"
+        )
+    elif tech_score <= -3:
+        signal_reasons.append(
+            f"📉 기술적 약세: 주요 지지선 이탈 및 매도 거래량 증가로 하락 압력이 확인됩니다. (기술 점수: {tech_score:+d})"
+        )
+
+    bk_status = breakout.get("status", "wait")
+    bk_detail = breakout.get("detail", "")
+    if bk_status == "breakout_both":
+        signal_reasons.append(f"🚀 강력 돌파: {bk_detail}")
+    elif bk_status == "breakout_ma":
+        signal_reasons.append(f"📈 이동평균 돌파: {bk_detail}")
+    elif bk_status == "breakout_vol":
+        signal_reasons.append(f"⚡ 거래량 급증 돌파: {bk_detail}")
+
+    if fund_score >= 70:
+        signal_reasons.append(
+            f"🏛️ 우수한 펀더멘털: 밸류에이션 대비 저평가 상태이며 양호한 재무구조를 보유하고 있습니다. (재무 점수: {fund_score})"
+        )
+    elif fund_score <= 30:
+        signal_reasons.append(
+            f"⚠️ 재무 리스크: 동종업계 대비 고평가되었거나 수익성·안정성 지표가 취약합니다. (재무 점수: {fund_score})"
+        )
+
+    if news_score >= 0.4:
+        signal_reasons.append(
+            f"📰 긍정 심리: 미디어·시장 반응이 호의적이며 호재성 모멘텀이 우세합니다. (감성: {news_score:+.2f})"
+        )
+    elif news_score <= -0.4:
+        signal_reasons.append(
+            f"📰 부정 심리: 악재성 뉴스 노출이 빈번하고 시장 우려가 반영되어 있습니다. (감성: {news_score:+.2f})"
+        )
+
+    vol_ratio = vol_anomaly.get("ratio", 1.0)
+    if not vol_anomaly.get("is_halted") and vol_ratio >= 2.5:
+        signal_reasons.append(
+            f"🔥 거래량 급증: 최근 거래량이 20일 평균 대비 {vol_ratio:.1f}배 — 강한 수급 진입 신호입니다."
+        )
+
+    # ── 3. 모순 신호·리스크 경고 ──────────────────────────────────────────────
+    div_data = advanced.get("divergence", {})
+    if div_data.get("bearish_divergence"):
+        warning_signals.append(
+            "⚠️ 하락 다이버전스: 주가는 상승 중이나 보조지표(RSI 등)가 하락하여 단기 고점 전환 가능성이 있습니다."
+        )
+    elif div_data.get("bullish_divergence"):
+        warning_signals.append(
+            "✨ 상승 다이버전스: 주가 하락·횡보 중 지표가 상승하여 단기 바닥권 탈출 신호가 감지됩니다."
+        )
+
+    if tech_score >= 3 and news_score <= -0.3:
+        warning_signals.append(
+            "⚡ 신호 불일치: 기술적 주가는 강세이나 뉴스 심리가 부정적입니다. 테마성 단기 수급일 수 있으니 추격 매수에 주의하세요."
+        )
+    elif tech_score <= -3 and news_score >= 0.4:
+        warning_signals.append(
+            "⚡ 과매도 구간 호재: 주가는 하락 추세이나 긍정적 뉴스가 축적되고 있습니다. 분할 매수 관점으로 검토하세요."
+        )
+
+    if dead_time.get("buy_hold") and not dead_time.get("is_dead"):
+        warning_signals.append(
+            f"⚠️ 매수 유보 권장: {dead_time.get('message', '최근 거래량이 기준 대비 80% 미달 — 슬리피지·유동성 위험이 있습니다.')}"
+        )
+
+    # ── 4. 강제 예외 처리 (거래정지 / 장기 소외주) ────────────────────────────
+    forced_hold = False
+
+    if vol_anomaly.get("is_halted"):
+        forced_hold = True
+        _halt_msg = f"⛔ 거래정지/위험: {vol_anomaly.get('reason', '정상적인 매매가 불가능하거나 이상 급등락 상태입니다.')}"
+        warning_signals.append(_halt_msg)
+
+    if dead_time.get("is_dead"):
+        forced_hold = True
+        _dead_msg = f"💤 장기 소외주: {dead_time.get('message', '거래량이 극도로 저조하여 자금 장기 고착 위험이 있습니다.')}"
+        warning_signals.append(_dead_msg)
+
+    # ── 5. 최종 등급·배지 판정 ────────────────────────────────────────────────
+    if forced_hold:
+        final_label = "매매 제한 / 관망"
+        final_badge = "⛔"
+        final_score = 50.0
+    else:
+        final_score = combined_score
+        if combined_score >= 75:
+            final_label, final_badge = "강력 매수", "🟢"
+        elif combined_score >= 60:
+            final_label, final_badge = "매수 추천", "🟡"
+        elif combined_score <= 25:
+            final_label, final_badge = "강력 매도", "🔴"
+        elif combined_score <= 40:
+            final_label, final_badge = "매도/비중축소", "🟠"
+        else:
+            final_label, final_badge = "중립/관망", "⚪"
+
+    # 기존 UI 호환: -10~+10 스케일 변환 (50 → 0, 75 → +5, 25 → -5)
+    hybrid_score = round((final_score - 50.0) / 5.0, 2)
+
+    return {
+        "hybrid_score":   hybrid_score,
+        "combined_score": round(final_score, 1),
+        "label":          final_label,
+        "badge":          final_badge,
+        "reasons":        signal_reasons or ["뚜렷한 방향성이 없는 횡보 구간입니다."],
+        "warnings":       warning_signals,
+    }
+
+
 def get_investment_recommendation(
     current_price: float,
     avg_price: float,
