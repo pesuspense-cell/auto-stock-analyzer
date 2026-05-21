@@ -3176,22 +3176,6 @@ def _render_pf_body(
                         unsafe_allow_html=True,
                     )
 
-                if _stp and _stp.get("rt_price"):
-                    _rt_sell_px = _stp["rt_price"]
-                    _exit_qty_col, _sell_btn_col, _ = st.columns([2, 2, 3])
-                    _exit_sell_qty = _exit_qty_col.number_input(
-                        "매도수량", min_value=0.01, max_value=float(_it["quantity"]),
-                        value=float(_it["quantity"]), step=1.0, format="%.2f",
-                        key=f"pf_exit_qty_{_it['id']}", help=f"최대 {_it['quantity']:g}주",
-                    )
-                    if _sell_btn_col.button(f"✅ 매도 확정  {_efmt(_rt_sell_px)}", key=f"pf_sell_exit_{_it['id']}"):
-                        _sell_r = db_sell_item(_uid, _it["id"], _rt_sell_px, _exit_sell_qty)
-                        if _sell_r["ok"]:
-                            _pnl_d = (f"₩{_sell_r['net_profit']:+,.0f}" if _is_krw_ex else f"${_sell_r['net_profit']:+,.2f}")
-                            st.success(f"매도 완료! 실현 손익: {_pnl_d} ({_sell_r['return_rate']:+.2f}%)")
-                            st.rerun(scope="fragment")
-                        else:
-                            st.error(_sell_r.get("error", "매도 실패"))
 
         st.markdown("<br>", unsafe_allow_html=True)
 
