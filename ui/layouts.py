@@ -35,7 +35,7 @@ from ui.styles import COLORS, RADIUS
 # src 비즈니스 로직 — 차트·신호 계산에 직접 사용
 from src.indicators import (
     generate_signals, get_stop_loss_targets,
-    get_buy_target_price, get_sell_target_price,
+    get_buy_target_price, get_sell_target_price, calc_atr_trailing_guide,
     get_advanced_analysis, calculate_vpvr,
     check_volume_anomaly, check_dead_time,
     check_breakout_signal, adjust_risk_conservative,
@@ -3019,7 +3019,7 @@ def _render_pf_body(
             if _eg_btn.button("매도 가이드 분석", key="pf_exit_calc", type="primary", use_container_width=True):
                 _exit_result = {}
                 _exit_now    = now_kst_fn().strftime("%H:%M:%S")
-                with st.spinner("실시간 현재가 조회 및 차트 분석 중..."):
+                with st.spinner("실시간 현재가 조회 및 ATR 변동성 분석 중..."):
                     for _it in _items:
                         _t = _it["ticker"]
                         try:
@@ -3028,34 +3028,39 @@ def _render_pf_body(
                                 _pf_prices[_t] = _rt_exit["price"]
                             if _rt_exit.get("stale") and _rt_exit.get("stale_msg"):
                                 st.caption(f"⏸️ {_t}: {_rt_exit['stale_msg']}")
-                            _cdata = get_stock_data_fn(_t, period="3mo")
-                            _sell_targets = get_sell_target_price(_cdata) if (_cdata is not None and not _cdata.empty) else {}
+                            _cdata  = get_stock_data_fn(_t, period="3mo")
                             _rt_p   = _pf_prices.get(_t, _it["avg_price"])
                             _avg_p  = _it["avg_price"]
-                            _pnl_pc = (_rt_p / _avg_p - 1) * 100 if _avg_p else 0.0
-                            _stop8  = _avg_p * 0.92
-                            _stop5  = _avg_p * 0.95
-                            _tp1    = _avg_p * 1.10
-                            _tp2    = _avg_p * 1.20
-                            if _pnl_pc >= 20:
-                                _guide, _guide_clr = "익절 구간 진입 — 분할 매도 권장 (1/2 이상 청산 고려)", "#ffd93d"
-                            elif _pnl_pc >= 10:
-                                _guide, _guide_clr = "수익 중 — 1차 목표가 도달. 일부 수익 확정 고려", "#81c784"
-                            elif _pnl_pc > 0:
-                                _guide, _guide_clr = "소폭 수익 — 홀딩 유지 권장", "#a5d6a7"
-                            elif _pnl_pc > -5:
-                                _guide, _guide_clr = "소폭 손실 — 추세 모니터링", "#fff176"
-                            elif _pnl_pc > -8:
-                                _guide, _guide_clr = "손절 접근 — 5% 스탑라인 이탈 시 즉시 손절 고려", "#ffab91"
-                            else:
-                                _guide, _guide_clr = "손절 구간 — 추가 손실 방지를 위한 즉시 손절 권장", "#ef9a9a"
+                            _is_krw = _t.upper().endswith((".KS", ".KQ"))
+
+                            # ATR-14 추출 (차트 데이터 우선, 없으면 가격의 2% 추정)
+                            _atr14 = 0.0
+                            if _cdata is not None and not _cdata.empty and "ATR" in _cdata.columns:
+                                _atr_val = _cdata["ATR"].dropna()
+                                if not _atr_val.empty:
+                                    _atr14 = float(_atr_val.iloc[-1])
+                            if _atr14 <= 0:
+                                _atr14 = _avg_p * 0.02
+
+                            # max_price_since_buy: 기존 세션 최고가 활용
+                            _prev_max = _trailing.get(_t, 0.0)
+                            _atr_guide = calc_atr_trailing_guide(
+                                buying_price=_avg_p,
+                                current_price=_rt_p,
+                                atr_14=_atr14,
+                                max_price_since_buy=_prev_max,
+                                is_krw=_is_krw,
+                            )
+                            # 갱신된 최고가 세션에 반영
+                            _trailing[_t] = _atr_guide["max_price_since_buy"]
+
                             _exit_result[_t] = {
-                                **_sell_targets,
-                                "rt_price": _rt_p, "avg_price": _avg_p, "pnl_pct": _pnl_pc,
-                                "stop_loss_8": _stop8, "stop_loss_5": _stop5,
-                                "take_profit_1": _tp1, "take_profit_2": _tp2,
-                                "guide": _guide, "guide_clr": _guide_clr,
-                                "is_rt": _rt_exit.get("is_realtime", False), "rt_ts": _exit_now,
+                                **_atr_guide,
+                                "rt_price":  _rt_p,
+                                "avg_price": _avg_p,
+                                "pnl_pct":   (_rt_p / _avg_p - 1) * 100 if _avg_p else 0.0,
+                                "is_rt":     _rt_exit.get("is_realtime", False),
+                                "rt_ts":     _exit_now,
                             }
                         except Exception:
                             pass
@@ -3082,67 +3087,94 @@ def _render_pf_body(
                 _efmt = (lambda v, k=_is_krw_ex: f"₩{v:,.0f}" if k else f"${v:,.2f}")
                 _enm  = _pf_nm.get(_t, "")
                 _stp  = _exit_result.get(_t, {})
-                _cons = _stp.get("conservative_target")
-                _aggr = _stp.get("aggressive_target")
-                _t_max     = _trailing.get(_t, 0.0)
-                _guide_txt = _stp.get("guide", "")
-                _guide_clr = _stp.get("guide_clr", "#888")
-                _stop8_p   = _stp.get("stop_loss_8",    _avg * 0.92 if _avg else 0)
-                _stop5_p   = _stp.get("stop_loss_5",    _avg * 0.95 if _avg else 0)
-                _tp1_p     = _stp.get("take_profit_1",  _avg * 1.10 if _avg else 0)
-                _tp2_p     = _stp.get("take_profit_2",  _avg * 1.20 if _avg else 0)
                 _cur_label = "실시간가" if _stp.get("is_rt") else "현재가"
 
-                _exit_alerts: list[tuple[str, str]] = []
-                if _cur and _t_max > 0 and _cur < _t_max * 0.95:
-                    _drop = (_cur / _t_max - 1) * 100
-                    _exit_alerts.append((f"⚠️ 트레일링 스탑: 최고가 {_efmt(_t_max)} 대비 {_drop:.1f}% — 수익 보존을 위한 매도 권장", "#ff8a65"))
-                if _cur and _cons and _cur >= _cons * 0.95:
-                    _exit_alerts.append((f"🎯 목표가 근접 ({_cur/_cons*100:.0f}%): 보수적 목표가 {_efmt(_cons)} — 분할 매도 고려", "#ffd93d"))
-                if _cur and _avg and _cur <= _avg * 0.92:
-                    _exit_alerts.append((f"🔴 손절 구간 돌입: 실시간가 {_efmt(_cur)} — 8% 손절라인 이탈, 즉시 매도 권장", "#ef4444"))
-                elif _cur and _avg and _cur <= _avg * 0.95:
-                    _exit_alerts.append((f"🟠 손절 주의: 실시간가 {_efmt(_cur)} — 5% 스탑라인 접근", "#ff8a65"))
+                if _stp:
+                    # ── ATR 가이드 결과 렌더링 ──────────────────────────────────
+                    _status    = _stp.get("status", "")
+                    _guide_clr = _stp.get("guide_clr", "#888")
+                    _message   = _stp.get("message", "")
+                    _trigger   = _stp.get("final_trigger_line", 0.0)
+                    _atr_v     = _stp.get("atr_14", 0.0)
+                    _atr_stop  = _stp.get("atr_stop", 0.0)
+                    _trail     = _stp.get("trail_stop", 0.0)
+                    _t_max     = _stp.get("max_price_since_buy", _trailing.get(_t, 0.0))
+                    _pnl_pc    = _stp.get("pnl_pct", 0.0)
+                    _pnl_clr   = "#4caf50" if _pnl_pc >= 0 else "#ef4444"
 
-                _cp: list[str] = []
-                if _cur:
-                    _pr  = (_cur / _avg - 1) * 100 if _avg else 0
-                    _prc = "#4caf50" if _pr >= 0 else "#ef4444"
-                    _cp.append(f'{_cur_label} <b style="color:#ddd">{_efmt(_cur)}</b> <span style="color:{_prc}">({_pr:+.1f}%)</span>')
-                if _avg:    _cp.append(f'평단가 <b style="color:#aaa">{_efmt(_avg)}</b>')
-                if _stop5_p: _cp.append(f'손절(5%) <b style="color:#ff8a65">{_efmt(_stop5_p)}</b>')
-                if _stop8_p: _cp.append(f'손절(8%) <b style="color:#ef4444">{_efmt(_stop8_p)}</b>')
-                if _tp1_p:   _cp.append(f'1차 익절 <b style="color:#81c784">{_efmt(_tp1_p)}</b>')
-                if _tp2_p:   _cp.append(f'2차 익절 <b style="color:#4fc3f7">{_efmt(_tp2_p)}</b>')
-                if _cons:
-                    _cg = (_cons / _avg - 1) * 100 if _avg else 0
-                    _cp.append(f'보수적 목표가 <b style="color:#81c784">{_efmt(_cons)}</b> <span style="color:#81c784">({_cg:+.1f}%)</span>')
-                if _aggr:
-                    _ag = (_aggr / _avg - 1) * 100 if _avg else 0
-                    _cp.append(f'공격적 목표가 <b style="color:#4fc3f7">{_efmt(_aggr)}</b> <span style="color:#4fc3f7">({_ag:+.1f}%)</span>')
-                if _t_max and _cur and _t_max > _cur:
-                    _cp.append(f'추적 최고가 <b style="color:#ffb74d">{_efmt(_t_max)}</b> | 스탑라인 <b style="color:#ff8a65">{_efmt(_t_max*0.95)}</b>')
+                    # 가격 정보 행
+                    _info_items = []
+                    if _cur:
+                        _info_items.append(
+                            f'{_cur_label} <b style="color:#ddd">{_efmt(_cur)}</b> '
+                            f'<span style="color:{_pnl_clr}">({_pnl_pc:+.1f}%)</span>'
+                        )
+                    if _avg:
+                        _info_items.append(f'평단가 <b style="color:#aaa">{_efmt(_avg)}</b>')
+                    if _t_max and _avg and _t_max > _avg:
+                        _info_items.append(
+                            f'추적 최고가 <b style="color:#ffb74d">{_efmt(_t_max)}</b>'
+                        )
 
-                _card_body  = " &nbsp;|&nbsp; ".join(_cp) if _cp else "-"
-                _guide_html = (
-                    f'<div style="margin-top:6px;padding:6px 10px;background:#252836;'
-                    f'border-left:3px solid {_guide_clr};border-radius:0 6px 6px 0;'
-                    f'font-size:.85rem;color:{_guide_clr};font-weight:600">📋 {_guide_txt}</div>'
-                ) if _guide_txt else ""
-                _alert_html = "".join(
-                    f'<div style="margin-top:6px;padding:6px 10px;background:#252836;'
-                    f'border-left:3px solid {_ac};border-radius:0 6px 6px 0;font-size:.82rem;color:{_ac}">{_amsg}</div>'
-                    for _amsg, _ac in _exit_alerts
-                )
-                st.markdown(
-                    f'<div style="background:#1e2130;border-radius:10px;padding:12px 16px;margin:6px 0">'
-                    f'<div style="margin-bottom:6px">'
-                    + (f'<span style="font-size:.95rem;font-weight:700;color:#e0e0e0">{_enm}</span> ' if _enm else "")
-                    + f'<span style="font-size:.78rem;color:#666">{_t}</span></div>'
-                    f'<div style="font-size:.85rem;line-height:1.9">{_card_body}</div>'
-                    f'{_guide_html}{_alert_html}</div>',
-                    unsafe_allow_html=True,
-                )
+                    # ATR 분석 상세 행
+                    _atr_items = []
+                    if _atr_v:
+                        _atr_items.append(f'ATR(14) <b style="color:#90caf9">{_efmt(_atr_v)}</b>')
+                    if _atr_stop:
+                        _atr_items.append(
+                            f'ATR 손절선 <b style="color:#ff8a65">{_efmt(_atr_stop)}</b>'
+                            f'<span style="color:#666;font-size:.75rem"> (평단 − ATR×2)</span>'
+                        )
+                    if _trail:
+                        _atr_items.append(
+                            f'트레일링 스톱 <b style="color:#ff7043">{_efmt(_trail)}</b>'
+                            f'<span style="color:#666;font-size:.75rem"> (최고가 − ATR×2.5)</span>'
+                        )
+
+                    _info_html = " &nbsp;|&nbsp; ".join(_info_items) if _info_items else ""
+                    _atr_html  = " &nbsp;|&nbsp; ".join(_atr_items)  if _atr_items  else ""
+                    _trigger_html = (
+                        f'<div style="margin-top:8px;padding:7px 12px;background:#1a2035;'
+                        f'border:1px solid {_guide_clr};border-radius:8px;'
+                        f'display:flex;align-items:center;justify-content:space-between">'
+                        f'<span style="font-size:.78rem;color:#999">📌 최종 기준선 (매도 트리거)</span>'
+                        f'<span style="font-size:1.05rem;font-weight:700;color:{_guide_clr}">'
+                        f'{_efmt(_trigger)}</span></div>'
+                    )
+                    _status_html = (
+                        f'<div style="margin-top:6px;padding:8px 12px;background:#252836;'
+                        f'border-left:4px solid {_guide_clr};border-radius:0 8px 8px 0">'
+                        f'<div style="font-size:.95rem;font-weight:700;color:{_guide_clr};margin-bottom:3px">'
+                        f'{_status}</div>'
+                        f'<div style="font-size:.82rem;color:#bbb">{_message}</div></div>'
+                    )
+
+                    st.markdown(
+                        f'<div style="background:#1e2130;border-radius:10px;padding:12px 16px;margin:6px 0">'
+                        f'<div style="margin-bottom:6px">'
+                        + (f'<span style="font-size:.95rem;font-weight:700;color:#e0e0e0">{_enm}</span> ' if _enm else "")
+                        + f'<span style="font-size:.78rem;color:#666">{_t}</span></div>'
+                        f'<div style="font-size:.84rem;line-height:1.9">{_info_html}</div>'
+                        f'<div style="font-size:.80rem;line-height:1.9;margin-top:2px;color:#aaa">{_atr_html}</div>'
+                        f'{_trigger_html}{_status_html}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    # 분석 전 기본 카드 (분석 버튼 클릭 전)
+                    _pnl_pc  = (_cur / _avg - 1) * 100 if (_cur and _avg) else 0.0
+                    _pnl_clr = "#4caf50" if _pnl_pc >= 0 else "#ef4444"
+                    st.markdown(
+                        f'<div style="background:#1e2130;border-radius:10px;padding:12px 16px;margin:6px 0">'
+                        f'<div style="margin-bottom:4px">'
+                        + (f'<span style="font-size:.95rem;font-weight:700;color:#e0e0e0">{_enm}</span> ' if _enm else "")
+                        + f'<span style="font-size:.78rem;color:#666">{_t}</span></div>'
+                        f'<div style="font-size:.84rem;color:#aaa">'
+                        f'{_cur_label} <b style="color:#ddd">{_efmt(_cur)}</b> '
+                        f'<span style="color:{_pnl_clr}">({_pnl_pc:+.1f}%)</span>'
+                        f' &nbsp;|&nbsp; 평단가 <b style="color:#aaa">{_efmt(_avg)}</b>'
+                        f'</div></div>',
+                        unsafe_allow_html=True,
+                    )
 
                 if _stp and _stp.get("rt_price"):
                     _rt_sell_px = _stp["rt_price"]

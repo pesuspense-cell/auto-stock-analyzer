@@ -3327,6 +3327,94 @@ def get_sell_target_price(data: pd.DataFrame) -> dict:
 
 
 
+# ─── ATR + 트레일링 스톱 결합형 매도 가이드 ────────────────────────────────
+
+def calc_atr_trailing_guide(
+    buying_price: float,
+    current_price: float,
+    atr_14: float,
+    max_price_since_buy: float = 0.0,
+    is_krw: bool = True,
+) -> dict:
+    """
+    ATR(14) + 트레일링 스톱 결합형 매도 가이드 산출.
+
+    알고리즘:
+      - ATR 손절선     = buying_price - ATR × 2.0
+      - 트레일링 스톱  = max_price_since_buy - ATR × 2.5
+      - final_trigger  = max(ATR 손절선, 트레일링 스톱)
+
+    CASE 1 : current <= trigger AND current > buying  →  익절 매도 추천
+    CASE 2 : current <= trigger AND current <= buying →  손절 추천
+    CASE 3 : current >  trigger AND current > buying  →  수익 중 유지
+    CASE 4 : current >  trigger AND current <= buying →  소폭 손실 모니터링
+
+    Returns
+    -------
+    dict 키:
+        max_price_since_buy, final_trigger_line, atr_14,
+        atr_stop, trail_stop, case, status, message, guide_clr
+    """
+    _fmt = (lambda v: f"₩{v:,.0f}") if is_krw else (lambda v: f"${v:,.2f}")
+
+    # max_price_since_buy 갱신: 초기값 미설정 시 평단가, 현재가가 더 높으면 갱신
+    if max_price_since_buy <= 0 or max_price_since_buy < buying_price:
+        max_price_since_buy = buying_price
+    max_price_since_buy = max(max_price_since_buy, current_price)
+
+    atr_stop   = buying_price      - atr_14 * 2.0
+    trail_stop = max_price_since_buy - atr_14 * 2.5
+    final      = max(atr_stop, trail_stop)
+
+    below = current_price <= final
+    above = current_price >  buying_price
+
+    if below and above:
+        case      = 1
+        status    = "🎯 익절 매도 추천"
+        message   = (
+            f"최고점 대비 변동성 임계점(ATR)을 하향 돌파했습니다. "
+            f"수익 확보를 권장합니다. (매도 기준선: {_fmt(final)})"
+        )
+        guide_clr = "#ffd93d"
+    elif below and not above:
+        case      = 2
+        status    = "🚨 리스크 관리(손절) 추천"
+        message   = (
+            f"종목 허용 변동성 범위를 벗어난 하락입니다. "
+            f"추가 손실 방지를 권장합니다. (매도 기준선: {_fmt(final)})"
+        )
+        guide_clr = "#ef4444"
+    elif not below and above:
+        case      = 3
+        status    = "📈 수익 중 (유지)"
+        message   = (
+            f"상승 추세가 유지되고 있습니다. 최고점을 추격하며 "
+            f"타이트하게 모니터링하세요. (현재 대피선: {_fmt(final)})"
+        )
+        guide_clr = "#4caf50"
+    else:
+        case      = 4
+        status    = "⏳ 소폭 손실 (모니터링)"
+        message   = (
+            f"평단가 아래이나 아직 지지선 내의 정상 변동 범위입니다. "
+            f"최종 방어선을 주시하세요. (최종 방어선: {_fmt(final)})"
+        )
+        guide_clr = "#fff176"
+
+    return {
+        "max_price_since_buy": round(max_price_since_buy, 2),
+        "final_trigger_line":  round(final, 2),
+        "atr_14":              round(atr_14, 4),
+        "atr_stop":            round(atr_stop, 2),
+        "trail_stop":          round(trail_stop, 2),
+        "case":      case,
+        "status":    status,
+        "message":   message,
+        "guide_clr": guide_clr,
+    }
+
+
 # ─── SEC EDGAR 내부자 거래 → DARTProvider 위임 ──────────────────────────────
 
 def get_insider_trades_sec(ticker: str, days: int = 90) -> pd.DataFrame:
