@@ -742,8 +742,12 @@ def _render_sector_etf_prices():
     }
 
     def _sort_idx_first(df):
-        tmp = df.assign(_p=(~df["태그"].str.startswith("📊")).astype(int))
-        return tmp.sort_values(["_p", "국가", "태그"]).drop(columns=["_p"])
+        _country_order = {"국내": 0, "미국": 1}
+        tmp = df.assign(
+            _p=(~df["태그"].str.startswith("📊")).astype(int),
+            _c=df["국가"].map(_country_order).fillna(2),
+        )
+        return tmp.sort_values(["_c", "_p", "태그"]).drop(columns=["_p", "_c"])
 
     t1, t2, t3 = st.tabs(["전체", "🇺🇸 미국 ETF", "🇰🇷 국내 ETF"])
     with t1:
