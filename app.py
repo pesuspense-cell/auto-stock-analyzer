@@ -725,22 +725,6 @@ def _render_sector_etf_prices():
         _etf_df["ETF명"] + "  ·  " + _etf_df["티커"].str.split(".").str[0]
     )
 
-    def _row_style(row):
-        chg = row["등락률(%)"]
-        if isinstance(chg, (int, float)) and chg > 0:  return ["background-color:rgba(239,83,80,0.13)"] * len(row)
-        if isinstance(chg, (int, float)) and chg < 0:  return ["background-color:rgba(66,165,245,0.13)"] * len(row)
-        return ["background-color:transparent"] * len(row)
-
-    _cols    = ["국가", "태그", "ETF", "현재가", "방향", "등락률(%)"]
-    _col_cfg = {
-        "국가":      st.column_config.TextColumn("국가",      width="small"),
-        "태그":      st.column_config.TextColumn("테마",      width="small"),
-        "ETF":       st.column_config.TextColumn("ETF · 티커", width="medium"),
-        "현재가":    st.column_config.TextColumn("현재가",    width="small"),
-        "방향":      st.column_config.TextColumn("↕",         width="small"),
-        "등락률(%)": st.column_config.ProgressColumn("등락률 (%)", format="%+.2f%%", min_value=-15.0, max_value=15.0),
-    }
-
     def _sort_idx_first(df):
         _country_order = {"국내": 0, "미국": 1}
         tmp = df.assign(
@@ -749,22 +733,56 @@ def _render_sector_etf_prices():
         )
         return tmp.sort_values(["_c", "_p", "태그"]).drop(columns=["_p", "_c"])
 
+    def _etf_table_html(df: "pd.DataFrame") -> str:
+        _MAX = 15.0
+        hdr = (
+            '<table style="width:100%;border-collapse:collapse;font-size:0.82rem">'
+            '<thead><tr style="border-bottom:1px solid #30363D;color:#8B949E">'
+            '<th style="padding:5px 4px;text-align:left;width:36px">국가</th>'
+            '<th style="padding:5px 4px;text-align:left;width:90px">테마</th>'
+            '<th style="padding:5px 4px;text-align:left">ETF · 티커</th>'
+            '<th style="padding:5px 4px;text-align:right;width:68px">현재가</th>'
+            '<th style="padding:5px 8px;text-align:right;width:160px">등락률</th>'
+            '</tr></thead><tbody>'
+        )
+        rows = []
+        for _, r in df.iterrows():
+            chg = float(r["등락률(%)"])
+            up  = chg >= 0
+            bc  = "#ef5350" if up else "#42a5f5"
+            bg  = "rgba(239,83,80,0.10)" if up else "rgba(66,165,245,0.10)"
+            bw  = min(abs(chg) / _MAX * 100, 100)
+            sgn = "+" if up else ""
+            rows.append(
+                f'<tr style="border-bottom:1px solid #21262D;background:{bg}">'
+                f'<td style="padding:5px 4px">{r["국가"]}</td>'
+                f'<td style="padding:5px 4px;white-space:nowrap">{r["태그"]}</td>'
+                f'<td style="padding:5px 4px">{r["ETF"]}</td>'
+                f'<td style="padding:5px 4px;text-align:right;white-space:nowrap;font-size:0.78rem">{r["현재가"]}</td>'
+                f'<td style="padding:5px 8px">'
+                f'<div style="display:flex;align-items:center;gap:5px;justify-content:flex-end">'
+                f'<div style="width:52px;background:#21262D;border-radius:3px;height:6px;flex-shrink:0">'
+                f'<div style="width:{bw:.1f}%;background:{bc};border-radius:3px;height:100%"></div>'
+                f'</div>'
+                f'<span style="color:{bc};font-weight:700;font-size:1rem;min-width:58px;text-align:right">{sgn}{chg:.2f}%</span>'
+                f'</div></td>'
+                f'</tr>'
+            )
+        return hdr + "".join(rows) + "</tbody></table>"
+
     t1, t2, t3 = st.tabs(["전체", "🇺🇸 미국 ETF", "🇰🇷 국내 ETF"])
     with t1:
-        st.dataframe(_sort_idx_first(_etf_df)[_cols].style.apply(_row_style, axis=1),
-                     use_container_width=True, hide_index=True, column_config=_col_cfg)
+        st.markdown(_etf_table_html(_sort_idx_first(_etf_df)), unsafe_allow_html=True)
     with t2:
         _us = _etf_df[_etf_df["국가"] == "미국"]
         if not _us.empty:
-            st.dataframe(_sort_idx_first(_us)[_cols].style.apply(_row_style, axis=1),
-                         use_container_width=True, hide_index=True, column_config=_col_cfg)
+            st.markdown(_etf_table_html(_sort_idx_first(_us)), unsafe_allow_html=True)
         else:
             st.caption("미국 ETF 데이터 없음")
     with t3:
         _kr = _etf_df[_etf_df["국가"] == "국내"]
         if not _kr.empty:
-            st.dataframe(_sort_idx_first(_kr)[_cols].style.apply(_row_style, axis=1),
-                         use_container_width=True, hide_index=True, column_config=_col_cfg)
+            st.markdown(_etf_table_html(_sort_idx_first(_kr)), unsafe_allow_html=True)
         else:
             st.caption("국내 ETF 데이터 없음")
 
