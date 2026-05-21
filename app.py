@@ -736,12 +736,12 @@ def _render_sector_etf_prices():
     def _etf_table_html(df: "pd.DataFrame") -> str:
         _MAX = 15.0
         hdr = (
-            '<table style="width:100%;border-collapse:collapse;font-size:0.82rem">'
+            '<table style="width:60%;border-collapse:collapse;font-size:0.82rem">'
             '<thead><tr style="border-bottom:1px solid #30363D;color:#8B949E">'
             '<th style="padding:5px 4px;text-align:left;width:36px">국가</th>'
             '<th style="padding:5px 4px;text-align:left;width:90px">테마</th>'
             '<th style="padding:5px 4px;text-align:left">ETF · 티커</th>'
-            '<th style="padding:5px 4px;text-align:right;width:68px">현재가</th>'
+            '<th style="padding:5px 8px;text-align:center;width:68px">현재가</th>'
             '<th style="padding:5px 8px;text-align:right;width:160px">등락률</th>'
             '</tr></thead><tbody>'
         )
@@ -758,7 +758,7 @@ def _render_sector_etf_prices():
                 f'<td style="padding:5px 4px">{r["국가"]}</td>'
                 f'<td style="padding:5px 4px;white-space:nowrap">{r["태그"]}</td>'
                 f'<td style="padding:5px 4px">{r["ETF"]}</td>'
-                f'<td style="padding:5px 4px;text-align:right;white-space:nowrap;font-size:0.78rem">{r["현재가"]}</td>'
+                f'<td style="padding:5px 8px;text-align:center;white-space:nowrap;font-size:0.78rem">{r["현재가"]}</td>'
                 f'<td style="padding:5px 8px">'
                 f'<div style="display:flex;align-items:center;gap:5px;justify-content:flex-end">'
                 f'<div style="width:52px;background:#21262D;border-radius:3px;height:6px;flex-shrink:0">'
