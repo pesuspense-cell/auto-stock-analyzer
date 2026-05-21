@@ -768,65 +768,67 @@ def render_market_tab(
         st.caption("미국 ETF 15개 + 국내 섹터별 대표 ETF 20개 · 전일 대비 등락률 · 10분 캐시")
         sector_etf_prices_fn()
 
-        # ── 전체 시장 급등·급락 TOP 10 ───────────────────────────────
+        # ── 시장 급등·급락 TOP10 + 시가총액 상위 (좌우 2칼럼) ────────
         st.divider()
-        st.markdown("### 🏆 시장 급등·급락 TOP 10")
-        _fm_gainers, _fm_losers = full_movers_fn()
+        _col_top10, _col_cap = st.columns(2)
 
-        if not _fm_gainers.empty or not _fm_losers.empty:
-            _t_gain, _t_loss = st.tabs(["🚀 급등 TOP 10", "📉 급락 TOP 10"])
-            with _t_gain:
-                _render_toss_mover_list(_fm_gainers, show_market=True)
-            with _t_loss:
-                _render_toss_mover_list(_fm_losers, show_market=True)
-        else:
-            st.warning("시장 데이터를 불러올 수 없습니다. (KRX 서버 응답 없음)", icon="⚠️")
+        with _col_top10:
+            st.markdown("### 🏆 시장 급등·급락 TOP 10")
+            _fm_gainers, _fm_losers = full_movers_fn()
+            if not _fm_gainers.empty or not _fm_losers.empty:
+                _t_gain, _t_loss = st.tabs(["🚀 급등 TOP 10", "📉 급락 TOP 10"])
+                with _t_gain:
+                    _render_toss_mover_list(_fm_gainers, show_market=True)
+                with _t_loss:
+                    _render_toss_mover_list(_fm_losers, show_market=True)
+            else:
+                st.warning("시장 데이터를 불러올 수 없습니다. (KRX 서버 응답 없음)", icon="⚠️")
 
-        # ── KOSPI 시가총액 상위 분석 ─────────────────────────────────
-        st.divider()
-        mover_n = st.select_slider(
-            "분석 종목 수 (시가총액 상위)", list(range(10, 110, 10)), value=50,
-            help="KOSPI 시가총액 상위 N개 종목의 등락률을 분석합니다.",
-        )
-        movers = movers_fn(mover_n)
+        with _col_cap:
+            st.markdown("### 📊 시가총액 상위 분석")
+            mover_n = st.select_slider(
+                "분석 종목 수 (시가총액 상위)", list(range(10, 110, 10)), value=50,
+                help="KOSPI 시가총액 상위 N개 종목의 등락률을 분석합니다.",
+            )
+            movers = movers_fn(mover_n)
 
-        if not movers.empty:
-            top_n   = min(10, len(movers) // 2)
-            gainers = movers.head(top_n)
-            losers  = movers.tail(top_n).sort_values("등락률(%)")
+            if not movers.empty:
+                top_n   = min(10, len(movers) // 2)
+                gainers = movers.head(top_n)
+                losers  = movers.tail(top_n).sort_values("등락률(%)")
 
-            _m1, _m2 = st.tabs(["🚀 급등 상위", "📉 급락 하위"])
-            with _m1:
-                _render_toss_mover_list(gainers, show_market=False)
-            with _m2:
-                _render_toss_mover_list(losers, show_market=False)
+                _m1, _m2 = st.tabs(["🚀 급등 상위", "📉 급락 하위"])
+                with _m1:
+                    _render_toss_mover_list(gainers, show_market=False)
+                with _m2:
+                    _render_toss_mover_list(losers, show_market=False)
 
-            chart_n   = min(15, len(movers) // 2)
-            chart_top = pd.concat([movers.head(chart_n), movers.tail(chart_n).sort_values("등락률(%)")])
-            with st.expander(f"📊 급등·급락 차트 (TOP {chart_n})"):
-                fig_bar = go.Figure(go.Bar(
-                    x=chart_top["종목명"],
-                    y=chart_top["등락률(%)"],
-                    marker_color=["#ef5350" if val >= 0 else "#42a5f5" for val in chart_top["등락률(%)"]],
-                    text=[f"{val:+.2f}%" for val in chart_top["등락률(%)"]],
-                    textposition="outside",
-                ))
-                fig_bar.update_layout(
-                    height=360, template="plotly_dark",
-                    margin=dict(t=10, b=70), xaxis_tickangle=-40,
-                    yaxis_title="등락률 (%)",
-                )
-                st.plotly_chart(fig_bar, use_container_width=True)
+                chart_n   = min(15, len(movers) // 2)
+                chart_top = pd.concat([movers.head(chart_n), movers.tail(chart_n).sort_values("등락률(%)")])
+                with st.expander(f"📊 급등·급락 차트 (TOP {chart_n})"):
+                    fig_bar = go.Figure(go.Bar(
+                        x=chart_top["종목명"],
+                        y=chart_top["등락률(%)"],
+                        marker_color=["#ef5350" if val >= 0 else "#42a5f5" for val in chart_top["등락률(%)"]],
+                        text=[f"{val:+.2f}%" for val in chart_top["등락률(%)"]],
+                        textposition="outside",
+                    ))
+                    fig_bar.update_layout(
+                        height=360, template="plotly_dark",
+                        margin=dict(t=10, b=70), xaxis_tickangle=-40,
+                        yaxis_title="등락률 (%)",
+                    )
+                    st.plotly_chart(fig_bar, use_container_width=True)
 
-            with st.expander(f"📋 전체 {len(movers)}개 종목 등락률 표"):
-                st.dataframe(
-                    movers[["종목명", "티커", "현재가", "등락률(%)", "거래량"]].style
-                    .format({"현재가": "{:,.0f}", "등락률(%)": "{:+.2f}%", "거래량": "{:,}"})
-                    .map(lambda v: "color:#ef5350" if isinstance(v, float) and v > 0
-                         else ("color:#42a5f5" if isinstance(v, float) and v < 0 else ""),
-                         subset=["등락률(%)"]),
-                    use_container_width=True, hide_index=True,
-                )
+                with st.expander(f"📋 전체 {len(movers)}개 종목 등락률 표"):
+                    st.dataframe(
+                        movers[["종목명", "티커", "현재가", "등락률(%)", "거래량"]].style
+                        .format({"현재가": "{:,.0f}", "등락률(%)": "{:+.2f}%", "거래량": "{:,}"})
+                        .map(lambda v: "color:#ef5350" if isinstance(v, float) and v > 0
+                             else ("color:#42a5f5" if isinstance(v, float) and v < 0 else ""),
+                             subset=["등락률(%)"]),
+                        use_container_width=True, hide_index=True,
+                    )
 
 
 
