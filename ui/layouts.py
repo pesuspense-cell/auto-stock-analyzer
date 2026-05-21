@@ -3223,7 +3223,8 @@ def _render_pf_body(
 
         _ai_h, _ai_btn = st.columns([5, 1])
         _ai_h.markdown("#### 🤖 AI의 이번 주 제안")
-        _opt_result: dict = st.session_state.get("pf_opt_result", {})
+        _raw_result = st.session_state.get("pf_opt_result")
+        _opt_result: dict = _raw_result if isinstance(_raw_result, dict) else {}
         # 구버전 캐시 무효화 (momentum_data 키 미존재 시)
         if _opt_result and "momentum_data" not in _opt_result:
             _opt_result = {}
