@@ -2,18 +2,16 @@
 portfolio_optimizer.py - 포트폴리오 섹터 분석 및 리밸런싱 가이드
 
 [기능]
-  1. classify_sectors   - 종목별 섹터 분류 + 비중 계산
-  2. scan_sector_etfs   - 섹터 ETF 5일 수익률 스캔 (시장 주도주 탐지)
-  3. build_rebalancing_guide - 리밸런싱 제안 생성
+  1. classify_sectors     - 종목별 섹터 분류 + 비중 계산
+  2. scan_market_momentum - 시장 지수 추세 + 섹터 ETF 모멘텀 스코어
+  3. build_rebalancing_guide - HHI + 조건 매트릭스 기반 리밸런싱 가이드
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger("portfolio_optimizer")
 
-# 인버스·레버리지·광범위 지수 제외 (섹터 순수 분석 대상만)
 _EXCLUDE_SECTORS = {"인버스", "레버리지", "코스피200", "코스닥150"}
 
 
@@ -79,119 +77,197 @@ def classify_sectors(
     }
 
 
-# ─── 2. 섹터 ETF 5일 수익률 스캔 ──────────────────────────────────────────────
-def scan_sector_etfs() -> list[dict]:
+# ─── 2. 시장 지수 추세 + 섹터 ETF 모멘텀 스코어 ─────────────────────────────────
+def scan_market_momentum() -> dict:
     """
-    _ETF_PORTFOLIO_MAP 등록 섹터 ETF의 최근 5거래일 수익률 계산.
-    인버스·레버리지·광범위 지수는 제외.
+    1. KOSPI/KOSDAQ 20일 이평선 대비 현재가 체크 (시장 위험도)
+    2. 섹터 ETF별 모멘텀 스코어 계산
+       score = (5일 수익률 × 0.5) + (20일 수익률 × 0.3) + (거래량 증가율 × 0.2)
+    3. TOP3 / BOTTOM3 분류
 
-    반환: [{ticker, code, name, sector, return_5d}, ...] — return_5d 내림차순
+    반환:
+      market_status    : "상승장" | "하락장"
+      kospi_above_ma   : bool
+      kosdaq_above_ma  : bool
+      sector_scores    : list[{sector, name, score, return_5d, return_20d, vol_growth, rank}]
     """
     import pandas as pd
     import yfinance as yf
-    from stock_ai import _ETF_PORTFOLIO_MAP  # 지연 import
+    from stock_ai import _ETF_PORTFOLIO_MAP
 
+    # ── KOSPI/KOSDAQ 20일 MA 체크 ──────────────────────────────────────────
+    kospi_above_ma  = True
+    kosdaq_above_ma = True
+    try:
+        idx_raw = yf.download(
+            ["^KS11", "^KQ11"],
+            period="60d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+        if isinstance(idx_raw.columns, pd.MultiIndex):
+            ks_c = idx_raw["Close"]["^KS11"].dropna()
+            kq_c = idx_raw["Close"]["^KQ11"].dropna()
+        else:
+            ks_c = idx_raw["Close"].dropna()
+            kq_c = ks_c
+        if len(ks_c) >= 20:
+            kospi_above_ma  = bool(ks_c.iloc[-1] > ks_c.tail(20).mean())
+        if len(kq_c) >= 20:
+            kosdaq_above_ma = bool(kq_c.iloc[-1] > kq_c.tail(20).mean())
+    except Exception as exc:
+        logger.warning("지수 MA 조회 실패: %s", exc)
+
+    # ── 섹터 ETF 모멘텀 스코어 ─────────────────────────────────────────────
     ticker_info = {
         f"{code}.KS": info
         for code, info in _ETF_PORTFOLIO_MAP.items()
         if info.get("sector") not in _EXCLUDE_SECTORS
     }
-    if not ticker_info:
-        return []
+    sector_scores: list[dict] = []
 
-    try:
-        raw = yf.download(
-            list(ticker_info.keys()),
-            period="10d",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
-        results: list[dict] = []
-        for t_ks, info in ticker_info.items():
-            try:
-                if isinstance(raw.columns, pd.MultiIndex):
-                    closes = raw["Close"][t_ks].dropna()
-                else:
-                    closes = raw["Close"].dropna()
-                if len(closes) < 2:
+    if ticker_info:
+        try:
+            raw = yf.download(
+                list(ticker_info.keys()),
+                period="60d",
+                auto_adjust=True,
+                progress=False,
+                threads=True,
+            )
+            for t_ks, info in ticker_info.items():
+                try:
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        closes  = raw["Close"][t_ks].dropna()
+                        volumes = raw["Volume"][t_ks].dropna()
+                    else:
+                        closes  = raw["Close"].dropna()
+                        volumes = raw["Volume"].dropna()
+
+                    if len(closes) < 6:
+                        continue
+
+                    ret_5d  = float((closes.iloc[-1] / closes.iloc[-6]  - 1) * 100)
+                    ret_20d = float((closes.iloc[-1] / closes.iloc[-21] - 1) * 100) if len(closes) >= 21 else ret_5d
+
+                    if len(volumes) >= 20:
+                        vol_recent = float(volumes.tail(5).mean())
+                        vol_prev   = float(volumes.iloc[-20:-5].mean())
+                        vol_growth = float((vol_recent / vol_prev - 1) * 100) if vol_prev > 0 else 0.0
+                    else:
+                        vol_growth = 0.0
+
+                    score = (ret_5d * 0.5) + (ret_20d * 0.3) + (vol_growth * 0.2)
+                    sector_scores.append({
+                        "ticker":     t_ks,
+                        "code":       t_ks.replace(".KS", ""),
+                        "name":       info["name"],
+                        "sector":     info["sector"],
+                        "return_5d":  round(ret_5d,    2),
+                        "return_20d": round(ret_20d,   2),
+                        "vol_growth": round(vol_growth, 1),
+                        "score":      round(score,      2),
+                    })
+                except Exception:
                     continue
-                ret5 = float((closes.iloc[-1] / closes.iloc[0] - 1) * 100)
-                results.append({
-                    "ticker":    t_ks,
-                    "code":      t_ks.replace(".KS", ""),
-                    "name":      info["name"],
-                    "sector":    info["sector"],
-                    "return_5d": round(ret5, 2),
-                })
-            except Exception:
-                continue
-        return sorted(results, key=lambda x: x["return_5d"], reverse=True)
-    except Exception as exc:
-        logger.warning("섹터 ETF 스캔 실패: %s", exc)
-        return []
+        except Exception as exc:
+            logger.warning("섹터 ETF 스캔 실패: %s", exc)
+
+    sector_scores.sort(key=lambda x: x["score"], reverse=True)
+    n        = len(sector_scores)
+    top_n    = min(3, n)
+    bottom_n = min(3, n)
+    for i, s in enumerate(sector_scores):
+        if   i < top_n:         s["rank"] = "TOP"
+        elif i >= n - bottom_n: s["rank"] = "BOTTOM"
+        else:                   s["rank"] = "NORMAL"
+
+    return {
+        "market_status":   "상승장" if kospi_above_ma else "하락장",
+        "kospi_above_ma":  kospi_above_ma,
+        "kosdaq_above_ma": kosdaq_above_ma,
+        "sector_scores":   sector_scores,
+    }
 
 
-# ─── 3. 리밸런싱 가이드 생성 ──────────────────────────────────────────────────
+# ─── 3. 리밸런싱 가이드 생성 (HHI + 조건 매트릭스) ────────────────────────────
 def build_rebalancing_guide(
-    sector_data: dict,
-    etf_scan: list[dict],
-    pf_name_map: dict[str, str],
+    sector_data:   dict,
+    momentum_data: dict,
+    pf_name_map:   dict[str, str],
 ) -> dict:
     """
-    섹터 분석 + ETF 스캔 결과를 바탕으로 4가지 리밸런싱 제안 생성.
+    HHI 지수 + 섹터 조건 매트릭스 기반 포트폴리오 진단.
 
     반환:
-      concentration_warnings : list[{sector, weight, tickers}]   30% 초과
-      new_candidates         : list[{name, sector, return_5d, reason}]
-      profit_take            : list[{ticker, name, pnl_pct, reason}]  +15% 이상
-      add_buy                : list[{ticker, name, sector, reason}]   비중 낮은 강세 섹터
+      hhi              : float   (허핀달-허쉬만 지수, 섹터비율%² 합산)
+      is_concentrated  : bool    (HHI > 2500)
+      market_status    : str
+      recommendations  : list[{type, icon, sector, weight, tickers, message}]
+      missing_top      : list[{sector, name, score, return_5d}]
+      profit_take      : list[{ticker, name, pnl_pct, reason}]
+      sector_scores    : list    (UI 전달용 모멘텀 랭킹)
     """
-    sectors     = sector_data.get("sectors", {})
-    item_values = sector_data.get("item_values", [])
+    sectors       = sector_data.get("sectors", {})
+    item_values   = sector_data.get("item_values", [])
+    sector_scores = momentum_data.get("sector_scores", [])
+    market_status = momentum_data.get("market_status", "상승장")
 
-    # ── 섹터 집중 경고 (>30%) ──────────────────────────────────────────────
-    concentration_warnings = sorted(
-        [
-            {"sector": s, "weight": v["weight"], "tickers": v["tickers"]}
-            for s, v in sectors.items()
-            if v["weight"] > 30
-        ],
-        key=lambda x: x["weight"],
-        reverse=True,
-    )
+    # ── HHI (섹터 비율% 제곱 합) ─────────────────────────────────────────
+    hhi = round(sum(v["weight"] ** 2 for v in sectors.values()), 0)
+    is_concentrated = hhi > 2500
 
-    # ── 신규 편입 후보 (미보유 섹터 강세 ETF 상위 2개) ─────────────────────
-    held_sectors  = set(sectors.keys())
-    new_candidates: list[dict] = []
-    for etf in etf_scan:
-        if etf["return_5d"] <= 0:
-            continue
-        if etf["sector"] not in held_sectors:
-            new_candidates.append({
-                "name":      etf["name"],
-                "sector":    etf["sector"],
-                "return_5d": etf["return_5d"],
-                "reason":    f"5일 수익률 +{etf['return_5d']:.1f}% — 미보유 섹터 편입 검토",
+    # ── 섹터 → 시장 랭크 맵 ─────────────────────────────────────────────
+    rank_map: dict[str, str] = {s["sector"]: s["rank"] for s in sector_scores}
+
+    # ── 조건 매트릭스 ────────────────────────────────────────────────────
+    # 비중 ≥40% + BOTTOM → 🚨 비중 축소
+    # 비중 ≥40% + TOP    → 📈 유지·익절 준비
+    # 비중 ≥40% + NORMAL → ⚠️  집중 경고
+    # 비중 ≤10% + TOP    → ✨ 비중 확대 권고
+    # 비중 ≤10% + BOTTOM → 💤 관망 (표시 생략)
+    recommendations: list[dict] = []
+    for sector, sv in sorted(sectors.items(), key=lambda x: x[1]["weight"], reverse=True):
+        w    = sv["weight"]
+        rank = rank_map.get(sector, "NORMAL")
+        tks  = ", ".join(pf_name_map.get(t, t) or t for t in sv["tickers"])
+
+        if w >= 40 and rank == "BOTTOM":
+            recommendations.append({
+                "type": "reduce", "icon": "🚨", "sector": sector, "weight": w, "tickers": tks,
+                "message": "시장 자금이 이탈하는 섹터에 자산이 과도하게 묶여 있습니다. 리스크 관리를 위해 일부 비중을 줄여 현금을 확보하세요.",
             })
-        if len(new_candidates) >= 2:
-            break
-    # 미보유 섹터가 없으면 수익률 상위 보유 섹터로 보완
-    if len(new_candidates) < 2:
-        for etf in etf_scan[:3]:
-            if etf["return_5d"] > 1.0 and not any(
-                c["sector"] == etf["sector"] for c in new_candidates
-            ):
-                new_candidates.append({
-                    "name":      etf["name"],
-                    "sector":    etf["sector"],
-                    "return_5d": etf["return_5d"],
-                    "reason":    f"5일 수익률 +{etf['return_5d']:.1f}% 섹터 강세 — 비중 확대 검토",
-                })
-            if len(new_candidates) >= 2:
-                break
+        elif w >= 40 and rank == "TOP":
+            recommendations.append({
+                "type": "hold", "icon": "📈", "sector": sector, "weight": w, "tickers": tks,
+                "message": "시장을 주도하는 섹터를 잘 선점하셨습니다. 편중도가 높으니 추세가 꺾이기 전까지 유지하되(트레일링 스톱), 신규 매수는 자제하세요.",
+            })
+        elif w >= 40:
+            recommendations.append({
+                "type": "watch", "icon": "⚠️", "sector": sector, "weight": w, "tickers": tks,
+                "message": "섹터 집중도가 높습니다. 시장 흐름 변화 시 리스크가 커질 수 있으니 분산을 고려하세요.",
+            })
+        elif w <= 10 and rank == "TOP":
+            recommendations.append({
+                "type": "add", "icon": "✨", "sector": sector, "weight": w, "tickers": tks,
+                "message": f"시장 주도 섹터이나 비중이 {w:.1f}%로 낮습니다. 10~15% 수준으로 비중 확대를 고려해보세요.",
+            })
 
-    # ── 수익 확정 권고 (+15% 이상) ─────────────────────────────────────────
+    # ── 미보유 TOP 섹터 탐색 ────────────────────────────────────────────
+    held_sectors = set(sectors.keys())
+    missing_top: list[dict] = [
+        {
+            "sector":    s["sector"],
+            "name":      s["name"],
+            "score":     s["score"],
+            "return_5d": s["return_5d"],
+        }
+        for s in sector_scores
+        if s["rank"] == "TOP" and s["sector"] not in held_sectors
+    ]
+
+    # ── 수익 확정 권고 (+15% 이상) ───────────────────────────────────────
     profit_take = sorted(
         [
             {
@@ -207,25 +283,12 @@ def build_rebalancing_guide(
         reverse=True,
     )
 
-    # ── 추가 매수 권고 (강세 섹터 & 포트폴리오 비중 <10%) ────────────────
-    add_buy: list[dict] = []
-    for etf in etf_scan[:4]:
-        sector = etf["sector"]
-        weight = sectors.get(sector, {}).get("weight", 0.0)
-        if etf["return_5d"] > 1.0 and weight < 10:
-            wlabel = "미보유 섹터" if weight == 0 else f"비중 {weight:.1f}%"
-            add_buy.append({
-                "ticker": etf["ticker"],
-                "name":   etf["name"],
-                "sector": sector,
-                "reason": f"섹터 강세 +{etf['return_5d']:.1f}% / {wlabel} — 비중 확대 검토",
-            })
-        if len(add_buy) >= 2:
-            break
-
     return {
-        "concentration_warnings": concentration_warnings,
-        "new_candidates":         new_candidates,
-        "profit_take":            profit_take,
-        "add_buy":                add_buy,
+        "hhi":             hhi,
+        "is_concentrated": is_concentrated,
+        "market_status":   market_status,
+        "recommendations": recommendations,
+        "missing_top":     missing_top,
+        "profit_take":     profit_take,
+        "sector_scores":   sector_scores,
     }

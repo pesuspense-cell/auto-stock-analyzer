@@ -3224,14 +3224,19 @@ def _render_pf_body(
         _ai_h, _ai_btn = st.columns([5, 1])
         _ai_h.markdown("#### 🤖 AI의 이번 주 제안")
         _opt_result: dict = st.session_state.get("pf_opt_result", {})
+        # 구버전 캐시 무효화 (momentum_data 키 미존재 시)
+        if _opt_result and "momentum_data" not in _opt_result:
+            _opt_result = {}
+            st.session_state.pop("pf_opt_result", None)
         if _ai_btn.button("섹터 분석", key="pf_opt_run", type="primary", use_container_width=True):
-            from src.portfolio_optimizer import classify_sectors, scan_sector_etfs, build_rebalancing_guide
-            with st.spinner("섹터 분석 및 시장 주도주 스캔 중..."):
+            from src.portfolio_optimizer import classify_sectors, scan_market_momentum, build_rebalancing_guide
+            with st.spinner("섹터 분석 및 시장 모멘텀 스캔 중..."):
                 _sd  = classify_sectors(_items, _pf_prices)
-                _es  = scan_sector_etfs()
+                _mm  = scan_market_momentum()
                 _opt_result = {
-                    "sector_data": _sd, "etf_scan": _es,
-                    "guide": build_rebalancing_guide(_sd, _es, _pf_nm),
+                    "sector_data":   _sd,
+                    "momentum_data": _mm,
+                    "guide": build_rebalancing_guide(_sd, _mm, _pf_nm),
                 }
             st.session_state["pf_opt_result"] = _opt_result
 
@@ -3240,20 +3245,55 @@ def _render_pf_body(
         else:
             _sd_r  = _opt_result["sector_data"]
             _guide = _opt_result["guide"]
+            _mm_r  = _opt_result.get("momentum_data", {})
             _sctrs = _sd_r.get("sectors", {})
+
+            # ── HHI 지수 + 시장 추세 ─────────────────────────────────────
+            _hhi        = _guide.get("hhi", 0)
+            _is_conc    = _guide.get("is_concentrated", False)
+            _kospi_up   = _mm_r.get("kospi_above_ma", True)
+            _kosdaq_up  = _mm_r.get("kosdaq_above_ma", True)
+            _mkt_status = _guide.get("market_status", "상승장")
+            _hhi_color  = "#ef4444" if _hhi > 2500 else ("#ffd93d" if _hhi > 1500 else "#4caf50")
+            _hhi_label  = "🔴 과집중" if _hhi > 2500 else ("🟡 중간" if _hhi > 1500 else "🟢 양호")
+            _hhi_sub    = "섹터 집중 과도 — 분산 권고" if _is_conc else "균형 잡힌 분산 상태"
+            _mkt_color  = "#4caf50" if _kospi_up else "#ef4444"
+            _mkt_icon   = "📈" if _kospi_up else "📉"
+            st.markdown(
+                f'<div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">'
+                f'<div style="background:#1e2130;border-radius:10px;padding:12px 18px;flex:1;min-width:160px">'
+                f'<div style="font-size:.75rem;color:#9e9e9e;margin-bottom:4px">HHI 편중도 지수</div>'
+                f'<div style="font-size:1.5rem;font-weight:700;color:{_hhi_color}">{_hhi:,.0f}</div>'
+                f'<div style="font-size:.76rem;color:{_hhi_color}">{_hhi_label}</div>'
+                f'<div style="font-size:.72rem;color:#666;margin-top:2px">{_hhi_sub}</div>'
+                f'</div>'
+                f'<div style="background:#1e2130;border-radius:10px;padding:12px 18px;flex:1;min-width:160px">'
+                f'<div style="font-size:.75rem;color:#9e9e9e;margin-bottom:4px">시장 추세 (20일 MA)</div>'
+                f'<div style="font-size:1.2rem;font-weight:700;color:{_mkt_color}">{_mkt_icon} {_mkt_status}</div>'
+                f'<div style="font-size:.76rem;color:#888;margin-top:4px">'
+                f'KOSPI {"▲ MA 위" if _kospi_up else "▼ MA 아래"} &nbsp;·&nbsp; KOSDAQ {"▲ MA 위" if _kosdaq_up else "▼ MA 아래"}'
+                f'</div></div></div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── 섹터 비중 바 차트 (TOP/BOTTOM 뱃지 포함) ─────────────────
             if _sctrs:
-                st.markdown("**📊 섹터 비중**")
-                _bar_sorted = sorted(_sctrs.items(), key=lambda x: x[1]["weight"], reverse=True)
-                _bar_max    = max(v["weight"] for _, v in _bar_sorted) or 1
-                _bar_html   = '<div style="display:grid;gap:5px;margin-bottom:12px">'
+                st.markdown("**📊 포트폴리오 섹터 비중**")
+                _sc_rank_map = {s["sector"]: s["rank"] for s in _guide.get("sector_scores", [])}
+                _bar_sorted  = sorted(_sctrs.items(), key=lambda x: x[1]["weight"], reverse=True)
+                _bar_max     = max(v["weight"] for _, v in _bar_sorted) or 1
+                _bar_html    = '<div style="display:grid;gap:5px;margin-bottom:12px">'
                 for _sn, _sv in _bar_sorted:
-                    _sw   = _sv["weight"]
-                    _bc   = "#ef4444" if _sw > 30 else ("#ffd93d" if _sw > 20 else "#4fc3f7")
-                    _bpct = _sw / _bar_max * 100
-                    _tks  = ", ".join(_pf_nm.get(t, t) or t for t in _sv["tickers"])
+                    _sw    = _sv["weight"]
+                    _rank  = _sc_rank_map.get(_sn, "")
+                    _bc    = "#ef4444" if _sw > 40 else ("#ff8a65" if _sw > 30 else ("#ffd93d" if _sw > 20 else "#4fc3f7"))
+                    _bpct  = _sw / _bar_max * 100
+                    _tks   = ", ".join(_pf_nm.get(t, t) or t for t in _sv["tickers"])
+                    _snc   = "#81c784" if _rank == "TOP" else ("#ef9a9a" if _rank == "BOTTOM" else "#ccc")
+                    _snlbl = f"▲{_sn}" if _rank == "TOP" else (f"▼{_sn}" if _rank == "BOTTOM" else _sn)
                     _bar_html += (
                         f'<div style="display:flex;align-items:center;gap:8px">'
-                        f'<div style="width:80px;font-size:.8rem;color:#ccc;text-align:right">{_sn}</div>'
+                        f'<div style="width:90px;font-size:.8rem;color:{_snc};text-align:right;white-space:nowrap">{_snlbl}</div>'
                         f'<div style="flex:1;background:#252836;border-radius:4px;height:18px;overflow:hidden">'
                         f'<div style="width:{_bpct:.0f}%;height:100%;background:{_bc};border-radius:4px"></div></div>'
                         f'<div style="width:44px;font-size:.8rem;font-weight:700;color:{_bc}">{_sw:.1f}%</div>'
@@ -3263,54 +3303,100 @@ def _render_pf_body(
                 _bar_html += "</div>"
                 st.markdown(_bar_html, unsafe_allow_html=True)
 
+            # ── 섹터 모멘텀 랭킹 (TOP3 / BOTTOM3) ───────────────────────
+            _sc_list = _guide.get("sector_scores", [])
+            if _sc_list:
+                st.markdown("**⚡ 섹터 모멘텀 랭킹**")
+                _top_secs = [s for s in _sc_list if s["rank"] == "TOP"]
+                _btm_secs = [s for s in _sc_list if s["rank"] == "BOTTOM"]
+                _rnk_html = '<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">'
+                # 주도 섹터
+                _rnk_html += (
+                    '<div style="flex:1;min-width:180px;background:#1e2130;border-radius:10px;padding:10px 14px">'
+                    '<div style="font-size:.75rem;color:#81c784;font-weight:700;margin-bottom:6px">▲ 주도 섹터 TOP 3</div>'
+                )
+                for _s in _top_secs[:3]:
+                    _5d_str = f'+{_s["return_5d"]:.1f}%' if _s["return_5d"] >= 0 else f'{_s["return_5d"]:.1f}%'
+                    _rnk_html += (
+                        f'<div style="font-size:.82rem;padding:4px 0;border-bottom:1px solid #252836">'
+                        f'<b style="color:#e0e0e0">{_s["sector"]}</b>'
+                        f'<span style="color:#81c784;margin-left:6px">{_5d_str}</span>'
+                        f'<span style="color:#555;font-size:.7rem;margin-left:6px">· 20d {_s["return_20d"]:+.1f}% · 거래량 {_s["vol_growth"]:+.0f}%</span>'
+                        f'<br><span style="font-size:.7rem;color:#666">{_s["name"]} · 점수 {_s["score"]:.1f}</span>'
+                        f'</div>'
+                    )
+                _rnk_html += '</div>'
+                # 소외 섹터
+                _rnk_html += (
+                    '<div style="flex:1;min-width:180px;background:#1e2130;border-radius:10px;padding:10px 14px">'
+                    '<div style="font-size:.75rem;color:#ef9a9a;font-weight:700;margin-bottom:6px">▼ 소외 섹터 BTM 3</div>'
+                )
+                for _s in _btm_secs:
+                    _5d_str = f'+{_s["return_5d"]:.1f}%' if _s["return_5d"] >= 0 else f'{_s["return_5d"]:.1f}%'
+                    _clr    = "#ef9a9a" if _s["return_5d"] < 0 else "#aaa"
+                    _rnk_html += (
+                        f'<div style="font-size:.82rem;padding:4px 0;border-bottom:1px solid #252836">'
+                        f'<b style="color:#e0e0e0">{_s["sector"]}</b>'
+                        f'<span style="color:{_clr};margin-left:6px">{_5d_str}</span>'
+                        f'<span style="color:#555;font-size:.7rem;margin-left:6px">· 20d {_s["return_20d"]:+.1f}% · 거래량 {_s["vol_growth"]:+.0f}%</span>'
+                        f'<br><span style="font-size:.7rem;color:#666">{_s["name"]} · 점수 {_s["score"]:.1f}</span>'
+                        f'</div>'
+                    )
+                _rnk_html += '</div></div>'
+                st.markdown(_rnk_html, unsafe_allow_html=True)
+
+            # ── 조건 매트릭스 진단 카드 ──────────────────────────────────
             st.markdown("""<style>
-.opt-card{background:#1e2130;border-radius:12px;padding:16px;margin-bottom:8px;min-height:100px}
+.opt-card{background:#1e2130;border-radius:12px;padding:16px;margin-bottom:8px}
 .opt-card-title{font-size:.8rem;font-weight:700;color:#9e9e9e;margin-bottom:10px;letter-spacing:.5px}
 .opt-item{font-size:.85rem;line-height:1.7;padding:6px 10px;background:#252836;border-radius:8px;margin:4px 0;word-break:keep-all}
 .opt-empty{color:#555;font-size:.82rem;font-style:italic}
 </style>""", unsafe_allow_html=True)
 
-            _gc1, _gc2 = st.columns(2)
+            _border_map = {"reduce": "#ef4444", "hold": "#81c784", "watch": "#ffd93d", "add": "#4fc3f7"}
+            _recs       = _guide.get("recommendations", [])
+            _miss       = _guide.get("missing_top", [])
+            _pt         = _guide.get("profit_take", [])
+            _gc1, _gc2  = st.columns(2)
 
-            def _opt_card(col, title, items_html):
-                col.markdown(f'<div class="opt-card"><div class="opt-card-title">{title}</div>{items_html}</div>', unsafe_allow_html=True)
+            # 왼쪽: 조건 매트릭스 + 미보유 TOP 섹터
+            _diag_html = ""
+            for _r in _recs:
+                _bc2 = _border_map.get(_r["type"], "#555")
+                _diag_html += (
+                    f'<div class="opt-item" style="border-left:3px solid {_bc2}">'
+                    f'<b style="color:#e0e0e0">{_r["icon"]} {_r["sector"]} {_r["weight"]:.1f}%</b>'
+                    f'<br><span style="font-size:.78rem;color:#aaa">{_r["tickers"]}</span>'
+                    f'<br><span style="font-size:.74rem;color:#888">{_r["message"]}</span>'
+                    f'</div>'
+                )
+            for _m in _miss:
+                _diag_html += (
+                    f'<div class="opt-item" style="border-left:3px solid #4fc3f7">'
+                    f'<b style="color:#e0e0e0">🔍 {_m["sector"]} 미보유</b>'
+                    f'<br><span style="font-size:.78rem;color:#4fc3f7">{_m["name"]} · 5일 {_m["return_5d"]:+.1f}%</span>'
+                    f'<br><span style="font-size:.74rem;color:#888">포트폴리오에 없는 시장 주도 섹터 — 다변화 편입 검토</span>'
+                    f'</div>'
+                )
+            if not _diag_html:
+                _diag_html = '<span class="opt-empty">💤 현재 별도 조치 불필요 — 포트폴리오 안정적</span>'
+            _gc1.markdown(
+                f'<div class="opt-card"><div class="opt-card-title">🎯 포트폴리오 진단</div>{_diag_html}</div>',
+                unsafe_allow_html=True,
+            )
 
-            _warn = _guide.get("concentration_warnings", [])
-            _warn_body = "".join(
-                f'<div class="opt-item" style="border-left:3px solid {"#ef4444" if w["weight"]>40 else "#ff8a65"}">'
-                f'<b style="color:{"#ef4444" if w["weight"]>40 else "#ff8a65"}">{w["sector"]} {w["weight"]:.1f}%</b> 집중 — '
-                f'<span style="color:#aaa">{", ".join(_pf_nm.get(t,t) or t for t in w["tickers"])}</span>'
-                f'<br><span style="font-size:.75rem;color:#888">30% 초과: 비중 분산 권고</span></div>'
-                for w in _warn
-            ) or '<span class="opt-empty">집중 위험 없음 — 양호한 분산</span>'
-            _opt_card(_gc1, "⚠️ 섹터 집중 위험", _warn_body)
-
-            _cands = _guide.get("new_candidates", [])
-            _cand_body = "".join(
-                f'<div class="opt-item" style="border-left:3px solid #4fc3f7">'
-                f'<b style="color:#4fc3f7">{cd["name"]}</b> <span style="color:#81c784">+{cd["return_5d"]:.1f}%</span>'
-                f'<br><span style="font-size:.75rem;color:#888">{cd["reason"]}</span></div>'
-                for cd in _cands
-            ) or '<span class="opt-empty">현재 추천 섹터 없음</span>'
-            _opt_card(_gc2, "🎯 신규 편입 후보", _cand_body)
-
-            _pt = _guide.get("profit_take", [])
-            _pt_body = "".join(
+            # 오른쪽: 수익 확정 권고
+            _pt_html = "".join(
                 f'<div class="opt-item" style="border-left:3px solid #ffd93d">'
-                f'<b style="color:#e0e0e0">{p["name"]}</b> <span style="color:#4caf50;font-weight:700">+{p["pnl_pct"]:.1f}%</span>'
-                f'<br><span style="font-size:.75rem;color:#888">{p["reason"]}</span></div>'
+                f'<b style="color:#e0e0e0">{p["name"]}</b>'
+                f' <span style="color:#4caf50;font-weight:700">+{p["pnl_pct"]:.1f}%</span>'
+                f'<br><span style="font-size:.74rem;color:#888">{p["reason"]}</span></div>'
                 for p in _pt
             ) or '<span class="opt-empty">수익 확정 기준(+15%) 도달 종목 없음</span>'
-            _opt_card(_gc1, "💰 수익 확정 권고", _pt_body)
-
-            _ab = _guide.get("add_buy", [])
-            _ab_body = "".join(
-                f'<div class="opt-item" style="border-left:3px solid #81c784">'
-                f'<b style="color:#e0e0e0">{a["name"]}</b>'
-                f'<br><span style="font-size:.75rem;color:#888">{a["reason"]}</span></div>'
-                for a in _ab
-            ) or '<span class="opt-empty">추가 매수 후보 없음</span>'
-            _opt_card(_gc2, "📈 추가 매수 권고", _ab_body)
+            _gc2.markdown(
+                f'<div class="opt-card"><div class="opt-card-title">💰 수익 확정 권고</div>{_pt_html}</div>',
+                unsafe_allow_html=True,
+            )
 
         st.divider()
 
