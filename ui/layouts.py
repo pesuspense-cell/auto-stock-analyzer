@@ -3136,7 +3136,7 @@ def _render_pf_body(
                     _trigger_html = (
                         f'<div style="margin-top:8px;padding:7px 12px;background:#1a2035;'
                         f'border:1px solid {_guide_clr};border-radius:8px;'
-                        f'display:flex;align-items:center;justify-content:space-between">'
+                        f'display:inline-flex;align-items:center;gap:10px">'
                         f'<span style="font-size:.78rem;color:#999">📌 최종 기준선 (매도 트리거)</span>'
                         f'<span style="font-size:1.05rem;font-weight:700;color:{_guide_clr}">'
                         f'{_efmt(_trigger)}</span></div>'
