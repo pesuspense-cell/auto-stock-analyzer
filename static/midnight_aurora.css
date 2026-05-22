@@ -95,11 +95,23 @@ body, .stApp, .stMarkdown, p, span, div {
 }
 
 /* ─── Sidebar ──────────────────────────────────────────────────── */
-[data-testid="stSidebar"] {
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebarContent"],
+[data-testid="stSidebarUserContent"] {
   background: var(--canvas) !important;
-  border-right: 1px solid var(--hairline) !important;
 }
-[data-testid="stSidebar"] * {
+[data-testid="stSidebar"] {
+  border-right: 1px solid var(--hairline) !important;
+  min-width: 260px !important;
+}
+[data-testid="stSidebar"] *:not(button):not(input):not(select):not(textarea):not([class*="progress"]) {
+  color: var(--ink) !important;
+}
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stTextInput label,
+[data-testid="stSidebar"] .stNumberInput label {
   color: var(--ink) !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
