@@ -70,12 +70,21 @@ header[data-testid="stHeader"] {
   box-shadow: none !important;
   padding: 0 !important;
 }
-/* 사이드바 접힘 버튼 — 명시적으로 표시 보장 */
+/* 사이드바 접힘 버튼 — 명시적으로 표시 보장 + 상단 잘림 방지 */
 [data-testid="collapsedControl"] {
   display: flex !important;
   visibility: visible !important;
   opacity: 1 !important;
   z-index: 9999 !important;
+  top: 8px !important;
+}
+/* 툴바 액션 버튼 — 상단 잘림 방지 */
+[data-testid="stToolbar"] {
+  top: 4px !important;
+  z-index: 9998 !important;
+}
+[data-testid="stToolbarActionButton"] {
+  margin-top: 4px !important;
 }
 #MainMenu, footer { visibility: hidden; }
 
@@ -1445,14 +1454,26 @@ button[style*="background: #2997ff"],
   border-color: var(--action-blue) !important;
 }
 
-/* ─── 뉴스 탭 AI 요약 버튼 — 회색 배경 + 부모 높이 맞춤 ─────────── */
+/* ─── 뉴스 탭 AI 요약 버튼 — 회색 배경 + 뉴스 카드와 높이 정렬 ─── */
+[data-testid="stHorizontalBlock"]:has(.news-item-card) {
+  align-items: stretch !important;
+}
 [data-testid="stHorizontalBlock"]:has(.news-item-card)
-  [data-testid="stColumn"]:last-child {
+  [data-testid="stColumn"] {
   display: flex !important;
   flex-direction: column !important;
 }
 [data-testid="stHorizontalBlock"]:has(.news-item-card)
-  [data-testid="stColumn"]:last-child > div,
+  [data-testid="stColumn"] > div {
+  flex: 1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+[data-testid="stHorizontalBlock"]:has(.news-item-card)
+  [data-testid="stColumn"]:first-child .news-item-card {
+  height: 100% !important;
+  box-sizing: border-box !important;
+}
 [data-testid="stHorizontalBlock"]:has(.news-item-card)
   [data-testid="stColumn"]:last-child .stButton {
   flex: 1 !important;
@@ -1470,6 +1491,7 @@ button[style*="background: #2997ff"],
   border-radius: 10px !important;
   font-weight: 600 !important;
   font-size: 0.82rem !important;
+  white-space: nowrap !important;
 }
 [data-testid="stHorizontalBlock"]:has(.news-item-card)
   [data-testid="stColumn"]:last-child .stButton button:hover {

@@ -427,25 +427,25 @@ def _news_sentiment_llm_cached(
     st.session_state[cache_key] = {"data": result, "ts": datetime.now()}
     return result
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="주식 목록을 불러오는 중")
 def _krx_stocks():  return get_krx_stock_list()
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="주식 목록을 불러오는 중")
 def _top_kospi(n: int = 500):   return get_top_kospi_stocks(n)
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="주식 목록을 불러오는 중")
 def _top_kosdaq(n: int = 500):  return get_top_kosdaq_stocks(n)
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="주식 목록을 불러오는 중")
 def _top_us(n: int = 503):      return get_top_us_stocks(n)
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="주식 목록을 불러오는 중")
 def _top_nasdaq(n: int = 500):  return get_top_nasdaq_stocks(n)
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="주식 목록을 불러오는 중")
 def _us_stocks():   return get_us_stock_list()
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner="주식 목록을 불러오는 중")
 def _etf_stocks_inner(bucket: str) -> dict:
     _ = bucket  # 캐시 키 분리용
     return get_krx_etf_list()
@@ -453,7 +453,7 @@ def _etf_stocks_inner(bucket: str) -> dict:
 def _etf_stocks() -> dict:
     return _etf_stocks_inner(_market_bucket())
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="주식 목록을 불러오는 중")
 def _all_stocks_merged() -> dict:
     """세 종목 사전을 합산한 결과를 하루 단위로 캐싱."""
     result: dict = {}

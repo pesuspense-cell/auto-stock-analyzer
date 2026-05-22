@@ -1183,7 +1183,7 @@ def render_news_tab(
                         unsafe_allow_html=True,
                     )
                 with _ai_btn_col:
-                    if st.button("AI", key=f"ai_{ticker}_{_ni}", help="AI 기사 요약", use_container_width=True):
+                    if st.button("AI 요약", key=f"ai_{ticker}_{_ni}", use_container_width=True):
                         article_dialog(title, link, ticker, gemini_key, groq_key)
 
         with sent_col:
@@ -2935,7 +2935,7 @@ def _render_pf_body(
             _overall_pct = (_total_val + _cum_sell_krw) / _total_in * 100 - 100
             _ov_clr = "#34c759" if _overall_pct >= 0 else "#ff3b30"
             st.markdown(
-                f'<div style="text-align:right;font-size:.82rem;color:#7a7a7a;margin-top:-6px">'
+                f'<div style="text-align:right;font-size:.82rem;color:#7a7a7a;">'
                 f'전체 기간 수익률 &nbsp;'
                 f'<b style="color:{_ov_clr};font-size:.95rem">{_overall_pct:+.2f}%</b>'
                 f'&nbsp;&nbsp;|&nbsp;&nbsp;'
