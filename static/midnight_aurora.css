@@ -250,7 +250,17 @@ button[data-testid="baseButton-primaryFormSubmit"]:hover {
   transform: none !important;
   box-shadow: none !important;
 }
+/* primary 버튼 내부 p 요소 텍스트색 강제 재정의 (전역 p { color } 우선순위 해소) */
+button[data-testid="baseButton-primary"] *,
+button[data-testid="baseButton-primary"] p,
+button[data-testid="baseButton-primaryFormSubmit"] *,
+button[data-testid="baseButton-primaryFormSubmit"] p,
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"] *,
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"] p {
+  color: #fff !important;
+}
 .stButton > button[kind="primary"]:active,
+button[data-testid="baseButton-primary"]:active,
 button[data-testid="baseButton-primaryFormSubmit"]:active {
   transform: scale(0.95) !important;
 }
@@ -261,22 +271,42 @@ button[data-testid="baseButton-primaryFormSubmit"]:focus-visible {
 }
 
 /* 일반 버튼 (Pearl Capsule) */
-.stButton > button:not([kind="primary"]) {
-  background: var(--surface-pearl, #fafafc) !important;
-  border: 1px solid var(--hairline) !important;
+.stButton > button:not([kind="primary"]),
+button[data-testid="baseButton-secondary"],
+button[data-testid="baseButton-secondaryFormSubmit"] {
+  background: var(--canvas) !important;
+  border: 1px solid var(--hairline-md) !important;
   color: var(--action-blue) !important;
   border-radius: var(--radius-pill) !important;
   font-weight: 500 !important;
   transition: background 0.15s ease !important;
   box-shadow: none !important;
 }
-.stButton > button:not([kind="primary"]):hover {
+button[data-testid="baseButton-secondary"] *,
+button[data-testid="baseButton-secondary"] p,
+button[data-testid="baseButton-secondaryFormSubmit"] *,
+button[data-testid="baseButton-secondaryFormSubmit"] p {
+  color: var(--action-blue) !important;
+}
+.stButton > button:not([kind="primary"]):hover,
+button[data-testid="baseButton-secondary"]:hover,
+button[data-testid="baseButton-secondaryFormSubmit"]:hover {
   background: var(--canvas-parchment) !important;
   border-color: var(--action-blue) !important;
   color: var(--action-blue) !important;
 }
-.stButton > button:not([kind="primary"]):active {
+.stButton > button:not([kind="primary"]):active,
+button[data-testid="baseButton-secondary"]:active {
   transform: scale(0.95) !important;
+}
+
+/* ─── Plotly 차트 컨테이너 배경 ──────────────────────────────────── */
+div[data-testid="stPlotlyChart"],
+div[data-testid="stPlotlyChart"] > div,
+div[data-testid="stPlotlyChart"] .js-plotly-plot,
+div[data-testid="stPlotlyChart"] .plotly {
+  background: var(--canvas) !important;
+  border-radius: var(--radius) !important;
 }
 
 /* ─── Dataframe ──────────────────────────────────────────────────── */
@@ -440,8 +470,8 @@ li[role="option"]:hover {
 }
 [data-baseweb="option"][aria-selected="true"],
 li[role="option"][aria-selected="true"] {
-  background: var(--action-dim) !important;
-  color: var(--action-blue) !important;
+  background: var(--action-blue) !important;
+  color: #fff !important;
   font-weight: 600 !important;
 }
 /* listbox 내 모든 div/span 텍스트 */

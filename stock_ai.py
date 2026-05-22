@@ -2177,7 +2177,7 @@ def get_advanced_analysis(data: pd.DataFrame) -> dict:
         if price > cloud_top:
             ichi_signal, ichi_color = "☁️ 구름 위 (강세)", "#a5d6a7"
         elif price > cloud_bot:
-            ichi_signal, ichi_color = "☁️ 구름 내 (중립)", "#fff176"
+            ichi_signal, ichi_color = "☁️ 구름 내 (중립)", "#b38600"
         else:
             ichi_signal, ichi_color = "☁️ 구름 아래 (약세)", "#ef9a9a"
         ichimoku = {
@@ -2192,7 +2192,7 @@ def get_advanced_analysis(data: pd.DataFrame) -> dict:
     items = []
     div = divergence
     if div.get("bearish_rsi") or div.get("bearish_macd"):
-        items.append({"항목": "다이버전스", "상태": "⚠️ 하락 다이버전스 포착", "색상": "#ffcc80"})
+        items.append({"항목": "다이버전스", "상태": "⚠️ 하락 다이버전스 포착", "색상": "#8a5200"})
     elif div.get("bullish_rsi") or div.get("bullish_macd"):
         items.append({"항목": "다이버전스", "상태": "✅ 상승 다이버전스 포착", "색상": "#a5d6a7"})
     else:

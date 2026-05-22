@@ -1814,6 +1814,8 @@ def _build_compact_chart(data: pd.DataFrame, ticker: str) -> go.Figure:
     fig.update_layout(
         height=400,
         template="plotly_white",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="rgba(245,245,247,0.5)",
         dragmode=False,
         xaxis_rangeslider_visible=False,
         margin=dict(t=8, b=8, l=0, r=0),
@@ -3043,9 +3045,9 @@ def _render_pf_body(
             for _bt, _br in _per_news.items():
                 _bs   = _br.get("score", 0.0)
                 _bl   = _br.get("label", "중립")
-                _bc   = "#34c759" if _bs >= 0.5 else ("#ff3b30" if _bs <= -0.5 else "#7a7a7a")
+                _bc   = "#34c759" if _bs >= 0.5 else ("#ff3b30" if _bs <= -0.5 else "#555555")
                 _bnm  = _pf_nm.get(_bt, "")
-                _blbl = (f"{_bnm}<br><span style='font-size:.72rem;color:#7a7a7a'>{_bt}</span>" if _bnm else _bt)
+                _blbl = (f"{_bnm}<br><span style='font-size:.72rem;color:#555555'>{_bt}</span>" if _bnm else _bt)
                 _cur_p  = _pf_prices.get(_bt, 0.0)
                 _avg_p  = next((i["avg_price"] for i in _items if i["ticker"] == _bt), 0.0)
                 _pnl_pc = (_cur_p / _avg_p - 1) * 100 if (_cur_p and _avg_p) else None

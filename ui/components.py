@@ -30,8 +30,8 @@ SVG_TREND = (
 )
 
 _C = COLORS
-_FONT_DISPLAY = '"SF Pro Display",system-ui,-apple-system,sans-serif'
-_FONT_TEXT    = '"SF Pro Text",system-ui,-apple-system,sans-serif'
+_FONT_DISPLAY = "'SF Pro Display',system-ui,-apple-system,sans-serif"
+_FONT_TEXT    = "'SF Pro Text',system-ui,-apple-system,sans-serif"
 
 
 # ─── 로딩 카드 ────────────────────────────────────────────────────────────────
