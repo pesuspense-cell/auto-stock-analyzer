@@ -105,6 +105,7 @@ from ui.layouts import (
     render_chart_tab,
     render_portfolio_tab,
 )
+from ui.backtest_tab import render_backtest_tab
 
 # ─── 페이지 설정 ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -856,13 +857,14 @@ _loading_ph = st.empty()
 # ═════════════════════════════════════════════════════════════════════════════
 # 탭 정의
 # ═════════════════════════════════════════════════════════════════════════════
-tab_market, tab_chart, tab_rec, tab_news, tab_fund, tab_portfolio = st.tabs([
+tab_market, tab_chart, tab_rec, tab_news, tab_fund, tab_portfolio, tab_backtest = st.tabs([
     "🌐 시장 현황",
     "📊 차트 분석",
     "⭐ 추천 종목",
     "📰 뉴스 & 관련 종목",
     "🏛️ 펀더멘털 & 기관",
     "💼 내 포트폴리오",
+    "🔬 백테스트",
 ])
 
 # 분석 완료 직후 차트 탭 자동 이동
@@ -1214,3 +1216,5 @@ render_portfolio_tab(
     set_cookie_fn         = _set_cookie,
     delete_cookie_fn      = _delete_cookie,
 )
+
+render_backtest_tab(tab_backtest)
