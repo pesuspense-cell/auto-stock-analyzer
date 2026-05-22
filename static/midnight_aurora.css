@@ -1388,13 +1388,82 @@ button[style*="background: #2997ff"],
   color: #ffffff !important;
 }
 
-/* 4. 주요 섹터 ETF 컨테이너 — 회색 글래스모피즘 */
-.st-emotion-cache-twg6at.en7m6i60 > div > div,
-.en7m6i60 > div > div {
-  background: rgba(200, 200, 210, 0.45) !important;
+/* ─── 사이드바 토글 버튼 (닫힌 후 재열기) ────────────────────────── */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarNavCollapseButton"] {
+  background: var(--canvas) !important;
+  border: 1px solid var(--hairline-md) !important;
+  border-radius: 8px !important;
+  color: var(--ink) !important;
+  box-shadow: var(--shadow-soft) !important;
+}
+[data-testid="stSidebarCollapseButton"] svg,
+[data-testid="stSidebarNavCollapseButton"] svg {
+  fill: var(--ink) !important;
+  color: var(--ink) !important;
+}
+[data-testid="stSidebarCollapseButton"] svg path,
+[data-testid="stSidebarNavCollapseButton"] svg path {
+  fill: var(--ink) !important;
+  stroke: var(--ink) !important;
+}
+[data-testid="stSidebarCollapseButton"]:hover,
+[data-testid="stSidebarNavCollapseButton"]:hover {
+  background: var(--action-dim) !important;
+  border-color: var(--action-blue) !important;
+}
+
+/* ─── 뉴스 탭 AI 요약 버튼 — 회색 배경 + 부모 높이 맞춤 ─────────── */
+[data-testid="stHorizontalBlock"]:has(.news-item-card)
+  [data-testid="stColumn"]:last-child {
+  display: flex !important;
+  flex-direction: column !important;
+}
+[data-testid="stHorizontalBlock"]:has(.news-item-card)
+  [data-testid="stColumn"]:last-child > div,
+[data-testid="stHorizontalBlock"]:has(.news-item-card)
+  [data-testid="stColumn"]:last-child .stButton {
+  flex: 1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+[data-testid="stHorizontalBlock"]:has(.news-item-card)
+  [data-testid="stColumn"]:last-child .stButton button {
+  flex: 1 !important;
+  height: 100% !important;
+  min-height: 62px !important;
+  background: #e8e8ea !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--hairline-md) !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  font-size: 0.82rem !important;
+}
+[data-testid="stHorizontalBlock"]:has(.news-item-card)
+  [data-testid="stColumn"]:last-child .stButton button:hover {
+  background: #d8d8da !important;
+}
+
+/* ─── 주요 섹터 ETF — 중첩 탭 영역에만 글래스모피즘 ─────────────── */
+[data-testid="stTabs"] [data-testid="stTabs"] {
+  background: rgba(200, 200, 210, 0.40) !important;
   backdrop-filter: blur(14px) !important;
   -webkit-backdrop-filter: blur(14px) !important;
   border: 1px solid rgba(180, 180, 192, 0.35) !important;
   border-radius: var(--radius) !important;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.07) !important;
+  padding: 8px 8px 12px !important;
+}
+
+/* ─── 버튼 내부 텍스트 — 전역 div/p/span 컬러 override 차단 ────────── */
+.stButton > button p,
+.stButton > button span,
+.stButton > button div,
+.stButton > button * {
+  color: inherit !important;
+}
+button[data-testid^="baseButton"] p,
+button[data-testid^="baseButton"] span,
+button[data-testid^="baseButton"] div {
+  color: inherit !important;
 }

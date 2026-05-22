@@ -728,25 +728,6 @@ def render_market_tab(
     with tab:
         st.subheader("🌐 시장 현황")
 
-        # ── 환율 수평 스크롤 카드 ─────────────────────────────────────
-        _rates_html = '<div class="toss-rate-row">'
-        for pair, info in rates.items():
-            _r  = info["rate"]
-            _c  = info["change"]
-            _arrow = "▲" if _c > 0 else "▼"
-            _cc    = "#ff3b30" if _c > 0 else "#0066cc"
-            _rfmt  = f"{_r:,.0f}" if _r >= 100 else f"{_r:,.2f}"
-            _rates_html += (
-                f'<div class="toss-rate-card">'
-                f'<div style="font-size:.65rem;color:#7a7a7a;margin-bottom:4px;white-space:nowrap">{pair}</div>'
-                f'<div style="font-size:1rem;font-weight:600;color:#1d1d1f;font-variant-numeric:tabular-nums;">{_rfmt}</div>'
-                f'<div style="font-size:.7rem;color:{_cc};font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;">'
-                f'{_arrow} {abs(_c):.2f}%</div>'
-                f'</div>'
-            )
-        _rates_html += '</div>'
-        st.markdown(_rates_html, unsafe_allow_html=True)
-
         with st.expander("📈 USD/KRW 환율 추이 (3개월)"):
             try:
                 fx = usdkrw_fn()
@@ -1210,7 +1191,7 @@ def render_news_tab(
                 _open_btn_col, _ai_btn_col = st.columns([4, 1])
                 with _open_btn_col:
                     st.markdown(
-                        f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
+                        f'<div class="news-item-card" style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
                         f'border-radius:10px;padding:10px 14px;margin:4px 0;">'
                         f'<a href="{link}" target="_blank" style="color:{COLORS["text"]};'
                         f'text-decoration:none;font-size:.9rem;font-weight:500;line-height:1.5;">{title}</a>'
