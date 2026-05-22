@@ -49,13 +49,13 @@ logging.basicConfig(
 logger = logging.getLogger("backtest")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 설정 (여기를 수정하세요)
+# 설정 (CLI 직접 실행 시 여기를 수정하세요)
 # ══════════════════════════════════════════════════════════════════════════════
 
-TICKERS: list[str] = [
-    "005930.KS",   # 삼성전자
-    "000660.KS",   # SK하이닉스
-]
+# 종목은 StockScreener가 자동 선정합니다 — 아래 마켓/스크리닝 파라미터만 조정하세요
+SCREEN_MARKETS    = ["KOSPI", "KOSDAQ"]   # 대상 마켓
+SCREEN_UNIVERSE_N = 200                   # 마켓별 후보 종목 수 (시가총액 상위)
+SCREEN_TOP_N      = 20                    # 최종 선정 종목 수
 
 START_DATE = "2020-01-01"
 END_DATE   = "2024-12-31"
@@ -717,10 +717,6 @@ class StockScreener:
 
 if __name__ == "__main__":
     # ── 자동 종목 선정 ─────────────────────────────────────────────────────
-    MARKETS            = ["KOSPI", "KOSDAQ"]
-    SCREEN_UNIVERSE_N  = 200    # 마켓별 후보 종목 수 (시가총액 상위)
-    SCREEN_TOP_N       = 20     # 최종 선정 종목 수
-
     print("\n[0] 종목 자동 선정 (스크리닝)")
     screener = StockScreener(universe_per_market=SCREEN_UNIVERSE_N)
 
@@ -728,7 +724,7 @@ if __name__ == "__main__":
         print(f"  [{pct:5.1f}%] {msg}")
 
     selected = screener.screen(
-        markets     = MARKETS,
+        markets     = SCREEN_MARKETS,
         top_n       = SCREEN_TOP_N,
         progress_cb = _cli_progress,
     )
