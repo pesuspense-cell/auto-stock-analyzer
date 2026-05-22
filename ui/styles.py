@@ -1,5 +1,5 @@
 """
-ui/styles.py — 다크 핀테크 테마 CSS 시스템
+ui/styles.py — Apple Finance 디자인 시스템 토큰
 
 CSS 변수는 Python 상수로도 제공되어 인라인 스타일 생성에 활용됩니다.
 실제 전역 CSS는 static/midnight_aurora.css에서 관리하고 inject_css()로 주입합니다.
@@ -11,33 +11,43 @@ import streamlit as st
 # ─── 디자인 토큰 ──────────────────────────────────────────────────────────────
 COLORS: dict[str, str] = {
     # 배경 레이어
-    "bg":        "#0E1117",
-    "surface":   "#161B22",
-    "elevated":  "#1C2128",
+    "bg":        "#f5f5f7",   # canvas-parchment
+    "surface":   "#ffffff",   # pure white
+    "elevated":  "#fafafc",   # pearl
+
     # 경계선
-    "border":    "#30363D",
-    "border_md": "#21262D",
+    "border":    "#e0e0e0",   # hairline
+    "border_md": "#d2d2d7",   # hairline medium
+
     # 텍스트
-    "text":      "#E6EDF3",
-    "text_2":    "#8B949E",
-    "text_3":    "#484F58",
+    "text":      "#1d1d1f",   # near-black ink
+    "text_2":    "#7a7a7a",   # ink muted 48
+    "text_3":    "#b0b0b0",   # ink muted lighter
+
     # 매매 신호
-    "gain":      "#26a69a",
-    "gain_dim":  "rgba(38,166,154,0.15)",
-    "gain_rgb":  "38,166,154",
-    "loss":      "#ef5350",
-    "loss_dim":  "rgba(239,83,80,0.15)",
-    "loss_rgb":  "239,83,80",
-    # 강조색
-    "accent":    "#8B5CF6",
-    "accent_dim":"rgba(139,92,246,0.15)",
-    "accent_rgb":"139,92,246",
-    "blue":      "#3B82F6",
+    "gain":      "#34c759",
+    "gain_dim":  "rgba(52,199,89,0.10)",
+    "gain_rgb":  "52,199,89",
+    "loss":      "#ff3b30",
+    "loss_dim":  "rgba(255,59,48,0.10)",
+    "loss_rgb":  "255,59,48",
+
+    # 강조색 — Action Blue
+    "accent":     "#0066cc",
+    "accent_dim": "rgba(0,102,204,0.10)",
+    "accent_rgb": "0,102,204",
+    "blue":       "#2997ff",   # sky link blue (on dark)
+
+    # 다크 서피스 (터미널 타일)
+    "dark_tile":  "#272729",   # terminal dark 1
+    "dark_tile2": "#2a2a2c",   # terminal dark 2
+    "nav_black":  "#000000",   # global nav
 }
 
-RADIUS = "12px"
+RADIUS    = "12px"
 RADIUS_LG = "16px"
-SHADOW = "0 4px 20px rgba(0,0,0,0.35)"
+SHADOW    = "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)"
+SHADOW_MD = "rgba(0,0,0,0.22) 3px 5px 30px 0"
 
 
 def inject_css() -> None:
@@ -74,8 +84,8 @@ def card_style(
     extra: str = "",
 ) -> str:
     """공통 카드 inline style 문자열 반환."""
-    _bg      = bg or COLORS["surface"]
-    _border  = f"1px solid {border_color}" if border_color else f"1px solid {COLORS['border']}"
+    _bg     = bg or COLORS["surface"]
+    _border = f"1px solid {border_color}" if border_color else f"1px solid {COLORS['border']}"
     return (
         f"background:{_bg};border:{_border};"
         f"border-radius:{RADIUS};padding:18px 20px;"

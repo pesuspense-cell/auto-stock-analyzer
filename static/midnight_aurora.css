@@ -1,44 +1,73 @@
 /* ═══════════════════════════════════════════════════════════════════
-   FINTECH DARK — AI 주식 분석 터미널 v3.0
-   BG:      #0E1117  Surface: #161B22  Elevated: #1C2128
-   Border:  #30363D  Muted:   #21262D
-   Text:    #E6EDF3  Secondary: #8B949E  Muted: #484F58
-   Gain:    #26a69a  Loss: #ef5350
-   Accent:  #8B5CF6  Blue: #3B82F6
+   APPLE FINANCE — AI 주식 분석 터미널
+   설계 철학: 데이터가 주인공, UI는 배경으로 사라진다.
+   라이트 캔버스 교번 + 터미널 다크 타일 + Action Blue 단일 강조
+
+   Canvas:     #ffffff / #f5f5f7 (parchment)
+   Dark Tile:  #272729 / #2a2a2c
+   Ink:        #1d1d1f  Muted: #7a7a7a
+   Gain:       #34c759  Loss:  #ff3b30
+   Action Blue:#0066cc  Sky:   #2997ff
+   Hairline:   #e0e0e0
 ═══════════════════════════════════════════════════════════════════ */
 
 /* ─── CSS 변수 ─────────────────────────────────────────────────── */
 :root {
-  --bg:        #0E1117;
-  --surface:   #161B22;
-  --elevated:  #1C2128;
-  --border:    #30363D;
-  --border-md: #21262D;
-  --text:      #E6EDF3;
-  --text-2:    #8B949E;
-  --text-3:    #484F58;
-  --gain:      #26a69a;
-  --gain-dim:  rgba(38,166,154,0.15);
-  --loss:      #ef5350;
-  --loss-dim:  rgba(239,83,80,0.15);
-  --accent:    #8B5CF6;
-  --accent-b:  #3B82F6;
-  --accent-dim:rgba(139,92,246,0.15);
-  --radius:    12px;
-  --radius-lg: 16px;
-  --shadow:    0 4px 20px rgba(0,0,0,0.35);
+  --canvas:         #ffffff;
+  --canvas-parchment: #f5f5f7;
+  --surface-pearl:  #fafafc;
+  --dark-tile-1:    #272729;
+  --dark-tile-2:    #2a2a2c;
+  --nav-black:      #000000;
+
+  --ink:            #1d1d1f;
+  --ink-muted:      #7a7a7a;
+  --ink-faint:      #b0b0b0;
+  --body-on-dark:   #ffffff;
+
+  --gain:           #34c759;
+  --gain-dim:       rgba(52,199,89,0.10);
+  --loss:           #ff3b30;
+  --loss-dim:       rgba(255,59,48,0.10);
+
+  --action-blue:    #0066cc;
+  --focus-blue:     #0071e3;
+  --sky-blue:       #2997ff;
+  --action-dim:     rgba(0,102,204,0.10);
+
+  --hairline:       #e0e0e0;
+  --hairline-md:    #d2d2d7;
+
+  --radius:         12px;
+  --radius-lg:      16px;
+  --radius-pill:    9999px;
+  --shadow-flat:    none;
+  --shadow-soft:    0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-immersive: rgba(0,0,0,0.22) 3px 5px 30px 0;
+}
+
+/* ─── 폰트 & 기반 ──────────────────────────────────────────────── */
+html, body, .stApp {
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ─── App 배경 ──────────────────────────────────────────────────── */
 .stApp {
-  background: var(--bg) !important;
-  color: var(--text) !important;
+  background: var(--canvas-parchment) !important;
+  color: var(--ink) !important;
 }
 
 /* 데스크탑: stHeader 숨김 */
 header[data-testid="stHeader"] { display: none !important; }
 #MainMenu, footer { visibility: hidden; }
-.block-container { padding-top: 1.5rem; }
+
+.block-container {
+  padding-top: 1.5rem;
+  max-width: 1200px;
+}
 .main .block-container {
   background: transparent !important;
 }
@@ -47,49 +76,97 @@ header[data-testid="stHeader"] { display: none !important; }
 body, .stApp, .stMarkdown, p, span, div {
   line-height: 1.6;
   word-break: keep-all;
+  color: var(--ink);
 }
 
 /* ─── Sidebar ──────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-  background: #0A0F1E !important;
-  border-right: 1px solid var(--border) !important;
+  background: var(--canvas) !important;
+  border-right: 1px solid var(--hairline) !important;
+}
+[data-testid="stSidebar"] * {
+  color: var(--ink) !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text) !important;
+  background: var(--canvas-parchment) !important;
+  border: 1px solid var(--hairline) !important;
+  color: var(--ink) !important;
   border-radius: 8px !important;
 }
 [data-testid="stSidebar"] .stSelectbox > div > div {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
+  background: var(--canvas-parchment) !important;
+  border: 1px solid var(--hairline) !important;
   border-radius: 8px !important;
+  color: var(--ink) !important;
+}
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+  color: var(--ink) !important;
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif !important;
+  letter-spacing: -0.374px;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] div {
+  color: var(--ink) !important;
+}
+[data-testid="stSidebar"] hr {
+  border-color: var(--hairline) !important;
+}
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] small {
+  color: var(--ink-muted) !important;
+}
+
+/* ─── 사이드바 버튼 (primary) ─────────────────────────────────── */
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"] {
+  background: var(--action-blue) !important;
+  border: none !important;
+  border-radius: var(--radius-pill) !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+  font-size: 0.9rem !important;
+  letter-spacing: 0 !important;
+  transition: transform 0.15s ease !important;
+  box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:active {
+  transform: scale(0.95) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:focus-visible {
+  outline: 2px solid var(--focus-blue) !important;
+  outline-offset: 2px !important;
 }
 
 /* ─── Metric containers (st.metric) ─────────────────────────────── */
 div[data-testid="metric-container"] {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
+  background: var(--canvas) !important;
+  border: 1px solid var(--hairline) !important;
   border-radius: var(--radius) !important;
-  padding: 16px 20px !important;
-  box-shadow: var(--shadow) !important;
-  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+  padding: 18px 20px !important;
+  box-shadow: var(--shadow-soft) !important;
+  transition: box-shadow 0.2s ease !important;
 }
 div[data-testid="metric-container"]:hover {
-  transform: translateY(-1px) !important;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.45) !important;
+  box-shadow: var(--shadow-immersive) !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricLabel"] {
-  font-size: 0.73rem !important;
-  color: var(--text-2) !important;
-  font-weight: 500 !important;
-  letter-spacing: 0.6px !important;
+  font-size: 0.75rem !important;
+  color: var(--ink-muted) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.12px !important;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricValue"] {
-  font-size: 1.35rem !important;
-  font-weight: 700 !important;
-  color: var(--text) !important;
+  font-size: 1.4rem !important;
+  font-weight: 600 !important;
+  color: var(--ink) !important;
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif !important;
+  letter-spacing: -0.28px;
+  font-variant-numeric: tabular-nums;
 }
 div[data-testid="metric-container"] [data-testid="stMetricDelta"] svg {
   display: none;
@@ -101,18 +178,18 @@ div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="
   color: var(--loss) !important;
 }
 
-/* ─── Tab bar (sticky fixed top) ───────────────────────────────── */
+/* ─── Tab bar ───────────────────────────────────────────────────── */
 [data-testid="stTabBar"],
 .stTabs [data-baseweb="tab-list"] {
   position: sticky !important;
   top: 0 !important;
   z-index: 200 !important;
-  background: rgba(14,17,23,0.97) !important;
-  backdrop-filter: blur(14px) !important;
-  -webkit-backdrop-filter: blur(14px) !important;
+  background: rgba(245,245,247,0.88) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
   border-radius: 0 !important;
   border: none !important;
-  border-bottom: 1px solid var(--border) !important;
+  border-bottom: 1px solid var(--hairline) !important;
   padding: 6px 4px !important;
   gap: 4px !important;
   margin-left: -1rem !important;
@@ -122,92 +199,122 @@ div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="
 }
 .stTabs [data-baseweb="tab"] {
   border-radius: 8px !important;
-  color: var(--text-2) !important;
+  color: var(--ink-muted) !important;
   font-weight: 500 !important;
   font-size: 0.85rem !important;
   padding: 7px 14px !important;
-  transition: all 0.18s ease !important;
+  transition: all 0.15s ease !important;
   white-space: nowrap !important;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
 }
 .stTabs [aria-selected="true"] {
-  background: rgba(139,92,246,0.20) !important;
-  color: var(--text) !important;
-  border-bottom: 2px solid var(--accent) !important;
-  font-weight: 700 !important;
+  background: var(--action-dim) !important;
+  color: var(--action-blue) !important;
+  border-bottom: 2px solid var(--action-blue) !important;
+  font-weight: 600 !important;
 }
 .stTabs [data-baseweb="tab"]:hover {
-  background: rgba(255,255,255,0.07) !important;
-  color: var(--text) !important;
+  background: rgba(0,0,0,0.04) !important;
+  color: var(--ink) !important;
 }
-/* 탭 패널 상단 여백 — sticky bar 아래 내용이 붙지 않도록 */
 .stTabs [data-baseweb="tab-panel"] {
   padding-top: 1.2rem !important;
 }
 
-/* ─── Primary 버튼 ─────────────────────────────────────────────── */
+/* ─── Primary 버튼 (Action Blue Pill) ─────────────────────────── */
 .stButton > button[kind="primary"],
 button[data-testid="baseButton-primary"] {
-  background: linear-gradient(135deg, var(--accent), var(--accent-b)) !important;
+  background: var(--action-blue) !important;
   border: none !important;
-  border-radius: 10px !important;
-  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
-  box-shadow: 0 2px 12px rgba(139,92,246,0.35) !important;
+  border-radius: var(--radius-pill) !important;
+  box-shadow: none !important;
   font-weight: 600 !important;
+  font-size: 0.9rem !important;
   color: #fff !important;
-  letter-spacing: 0.3px !important;
+  letter-spacing: 0 !important;
+  transition: transform 0.15s ease !important;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
 }
 .stButton > button[kind="primary"]:hover,
 button[data-testid="baseButton-primary"]:hover {
-  transform: translateY(-2px) !important;
-  box-shadow: 0 8px 24px rgba(139,92,246,0.55) !important;
-  background: linear-gradient(135deg, #7C3AED, #2563EB) !important;
+  background: #0055aa !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+.stButton > button[kind="primary"]:active {
+  transform: scale(0.95) !important;
+}
+.stButton > button[kind="primary"]:focus-visible {
+  outline: 2px solid var(--focus-blue) !important;
+  outline-offset: 2px !important;
 }
 
-/* 일반 버튼 */
+/* 일반 버튼 (Pearl Capsule) */
 .stButton > button:not([kind="primary"]) {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text-2) !important;
-  border-radius: 8px !important;
-  transition: all 0.2s ease !important;
+  background: var(--surface-pearl, #fafafc) !important;
+  border: 1px solid var(--hairline) !important;
+  color: var(--action-blue) !important;
+  border-radius: var(--radius-pill) !important;
+  font-weight: 500 !important;
+  transition: background 0.15s ease !important;
+  box-shadow: none !important;
 }
 .stButton > button:not([kind="primary"]):hover {
-  background: var(--elevated) !important;
-  border-color: var(--accent) !important;
-  color: var(--text) !important;
+  background: var(--canvas-parchment) !important;
+  border-color: var(--action-blue) !important;
+  color: var(--action-blue) !important;
+}
+.stButton > button:not([kind="primary"]):active {
+  transform: scale(0.95) !important;
 }
 
 /* ─── Dataframe ──────────────────────────────────────────────────── */
 .stDataFrame {
-  border: 1px solid var(--border) !important;
+  border: 1px solid var(--hairline) !important;
   border-radius: var(--radius) !important;
   overflow: hidden !important;
+  box-shadow: var(--shadow-soft) !important;
 }
 .stDataFrame table thead tr th {
-  background: var(--elevated) !important;
-  color: var(--text-2) !important;
+  background: var(--canvas-parchment) !important;
+  color: var(--ink-muted) !important;
   font-size: 0.78rem !important;
   font-weight: 600 !important;
-  letter-spacing: 0.5px !important;
-  border-bottom: 1px solid var(--border) !important;
+  letter-spacing: -0.374px !important;
+  border-bottom: 1px solid var(--hairline) !important;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
+}
+.stDataFrame table tbody tr {
+  background: var(--canvas) !important;
+}
+.stDataFrame table tbody tr:nth-child(even) {
+  background: var(--canvas-parchment) !important;
 }
 .stDataFrame table tbody tr:hover {
-  background: rgba(139,92,246,0.06) !important;
+  background: var(--action-dim) !important;
+}
+.stDataFrame table tbody tr td {
+  color: var(--ink) !important;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px !important;
+  line-height: 2.41 !important;
 }
 
 /* ─── Expander ────────────────────────────────────────────────── */
 .stExpander {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
+  background: var(--canvas) !important;
+  border: 1px solid var(--hairline) !important;
   border-radius: var(--radius) !important;
   margin-bottom: 8px !important;
+  box-shadow: var(--shadow-soft) !important;
 }
 .stExpander summary {
-  color: var(--text-2) !important;
+  color: var(--ink) !important;
   font-weight: 500 !important;
+  font-size: 0.9rem !important;
 }
 .stExpander summary:hover {
-  color: var(--text) !important;
+  color: var(--action-blue) !important;
 }
 
 /* ─── Success / Warning / Error / Info ─────────────────────────── */
@@ -215,133 +322,250 @@ div[data-testid="stNotification"] {
   border-radius: var(--radius) !important;
   border-width: 1px !important;
 }
+div[data-testid="stNotification"][data-type="success"] {
+  background: var(--gain-dim) !important;
+  border-color: var(--gain) !important;
+  color: var(--ink) !important;
+}
+div[data-testid="stNotification"][data-type="error"] {
+  background: var(--loss-dim) !important;
+  border-color: var(--loss) !important;
+  color: var(--ink) !important;
+}
+div[data-testid="stNotification"][data-type="warning"] {
+  background: rgba(255,149,0,0.08) !important;
+  border-color: #ff9500 !important;
+  color: var(--ink) !important;
+}
+div[data-testid="stNotification"][data-type="info"] {
+  background: var(--action-dim) !important;
+  border-color: var(--action-blue) !important;
+  color: var(--ink) !important;
+}
 
 /* ─── Divider ────────────────────────────────────────────────────── */
 hr {
-  border-color: var(--border) !important;
+  border-color: var(--hairline) !important;
   margin: 14px 0 !important;
 }
 
 /* ─── Input fields ──────────────────────────────────────────────── */
 .stTextInput input, .stSelectbox > div > div,
 .stNumberInput input, .stTextArea textarea {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text) !important;
-  border-radius: 8px !important;
-  transition: border-color 0.2s ease !important;
+  background: var(--canvas) !important;
+  border: 1px solid var(--hairline) !important;
+  color: var(--ink) !important;
+  border-radius: 10px !important;
+  transition: border-color 0.15s ease !important;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
 }
 .stTextInput input:focus, .stTextArea textarea:focus {
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 2px var(--accent-dim) !important;
+  border-color: var(--action-blue) !important;
+  box-shadow: 0 0 0 3px rgba(0,102,204,0.12) !important;
+  outline: none !important;
+}
+
+/* 검색 입력 — pill 형태 */
+.stTextInput.search-pill input {
+  border-radius: var(--radius-pill) !important;
+  height: 44px !important;
+}
+
+/* ─── Selectbox ─────────────────────────────────────────────────── */
+.stSelectbox > div > div {
+  color: var(--ink) !important;
+}
+.stSelectbox [data-baseweb="select"] span {
+  color: var(--ink) !important;
 }
 
 /* ─── Radio ────────────────────────────────────────────────────── */
 .stRadio [data-testid="stWidgetLabel"] {
-  color: var(--text-2) !important;
+  color: var(--ink-muted) !important;
 }
 
 /* ─── Caption / small text ───────────────────────────────────────── */
 .stCaption, small, .caption {
-  color: var(--text-2) !important;
+  color: var(--ink-muted) !important;
   font-size: 0.78rem !important;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
+}
+
+/* ─── Section titles ─────────────────────────────────────────────── */
+h1, h2, h3, h4,
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif !important;
+  color: var(--ink) !important;
+  letter-spacing: -0.374px;
+  font-weight: 600;
+}
+
+/* ─── Subheader ─────────────────────────────────────────────────── */
+[data-testid="stHeadingWithActionElements"] h2,
+[data-testid="stHeadingWithActionElements"] h3 {
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif !important;
+  color: var(--ink) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.374px !important;
+}
+
+/* ─── st.info / st.success / st.warning / st.error 텍스트 ─── */
+div[data-testid="stNotification"] p,
+div[data-testid="stNotification"] span {
+  color: var(--ink) !important;
+}
+
+/* ─── Progress bar ─────────────────────────────────────────────── */
+div[data-testid="stProgress"] > div {
+  background: var(--hairline) !important;
+  border-radius: 4px !important;
+}
+div[data-testid="stProgress"] > div > div {
+  background: var(--action-blue) !important;
+  border-radius: 4px !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    커스텀 컴포넌트 클래스
 ═══════════════════════════════════════════════════════════════════ */
 
-/* ─── 공용 카드 ──────────────────────────────────────────────────── */
+/* ─── Full-bleed 타일 (라이트) ──────────────────────────────────── */
+.tile-light {
+  background: var(--canvas);
+  padding: 48px 32px;
+  margin: 0 -1rem;
+}
+.tile-parchment {
+  background: var(--canvas-parchment);
+  padding: 48px 32px;
+  margin: 0 -1rem;
+}
+/* ─── Full-bleed 타일 (다크 터미널) ────────────────────────────── */
+.tile-dark {
+  background: var(--dark-tile-1);
+  padding: 48px 32px;
+  margin: 0 -1rem;
+  color: var(--body-on-dark);
+}
+.tile-dark * {
+  color: var(--body-on-dark);
+}
+.tile-dark a,
+.tile-dark .link {
+  color: var(--sky-blue) !important;
+}
+
+/* ─── 공용 카드 (financial-metric-card) ─────────────────────────── */
 .card {
-  background: var(--surface);
+  background: var(--canvas);
   border-radius: var(--radius);
   padding: 20px;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-soft);
   margin-bottom: 12px;
 }
 .card-sm {
-  background: var(--surface);
+  background: var(--canvas);
   border-radius: var(--radius);
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-soft);
   margin-bottom: 8px;
 }
 .card-elevated {
-  background: var(--elevated);
+  background: var(--surface-pearl, #fafafc);
   border-radius: var(--radius);
   padding: 20px;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-soft);
 }
 
 /* ─── 카드 헤더 ─────────────────────────────────────────────────── */
 .card-label {
-  font-size: 0.7rem;
-  color: var(--text-2);
-  font-weight: 500;
-  letter-spacing: 0.8px;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  font-weight: 600;
+  letter-spacing: -0.12px;
   text-transform: uppercase;
   margin-bottom: 8px;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 .card-title {
   font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text);
+  font-weight: 600;
+  color: var(--ink);
   margin-bottom: 4px;
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif;
+  letter-spacing: -0.374px;
 }
 
-/* ─── 핵심 지표 (2rem 강조) ─────────────────────────────────────── */
+/* ─── 핵심 지표 ─────────────────────────────────────────────────── */
 .key-metric {
   font-size: 2rem;
-  font-weight: 800;
-  color: var(--text);
-  line-height: 1.1;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.07;
+  letter-spacing: -0.28px;
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 .key-metric-sm {
   font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.2;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.14;
+  letter-spacing: -0.28px;
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+/* 다크 타일 위 큰 숫자 */
+.key-metric-dark {
+  font-size: 2rem;
+  font-weight: 600;
+  color: var(--body-on-dark);
+  line-height: 1.07;
+  letter-spacing: -0.28px;
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ─── 손익 색상 ─────────────────────────────────────────────────── */
-.gain { color: var(--gain) !important; font-weight: 700; }
-.loss { color: var(--loss) !important; font-weight: 700; }
-.neutral { color: var(--text-2) !important; }
+.gain { color: var(--gain) !important; font-weight: 600; }
+.loss { color: var(--loss) !important; font-weight: 600; }
+.neutral { color: var(--ink-muted) !important; }
 
 /* ─── 배지 ────────────────────────────────────────────────────── */
 .badge {
   display: inline-block;
-  border-radius: 20px;
+  border-radius: var(--radius-pill);
   padding: 2px 10px;
   font-size: 0.72rem;
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: -0.12px;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 .badge-gain {
   background: var(--gain-dim);
   color: var(--gain);
-  border: 1px solid rgba(38,166,154,0.3);
+  border: 1px solid rgba(52,199,89,0.25);
 }
 .badge-loss {
   background: var(--loss-dim);
   color: var(--loss);
-  border: 1px solid rgba(239,83,80,0.3);
+  border: 1px solid rgba(255,59,48,0.25);
 }
 .badge-accent {
-  background: var(--accent-dim);
-  color: var(--accent);
-  border: 1px solid rgba(139,92,246,0.3);
+  background: var(--action-dim);
+  color: var(--action-blue);
+  border: 1px solid rgba(0,102,204,0.2);
 }
 .badge-neutral {
-  background: rgba(139,148,158,0.12);
-  color: var(--text-2);
-  border: 1px solid rgba(139,148,158,0.2);
+  background: rgba(0,0,0,0.04);
+  color: var(--ink-muted);
+  border: 1px solid var(--hairline);
 }
 
-/* ─── 아이콘 + 텍스트 flex 행 ──────────────────────────────────── */
+/* ─── Flex 유틸 ──────────────────────────────────────────────────── */
 .flex-row {
   display: flex;
   align-items: center;
@@ -355,9 +579,9 @@ hr {
 
 /* ─── 진행바 ─────────────────────────────────────────────────────── */
 .progress-track {
-  background: var(--border-md);
+  background: var(--hairline);
   border-radius: 4px;
-  height: 6px;
+  height: 4px;
   overflow: hidden;
   margin-top: 6px;
 }
@@ -374,28 +598,27 @@ hr {
   transition: width 0.4s ease;
 }
 .progress-fill-accent {
-  background: linear-gradient(90deg, var(--accent), var(--accent-b));
+  background: var(--action-blue);
   height: 100%;
   border-radius: 4px;
   transition: width 0.4s ease;
 }
 
 /* ─── 헤더 요약 카드 ─────────────────────────────────────────────── */
-/* 컬럼 내부 stVerticalBlock 계층을 늘려서 카드가 컬럼 전체 높이를 채우게 함 */
 [data-testid="stColumns"]:has(.ma-header-card) [data-testid="stColumn"] > div,
 [data-testid="stColumns"]:has(.ma-header-card) [data-testid="stColumn"] > div > div,
 [data-testid="stColumns"]:has(.ma-header-card) [data-testid="stColumn"] > div > div > div {
   height: 100%;
 }
 .ma-header-card {
-  background: var(--surface);
+  background: var(--canvas);
   border-radius: var(--radius-lg);
-  padding: 20px 22px;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
+  padding: 22px 24px;
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-soft);
   position: relative;
   overflow: hidden;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: box-shadow 0.2s ease;
   box-sizing: border-box;
   height: 100%;
   display: flex;
@@ -403,83 +626,181 @@ hr {
   justify-content: space-between;
 }
 .ma-header-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+  box-shadow: var(--shadow-immersive);
 }
 
 /* ─── 종목 배지 ─────────────────────────────────────────────────── */
 .ma-stock-badge {
-  background: linear-gradient(135deg, rgba(139,92,246,0.12), rgba(59,130,246,0.10));
-  border: 1px solid rgba(139,92,246,0.3);
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  padding: 14px 20px;
+  padding: 16px 20px;
   margin-bottom: 14px;
+  box-shadow: var(--shadow-soft);
 }
 
-/* ─── 지표 카드 (4분할) ─────────────────────────────────────────── */
+/* ─── 지표 카드 ─────────────────────────────────────────────────── */
 .ma-metric-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  padding: 14px 16px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-soft);
   height: 100%;
   min-height: 80px;
-  transition: border-color 0.2s ease;
+  transition: box-shadow 0.2s ease;
+  font-variant-numeric: tabular-nums;
 }
 .ma-metric-card:hover {
-  border-color: rgba(139,92,246,0.4);
+  box-shadow: var(--shadow-immersive);
 }
 
 /* ─── 신호 박스 ─────────────────────────────────────────────────── */
 .signal-box {
-  padding: 14px 12px;
+  padding: 16px 14px;
   border-radius: var(--radius);
   text-align: center;
   margin-bottom: 12px;
   word-break: keep-all;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
+  background: var(--canvas);
+  box-shadow: var(--shadow-soft);
 }
 
 /* ─── 관심종목 리스트 아이템 ─────────────────────────────────────── */
 .wl-item {
-  background: var(--surface);
+  background: var(--canvas);
   border-radius: 8px;
   padding: 8px 12px;
   margin: 4px 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
 }
 
-/* ─── 그라디언트 텍스트 ─────────────────────────────────────────── */
+/* ─── 섹션 구분 ─────────────────────────────────────────────────── */
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 0 12px;
+}
+.section-heading-bar {
+  width: 3px;
+  height: 18px;
+  background: var(--action-blue);
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.section-heading-text {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-family: "SF Pro Display", system-ui, -apple-system, sans-serif;
+  letter-spacing: -0.374px;
+}
+
+/* ─── 인포 칩 ──────────────────────────────────────────────────── */
+.info-chip {
+  display: inline-block;
+  background: rgba(0,0,0,0.04);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 0.76rem;
+  color: var(--ink-muted);
+  margin: 2px 3px;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+}
+
+/* ─── 레거시 gradient-text → action blue ──────────────────────── */
 .gradient-text {
-  background: linear-gradient(135deg, var(--accent), var(--accent-b));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--ink);
   font-weight: 700;
   display: inline-block;
 }
 
 /* ─── 레거시 호환 ────────────────────────────────────────────────── */
 .st-card {
-  background: var(--surface);
+  background: var(--canvas);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-soft);
   padding: 20px 24px;
 }
 .glass-morphism {
-  background: rgba(22,27,34,0.8);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
+  background: rgba(245,245,247,0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
 }
-.ma-gain { color: var(--gain) !important; font-weight: 700; }
-.ma-loss { color: var(--loss) !important; font-weight: 700; }
+.ma-gain { color: var(--gain) !important; font-weight: 600; }
+.ma-loss { color: var(--loss) !important; font-weight: 600; }
+
+/* ─── 토스 스타일 리스트 ─────────────────────────────────────────── */
+.toss-list {
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 4px;
+  box-shadow: var(--shadow-soft);
+}
+.toss-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+  transition: background 0.1s;
+}
+.toss-item:last-child { border-bottom: none; }
+.toss-item:hover { background: rgba(0,0,0,0.02); }
+.toss-item-name {
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+}
+.toss-item-sub {
+  font-size: .7rem;
+  color: var(--ink-muted);
+  margin-top: 2px;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+}
+.toss-item-price {
+  font-size: .92rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+}
+
+/* ─── 환율 수평 스크롤 카드 ──────────────────────────────────────── */
+.toss-rate-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 0 10px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.toss-rate-row::-webkit-scrollbar { display: none; }
+.toss-rate-card {
+  flex: 0 0 130px;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-soft);
+}
 
 /* ─── 로딩 애니메이션 ───────────────────────────────────────────── */
 @keyframes loading-sweep {
@@ -492,19 +813,19 @@ hr {
   50%       { opacity: 0.45; }
 }
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 .loading-bar-track {
-  background: var(--border-md);
+  background: var(--hairline);
   border-radius: 8px;
-  height: 4px;
+  height: 3px;
   overflow: hidden;
   margin-top: 16px;
 }
 .loading-bar-fill {
-  background: linear-gradient(90deg, var(--accent), var(--accent-b), var(--gain));
+  background: var(--action-blue);
   height: 100%;
   width: 100%;
   animation: loading-sweep 1.8s ease-in-out infinite;
@@ -517,13 +838,13 @@ hr {
 /* ─── 감성 게이지 ───────────────────────────────────────────────── */
 .gauge-track {
   position: relative;
-  background: var(--elevated);
+  background: var(--hairline);
   border-radius: 4px;
-  height: 8px;
+  height: 6px;
   margin-top: 8px;
 }
 .gauge-fill {
-  height: 8px;
+  height: 6px;
   border-radius: 4px;
   transition: width 0.4s ease;
 }
@@ -533,13 +854,13 @@ hr {
   top: 0;
   width: 1px;
   height: 100%;
-  background: rgba(255,255,255,0.25);
+  background: var(--hairline-md);
 }
 
 /* ─── 이벤트 배너 ───────────────────────────────────────────────── */
 .event-banner {
-  background: rgba(106,27,154,0.15);
-  border: 1px solid rgba(206,147,216,0.35);
+  background: var(--action-dim);
+  border: 1px solid rgba(0,102,204,0.2);
   border-radius: var(--radius);
   padding: 10px 16px;
   margin-bottom: 12px;
@@ -548,130 +869,101 @@ hr {
 /* ─── 섹터 칩 ──────────────────────────────────────────────────── */
 .sector-chip {
   display: inline-block;
-  background: rgba(38,166,154,0.12);
-  color: var(--gain);
-  border: 1px solid rgba(38,166,154,0.3);
-  border-radius: 20px;
+  background: var(--gain-dim);
+  color: #1a7a35;
+  border: 1px solid rgba(52,199,89,0.25);
+  border-radius: var(--radius-pill);
   padding: 3px 12px;
   font-size: 0.78rem;
   font-weight: 600;
   margin: 2px 4px;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 
 /* ─── 키워드 태그 ───────────────────────────────────────────────── */
 .kw-tag {
   display: inline-block;
-  border-radius: 14px;
+  border-radius: var(--radius-pill);
   padding: 3px 12px;
   margin: 2px 4px;
   font-size: 0.82rem;
   font-weight: 600;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 
 /* ─── 뉴스 기사 아이템 ──────────────────────────────────────────── */
 .news-item {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border-md);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
   line-height: 1.6;
+  color: var(--ink);
 }
 .news-item:last-child {
   border-bottom: none;
 }
+.news-item a {
+  color: var(--action-blue) !important;
+  text-decoration: none;
+}
+.news-item a:hover {
+  text-decoration: underline;
+}
 
 /* ─── 거장 판정 카드 ─────────────────────────────────────────────── */
 .master-card {
-  background: var(--bg);
+  background: var(--canvas);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 16px;
   min-height: 130px;
-  border: 1px solid var(--border);
-  transition: transform 0.2s ease;
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-soft);
+  transition: box-shadow 0.2s ease;
 }
 .master-card:hover {
-  transform: translateY(-1px);
+  box-shadow: var(--shadow-immersive);
 }
 
 /* ─── 테이블 수급 배지 ──────────────────────────────────────────── */
 .inv-badge {
-  background: var(--surface);
+  background: var(--canvas);
   border-radius: var(--radius);
   padding: 14px;
   text-align: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-soft);
 }
 
-/* ─── Toss 스타일 종목 리스트 ────────────────────────────────────── */
-.toss-list {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  margin-bottom: 4px;
-}
-.toss-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--border-md);
-  transition: background 0.12s;
-}
-.toss-item:last-child { border-bottom: none; }
-.toss-item:hover { background: rgba(255,255,255,0.03); }
-.toss-item-name {
-  font-size: .9rem;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 170px;
-}
-.toss-item-sub { font-size: .68rem; color: var(--text-2); margin-top: 2px; }
-.toss-item-price { font-size: .92rem; font-weight: 700; color: var(--text); }
-
-/* ─── Toss 환율 수평 스크롤 카드 ─────────────────────────────────── */
-.toss-rate-row {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding: 2px 0 10px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.toss-rate-row::-webkit-scrollbar { display: none; }
-.toss-rate-card {
-  flex: 0 0 120px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+/* ─── 미연동 항목 배너 ──────────────────────────────────────────── */
+.inactive-item {
+  background: rgba(255,149,0,0.06);
+  border: 1px solid rgba(255,149,0,0.2);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 3px 0;
+  font-size: .75rem;
 }
 
 /* ─── Mobile ──────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  /* 사이드바 토글 버튼: 모바일에서 stHeader 복원 */
   header[data-testid="stHeader"] {
     display: flex !important;
     align-items: center;
     height: 48px !important;
     min-height: 48px !important;
-    background: rgba(14,17,23,0.97) !important;
-    backdrop-filter: blur(14px) !important;
-    border-bottom: 1px solid var(--border) !important;
+    background: rgba(255,255,255,0.95) !important;
+    backdrop-filter: blur(20px) !important;
+    border-bottom: 1px solid var(--hairline) !important;
     position: sticky !important;
     top: 0 !important;
     z-index: 1000 !important;
     padding: 0 8px !important;
   }
-  /* 탭바: 헤더 아래 sticky */
   [data-testid="stTabBar"],
   .stTabs [data-baseweb="tab-list"] {
     top: 48px !important;
   }
   .block-container { padding-top: 3rem !important; }
 
-  /* 일반 metric 컬럼 스택 */
   div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
     flex-direction: column-reverse !important;
   }
@@ -680,7 +972,18 @@ hr {
     flex: 0 0 100% !important;
     max-width: 100% !important;
   }
-  .ma-header-card { padding: 14px 16px; }
-  .key-metric { font-size: 1.5rem; }
+  .ma-header-card { padding: 16px 18px; }
+  .key-metric {
+    font-size: 1.6rem !important;
+    letter-spacing: -0.28px;
+  }
   .toss-item-name { max-width: 140px; }
+}
+
+/* ─── Desktop ≥ 1069px ────────────────────────────────────────── */
+@media (min-width: 1069px) {
+  .block-container {
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
 }

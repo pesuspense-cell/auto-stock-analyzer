@@ -5,7 +5,7 @@ ui/components.py — 재사용 가능한 HTML 컴포넌트 빌더
 st.markdown(..., unsafe_allow_html=True) 로 렌더링하세요.
 """
 from __future__ import annotations
-from ui.styles import COLORS, RADIUS, SHADOW
+from ui.styles import COLORS, RADIUS, RADIUS_LG, SHADOW
 
 # ─── SVG 아이콘 ───────────────────────────────────────────────────────────────
 SVG_WALLET = (
@@ -29,6 +29,10 @@ SVG_TREND = (
     '<polyline points="16 7 22 7 22 13"/></svg>'
 )
 
+_C = COLORS
+_FONT_DISPLAY = '"SF Pro Display",system-ui,-apple-system,sans-serif'
+_FONT_TEXT    = '"SF Pro Text",system-ui,-apple-system,sans-serif'
+
 
 # ─── 로딩 카드 ────────────────────────────────────────────────────────────────
 def loading_card_html(
@@ -40,26 +44,29 @@ def loading_card_html(
 ) -> str:
     """분석 진행 상태를 보여주는 로딩 카드 HTML을 반환합니다."""
     if done:
-        border   = f"1px solid {COLORS['gain']}55"
-        glow     = f"rgba({COLORS['gain_rgb']},0.15)"
-        fill_bar = f'<div style="background:{COLORS["gain"]};width:100%;height:4px;border-radius:4px;"></div>'
+        border   = f"1px solid {_C['gain']}55"
+        fill_bar = (
+            f'<div style="background:{_C["gain"]};width:100%;height:3px;border-radius:4px;"></div>'
+        )
         spin_cls = ""
     else:
-        border   = f"1px solid {COLORS['border']}"
-        glow     = "rgba(0,0,0,0.4)"
+        border   = f"1px solid {_C['border']}"
         fill_bar = '<div class="loading-bar-fill"></div>'
         spin_cls = 'class="loading-icon" '
 
     return f"""
-<div style="background:{COLORS['surface']};border:{border};border-radius:{RADIUS};
-            padding:28px 28px;text-align:center;margin:8px 0 16px;
-            box-shadow:0 4px 24px {glow};">
-  <div {spin_cls}style="font-size:36px;margin-bottom:12px;">{icon}</div>
-  <div style="font-size:1.05rem;font-weight:700;color:{COLORS['text']};margin-bottom:8px;">{title}</div>
-  <div style="color:{COLORS['text_2']};font-size:0.88rem;line-height:1.7;">{body}</div>
+<div style="background:{_C['surface']};border:{border};border-radius:{RADIUS};
+            padding:32px 28px;text-align:center;margin:8px 0 16px;
+            box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+  <div {spin_cls}style="font-size:36px;margin-bottom:14px;">{icon}</div>
+  <div style="font-size:1.05rem;font-weight:600;color:{_C['text']};margin-bottom:8px;
+              font-family:{_FONT_DISPLAY};letter-spacing:-0.374px;">{title}</div>
+  <div style="color:{_C['text_2']};font-size:0.875rem;line-height:1.7;
+              font-family:{_FONT_TEXT};">{body}</div>
   <div class="loading-bar-track">{fill_bar}</div>
-  <div style="color:{COLORS['text_2']};margin:10px 0 0;font-size:0.78rem;">
-    ⏱ <b style="color:{COLORS['text']};">{elapsed}s</b> 경과
+  <div style="color:{_C['text_2']};margin:10px 0 0;font-size:0.78rem;
+              font-family:{_FONT_TEXT};">
+    ⏱ <b style="color:{_C['text']};">{elapsed}s</b> 경과
   </div>
 </div>"""
 
@@ -68,15 +75,20 @@ def loading_card_html(
 def rate_card_html(pair: str, rate: float, change: float) -> str:
     """환율 단일 행 카드 HTML."""
     arrow = "▲" if change > 0 else "▼"
-    color = COLORS["gain"] if change > 0 else COLORS["loss"]
+    color = _C["gain"] if change > 0 else _C["loss"]
     return f"""
-<div style="background:{COLORS['surface']};border:1px solid {COLORS['border']};border-radius:10px;
-            padding:12px 16px;margin:6px 0;display:flex;justify-content:space-between;align-items:center;">
+<div style="background:{_C['surface']};border:1px solid {_C['border']};border-radius:10px;
+            padding:12px 16px;margin:6px 0;display:flex;justify-content:space-between;
+            align-items:center;box-shadow:0 1px 2px rgba(0,0,0,0.06);">
   <div>
-    <div style="font-size:0.72rem;color:{COLORS['text_2']};margin-bottom:3px;">{pair}</div>
-    <div style="font-size:1.3rem;font-weight:700;color:{COLORS['text']};">{rate:,.2f}</div>
+    <div style="font-size:0.72rem;color:{_C['text_2']};margin-bottom:3px;
+                font-family:{_FONT_TEXT};">{pair}</div>
+    <div style="font-size:1.3rem;font-weight:600;color:{_C['text']};
+                font-family:{_FONT_DISPLAY};letter-spacing:-0.28px;
+                font-variant-numeric:tabular-nums;">{rate:,.2f}</div>
   </div>
-  <div style="font-size:0.9rem;font-weight:700;color:{color};">{arrow} {abs(change):.3f}%</div>
+  <div style="font-size:0.9rem;font-weight:600;color:{color};
+              font-variant-numeric:tabular-nums;">{arrow} {abs(change):.3f}%</div>
 </div>"""
 
 
@@ -92,25 +104,25 @@ def header_metric_card_html(
 ) -> str:
     """포트폴리오 요약 헤더 카드 HTML."""
     return f"""
-<div class="ma-header-card" style="border:1px solid rgba({border_rgb},.25)">
-  <div style="position:absolute;top:-15px;right:-15px;width:70px;height:70px;
-              background:radial-gradient(circle,rgba({glow_rgb},.12) 0%,transparent 70%);border-radius:50%"></div>
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-    <span style="font-size:.68rem;color:{COLORS['text_2']};font-weight:500;
-                 letter-spacing:.8px;text-transform:uppercase">{label}</span>
+<div class="ma-header-card" style="border:1px solid rgba({border_rgb},.18)">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+    <span style="font-size:.72rem;color:{_C['text_2']};font-weight:600;
+                 letter-spacing:-0.12px;font-family:{_FONT_TEXT};">{label}</span>
     <span style="color:{icon_color}">{svg_icon}</span>
   </div>
   <div class="key-metric">{value}</div>
-  <div style="font-size:.72rem;color:{icon_color};font-weight:600;margin-top:10px">{subtitle}</div>
+  <div style="font-size:.75rem;color:{icon_color};font-weight:600;margin-top:10px;
+              font-family:{_FONT_TEXT};">{subtitle}</div>
 </div>"""
 
 
 def placeholder_card_html() -> str:
     """데이터 없을 때 표시하는 빈 헤더 카드."""
     return (
-        f'<div class="ma-header-card" style="border:1px solid {COLORS["border"]};text-align:center;">'
-        f'<div style="font-size:1.6rem;font-weight:700;color:{COLORS["border_md"]};margin-bottom:8px;">—</div>'
-        f'<div style="font-size:.72rem;color:{COLORS["text_3"]};">💼 포트폴리오 탭 접속 후 갱신</div></div>'
+        f'<div class="ma-header-card" style="border:1px solid {_C["border"]};text-align:center;">'
+        f'<div style="font-size:1.6rem;font-weight:600;color:{_C["border_md"]};margin-bottom:8px;">—</div>'
+        f'<div style="font-size:.72rem;color:{_C["text_3"]};font-family:{_FONT_TEXT};">'
+        f'포트폴리오 탭 접속 후 갱신</div></div>'
     )
 
 
@@ -118,10 +130,11 @@ def placeholder_card_html() -> str:
 def watchlist_item_html(name: str, change_pct: float) -> str:
     """관심종목 이름 + 등락률 인라인 HTML."""
     arrow = "▲" if change_pct >= 0 else "▼"
-    color = COLORS["gain"] if change_pct >= 0 else COLORS["loss"]
+    color = _C["gain"] if change_pct >= 0 else _C["loss"]
     return (
         f"**{name}**<br>"
-        f"<span style='color:{color};font-size:0.85rem;font-weight:600;'>"
+        f"<span style='color:{color};font-size:0.85rem;font-weight:600;"
+        f"font-variant-numeric:tabular-nums;'>"
         f"{arrow} {change_pct:+.2f}%</span>"
     )
 
@@ -130,14 +143,18 @@ def watchlist_item_html(name: str, change_pct: float) -> str:
 def sentiment_badge_html(senti: str, score: float) -> str:
     """뉴스 감성 컬러 배지 HTML."""
     if senti == "긍정":
-        fg, bg = "#a5d6a7", "#1b5e20"
+        fg, bg = "#1a7a35", "rgba(52,199,89,0.12)"
+        border = "rgba(52,199,89,0.3)"
     elif senti == "부정":
-        fg, bg = "#ef9a9a", "#b71c1c"
+        fg, bg = "#cc2200", "rgba(255,59,48,0.10)"
+        border = "rgba(255,59,48,0.3)"
     else:
-        fg, bg = "#bdbdbd", "#212121"
+        fg, bg = _C["text_2"], "rgba(0,0,0,0.04)"
+        border = _C["border"]
     return (
-        f'<span style="background:{bg};color:{fg};border-radius:6px;'
-        f'padding:4px 14px;font-size:0.9rem;font-weight:bold;">'
+        f'<span style="background:{bg};color:{fg};border:1px solid {border};'
+        f'border-radius:9999px;padding:4px 14px;font-size:0.9rem;font-weight:600;'
+        f'font-family:{_FONT_TEXT};">'
         f'{senti} &nbsp; {score:+.2f}</span>'
     )
 
@@ -145,17 +162,18 @@ def sentiment_badge_html(senti: str, score: float) -> str:
 # ─── 거래정지 경고 배너 ───────────────────────────────────────────────────────
 def halted_banner_html(reason: str, recent_vol: int, avg_vol: int, ratio: float) -> str:
     """거래정지 / 주의 종목 경고 카드 HTML."""
-    c_loss = COLORS["loss"]
+    c_loss = _C["loss"]
     return (
-        f'<div style="background:rgba(239,83,80,0.08);border:1px solid {c_loss};border-radius:{RADIUS};'
-        f'padding:14px 20px;margin-bottom:16px;">'
-        f'<div style="font-size:1rem;font-weight:700;color:{c_loss};margin-bottom:8px;">⛔ 거래 정지 / 주의</div>'
-        f'<div style="color:{COLORS["text"]};font-size:0.88rem;line-height:1.6;margin-bottom:6px;">{reason}</div>'
-        f'<div style="color:{COLORS["text_2"]};font-size:0.78rem;">'
+        f'<div style="background:rgba(255,59,48,0.06);border:1px solid rgba(255,59,48,0.3);'
+        f'border-radius:{RADIUS};padding:16px 20px;margin-bottom:16px;">'
+        f'<div style="font-size:1rem;font-weight:600;color:{c_loss};margin-bottom:8px;'
+        f'font-family:{_FONT_DISPLAY};letter-spacing:-0.374px;">거래 정지 / 주의</div>'
+        f'<div style="color:{_C["text"]};font-size:0.875rem;line-height:1.6;margin-bottom:6px;">{reason}</div>'
+        f'<div style="color:{_C["text_2"]};font-size:0.78rem;">'
         f'최근 거래량: {recent_vol:,} &nbsp;·&nbsp; '
         f'20일 평균: {int(avg_vol):,} &nbsp;·&nbsp; '
         f'비율: {ratio * 100:.1f}%</div>'
-        f'<div style="color:{COLORS["text_2"]};font-size:0.75rem;margin-top:4px;">'
+        f'<div style="color:{_C["text_2"]};font-size:0.75rem;margin-top:4px;">'
         f'기술적 분석 점수 합산이 중단되었습니다. 거래 재개 후 분석을 다시 실행하세요.</div>'
         f'</div>'
     )
@@ -178,90 +196,97 @@ def signal_report_html(
     is_krw: bool,
 ) -> str:
     """AI 종합 리포트 전체 너비 배너 HTML."""
-    # 신호별 색상
     if signal == "BUY":
-        border = "#22c55e"
-        fc     = "#4ade80"
-        glow   = "rgba(34,197,94,0.15)"
+        border = _C["gain"]
+        fc     = _C["gain"]
+        bg_tint = "rgba(52,199,89,0.06)"
     elif signal == "SELL":
-        border = "#ef4444"
-        fc     = "#f87171"
-        glow   = "rgba(239,68,68,0.15)"
+        border = _C["loss"]
+        fc     = _C["loss"]
+        bg_tint = "rgba(255,59,48,0.06)"
     else:
-        border = "#eab308"
-        fc     = "#facc15"
-        glow   = "rgba(234,179,8,0.12)"
+        border = "#ff9500"
+        fc     = "#e07000"
+        bg_tint = "rgba(255,149,0,0.06)"
 
-    emoji   = "🟢" if signal == "BUY" else ("🔴" if signal == "SELL" else "🟡")
-    tech_c  = "#10B981" if h_score >= 0 else "#ef4444"
-    news_c  = "#10B981" if news_score >= 0 else "#ef4444"
-    fund_c  = "#80cbc4" if fund_score >= 3 else ("#ffcc80" if fund_score <= -2 else "#94A3B8")
+    emoji   = "●" if signal == "BUY" else ("●" if signal == "SELL" else "●")
+    dot_c   = _C["gain"] if signal == "BUY" else (_C["loss"] if signal == "SELL" else "#ff9500")
+    tech_c  = _C["gain"] if h_score >= 0 else _C["loss"]
+    news_c  = _C["gain"] if news_score >= 0 else _C["loss"]
+    fund_c  = _C["gain"] if fund_score >= 3 else (_C["loss"] if fund_score <= -2 else _C["text_2"])
 
     fmt     = "{:,.0f}" if is_krw else "{:,.2f}"
     cur_str = (("₩" if is_krw else "$") + fmt.format(cur_price)) if cur_price > 0 else "—"
 
     reasons_html = "".join(
-        f'<span style="display:inline-block;background:rgba(255,255,255,0.06);'
-        f'border-radius:20px;padding:3px 12px;margin:3px 4px;font-size:0.78rem;color:#CBD5E1;">'
-        f'{emoji} {r}</span>'
+        f'<span style="display:inline-block;background:rgba(0,0,0,0.04);'
+        f'border:1px solid {_C["border"]};border-radius:9999px;'
+        f'padding:3px 12px;margin:3px 4px;font-size:0.78rem;color:{_C["text_2"]};">'
+        f'{r}</span>'
         for r in reasons[:3]
     )
 
-    _bg     = COLORS["surface"]
-    _border = COLORS["border"]
-    _text2  = COLORS["text_2"]
-    _text3  = COLORS["text_3"]
-    _txt    = COLORS["text"]
-    _bg_main = COLORS["bg"]
+    _bg     = _C["surface"]
+    _border = _C["border"]
+    _text2  = _C["text_2"]
+    _text3  = _C["text_3"]
+    _txt    = _C["text"]
+    _parchment = _C["bg"]
+
+    def _mini_card(top_label: str, val: str, sub: str, val_color: str) -> str:
+        return (
+            f'<div style="background:{_parchment};border:1px solid {_border};'
+            f'border-radius:{RADIUS};padding:10px 12px;text-align:center;">'
+            f'<div style="font-size:0.65rem;color:{_text3};letter-spacing:0;'
+            f'font-family:{_FONT_TEXT};margin-bottom:4px;">{top_label}</div>'
+            f'<div style="font-size:0.9rem;font-weight:600;color:{val_color};'
+            f'font-variant-numeric:tabular-nums;font-family:{_FONT_DISPLAY};">{val}</div>'
+            f'<div style="font-size:0.72rem;color:{val_color};opacity:.8;margin-top:2px;'
+            f'font-family:{_FONT_TEXT};">{sub}</div>'
+            f'</div>'
+        )
 
     return f"""
-<div style="background:{_bg};border:1px solid {border}66;border-radius:{RADIUS};
-            padding:22px 24px;margin-bottom:16px;
-            box-shadow:0 0 32px {glow},0 4px 20px rgba(0,0,0,0.35);">
+<div style="background:{_bg};border:1px solid rgba({_border_to_rgb(border)},.3);
+            border-radius:{RADIUS};padding:24px 24px;margin-bottom:16px;
+            box-shadow:0 1px 3px rgba(0,0,0,0.08);border-top:3px solid {border};">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
     <div style="flex:1;min-width:240px;">
-      <div style="font-size:0.65rem;color:{_text2};letter-spacing:3px;text-transform:uppercase;
-                  margin-bottom:10px;display:flex;align-items:center;gap:6px;">
-        <span style="width:4px;height:4px;border-radius:50%;background:{border};display:inline-block;"></span>
+      <div style="font-size:0.65rem;color:{_text2};letter-spacing:0;
+                  font-family:{_FONT_TEXT};margin-bottom:10px;
+                  display:flex;align-items:center;gap:6px;">
+        <span style="width:6px;height:6px;border-radius:50%;background:{dot_c};
+                     display:inline-block;flex-shrink:0;"></span>
         AI 종합 리포트
       </div>
-      <div style="font-size:2.4rem;font-weight:900;color:{fc};letter-spacing:2px;line-height:1.05;margin-bottom:10px;">
-        {emoji} {signal}
+      <div style="font-size:2rem;font-weight:600;color:{fc};letter-spacing:-0.28px;
+                  line-height:1.07;margin-bottom:10px;
+                  font-family:{_FONT_DISPLAY};font-variant-numeric:tabular-nums;">
+        {signal}
       </div>
-      <div style="font-size:0.88rem;color:{_txt};line-height:1.7;margin-bottom:10px;">{action}</div>
+      <div style="font-size:0.875rem;color:{_txt};line-height:1.7;margin-bottom:10px;
+                  font-family:{_FONT_TEXT};">{action}</div>
       <div>{reasons_html}</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;min-width:270px;">
-      <div style="background:{_bg_main};border:1px solid {_border};border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.62rem;color:{_text3};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">단타 신호</div>
-        <div style="font-size:0.9rem;font-weight:700;color:{tech_c};">{h_badge} {h_label}</div>
-        <div style="font-size:0.72rem;color:{tech_c};opacity:.75;margin-top:2px;">{h_score:+.1f}점</div>
-      </div>
-      <div style="background:{_bg_main};border:1px solid {_border};border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.62rem;color:{_text3};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">뉴스 감성</div>
-        <div style="font-size:0.9rem;font-weight:700;color:{news_c};">{news_score:+.1f}점</div>
-        <div style="font-size:0.72rem;color:{_text3};margin-top:2px;">±5 기준</div>
-      </div>
-      <div style="background:{_bg_main};border:1px solid {_border};border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.62rem;color:{_text3};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">장투 신호</div>
-        <div style="font-size:0.9rem;font-weight:700;color:{fund_c};">{fund_label}</div>
-        <div style="font-size:0.72rem;color:{fund_c};opacity:.75;margin-top:2px;">{fund_score:+.1f}점</div>
-      </div>
-      <div style="background:{_bg_main};border:1px solid {_border};border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.62rem;color:{_text3};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">현재가</div>
-        <div style="font-size:0.9rem;font-weight:700;color:{_txt};">{cur_str}</div>
-      </div>
-      <div style="background:{_bg_main};border:1px solid {_border};border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.62rem;color:{_text3};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">1차 목표가</div>
-        <div style="font-size:0.9rem;font-weight:700;color:{COLORS['gain']};">{tgt_price}</div>
-      </div>
-      <div style="background:{_bg_main};border:1px solid {_border};border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:0.62rem;color:{_text3};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">손절가</div>
-        <div style="font-size:0.9rem;font-weight:700;color:{COLORS['loss']};">{sl_price}</div>
-      </div>
+      {_mini_card("단타 신호", f"{h_badge} {h_label}", f"{h_score:+.1f}점", tech_c)}
+      {_mini_card("뉴스 감성", f"{news_score:+.1f}점", "±5 기준", news_c)}
+      {_mini_card("장투 신호", fund_label, f"{fund_score:+.1f}점", fund_c)}
+      {_mini_card("현재가", cur_str, "", _txt)}
+      {_mini_card("1차 목표가", tgt_price, "", _C["gain"])}
+      {_mini_card("손절가", sl_price, "", _C["loss"])}
     </div>
   </div>
 </div>"""
+
+
+def _border_to_rgb(hex_color: str) -> str:
+    """#rrggbb → 'r,g,b' 변환 (간단 헬퍼)."""
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"{r},{g},{b}"
+    return "0,0,0"
 
 
 # ─── 종목 배지 (차트 탭 상단) ─────────────────────────────────────────────────
@@ -274,20 +299,21 @@ def stock_badge_html(
 ) -> str:
     """차트 탭 상단 종목명 + 현재가 + 등락률 배지 HTML."""
     rt_label = "● 실시간" if is_realtime else "○ 장마감"
-    rt_color = COLORS["gain"] if is_realtime else COLORS["text_2"]
+    rt_color = _C["gain"] if is_realtime else _C["text_2"]
 
     if chg_pct is not None:
-        _chg_c = "#10B981" if chg_pct >= 0 else "#ef4444"
+        _chg_c = _C["gain"] if chg_pct >= 0 else _C["loss"]
         _chg_arrow = "▲" if chg_pct >= 0 else "▼"
         chg_html = (
-            f'<span style="font-size:0.85rem;font-weight:700;color:{_chg_c};margin-left:8px;">'
+            f'<span style="font-size:0.88rem;font-weight:600;color:{_chg_c};'
+            f'margin-left:8px;font-variant-numeric:tabular-nums;">'
             f'{_chg_arrow} {chg_pct:+.2f}%</span>'
         )
     else:
         chg_html = ""
 
     ts_html = (
-        f'<span style="color:#64748B;margin-left:6px;">· {rt_ts}</span>'
+        f'<span style="color:{_C["text_2"]};margin-left:6px;">· {rt_ts}</span>'
         if rt_ts else ""
     )
 
@@ -295,8 +321,10 @@ def stock_badge_html(
 <div class="ma-stock-badge">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <div>
-      <div class="gradient-text" style="font-size:1.15rem;font-weight:800">{title_label}</div>
-      <div style="font-size:.72rem;color:#94A3B8;margin-top:3px">
+      <div style="font-size:1.15rem;font-weight:600;color:{_C['text']};
+                  font-family:{_FONT_DISPLAY};letter-spacing:-0.374px;">{title_label}</div>
+      <div style="font-size:.72rem;color:{_C['text_2']};margin-top:3px;
+                  font-family:{_FONT_TEXT};">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
              stroke-linejoin="round" style="vertical-align:middle;margin-right:3px">
@@ -306,30 +334,37 @@ def stock_badge_html(
       </div>
     </div>
     <div style="text-align:right">
-      <div style="font-size:1.3rem;font-weight:700;color:#E2E8F0;display:flex;align-items:center;">{price_str}{chg_html}</div>
-      <div style="font-size:.68rem;color:{rt_color};margin-top:2px">{rt_label}{ts_html}</div>
+      <div style="font-size:1.4rem;font-weight:600;color:{_C['text']};
+                  display:flex;align-items:center;font-family:{_FONT_DISPLAY};
+                  letter-spacing:-0.28px;font-variant-numeric:tabular-nums;">
+        {price_str}{chg_html}
+      </div>
+      <div style="font-size:.7rem;color:{rt_color};margin-top:2px;
+                  font-family:{_FONT_TEXT};">{rt_label}{ts_html}</div>
     </div>
   </div>
 </div>"""
 
 
 # ─── 섹션 구분선 제목 ─────────────────────────────────────────────────────────
-def section_heading_html(title: str, accent: str = COLORS["accent"]) -> str:
-    """네온 포인트 좌측 바 + 제목 HTML."""
+def section_heading_html(title: str, accent: str = "") -> str:
+    """좌측 Action Blue 바 + 제목 HTML."""
+    color = accent or _C["accent"]
     return (
-        f'<div style="display:flex;align-items:center;gap:10px;margin:20px 0 10px;">'
-        f'<span style="width:3px;height:18px;background:{accent};border-radius:2px;'
-        f'display:inline-block;box-shadow:0 0 8px {accent}88;"></span>'
-        f'<span style="font-size:1rem;font-weight:700;color:{COLORS["text"]};">{title}</span>'
+        f'<div class="section-heading">'
+        f'<span class="section-heading-bar" style="background:{color};"></span>'
+        f'<span class="section-heading-text">{title}</span>'
         f'</div>'
     )
 
 
 # ─── 인포 칩 ──────────────────────────────────────────────────────────────────
-def info_chip_html(text: str, color: str = COLORS["text_2"]) -> str:
+def info_chip_html(text: str, color: str = "") -> str:
     """소형 정보 칩 HTML."""
+    fg = color or _C["text_2"]
     return (
-        f'<span style="display:inline-block;background:rgba(255,255,255,0.05);'
-        f'border:1px solid {COLORS["border"]};border-radius:20px;padding:3px 10px;'
-        f'font-size:0.76rem;color:{color};margin:2px 3px;">{text}</span>'
+        f'<span style="display:inline-block;background:rgba(0,0,0,0.04);'
+        f'border:1px solid {_C["border"]};border-radius:9999px;padding:3px 10px;'
+        f'font-size:0.76rem;color:{fg};margin:2px 3px;'
+        f'font-family:{_FONT_TEXT};">{text}</span>'
     )

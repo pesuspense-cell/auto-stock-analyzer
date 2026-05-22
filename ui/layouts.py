@@ -425,7 +425,7 @@ def render_sidebar(
         if _sb_tok and _sb_uid:
             st.divider()
             st.markdown("""
-<div style="font-size:.85rem;font-weight:700;color:#8B5CF6;letter-spacing:.5px;margin-bottom:4px">
+<div style="font-size:.85rem;font-weight:600;color:#0066cc;margin-bottom:4px">
   ➕ 포트폴리오 종목 추가
 </div>
 """, unsafe_allow_html=True)
@@ -467,30 +467,30 @@ def render_sidebar(
 
         # ── 환율 ────────────────────────────────────────────────────────────
         st.divider()
-        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">💱 실시간 환율</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:.8rem;font-weight:600;color:#7a7a7a;margin:0 0 4px 0;letter-spacing:0;">💱 실시간 환율</p>', unsafe_allow_html=True)
 
         def _sb_row(label, value, change, chg_color):
             return (
                 f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                f'padding:5px 0;border-bottom:1px solid #21262D;">'
-                f'<span style="font-size:.78rem;color:#8B949E;">{label}</span>'
+                f'padding:5px 0;border-bottom:1px solid #e0e0e0;">'
+                f'<span style="font-size:.78rem;color:#7a7a7a;">{label}</span>'
                 f'<div style="text-align:right">'
-                f'<div style="font-size:.88rem;font-weight:700;color:#E6EDF3;">{value}</div>'
-                f'<div style="font-size:.72rem;color:{chg_color};">{change}</div>'
+                f'<div style="font-size:.88rem;font-weight:600;color:#1d1d1f;font-variant-numeric:tabular-nums;">{value}</div>'
+                f'<div style="font-size:.72rem;color:{chg_color};font-variant-numeric:tabular-nums;">{change}</div>'
                 f'</div></div>'
             )
 
         rate_html = ""
         for pair, info in rates.items():
             chg_val = info["change"]
-            chg_color = "#3FB950" if chg_val >= 0 else "#F85149"
+            chg_color = "#34c759" if chg_val >= 0 else "#ff3b30"
             chg_sign = "+" if chg_val >= 0 else ""
             rate_html += _sb_row(pair, f"{info['rate']:,.2f}", f"{chg_sign}{chg_val:.3f}%", chg_color)
         st.markdown(rate_html, unsafe_allow_html=True)
 
         # ── 주요 지수 ────────────────────────────────────────────────────────
         st.divider()
-        st.markdown('<p style="font-size:.8rem;font-weight:700;color:#8B949E;margin:0 0 4px 0;letter-spacing:.05em;">📊 주요 지수</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:.8rem;font-weight:600;color:#7a7a7a;margin:0 0 4px 0;letter-spacing:0;">📊 주요 지수</p>', unsafe_allow_html=True)
 
         idx_html = ""
         for idx_name, idx_sym in indices.items():
@@ -499,7 +499,7 @@ def render_sidebar(
                 if len(d) >= 2:
                     p   = float(d["Close"].iloc[-1])
                     chg = (p - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2]) * 100
-                    chg_color = "#3FB950" if chg >= 0 else "#F85149"
+                    chg_color = "#34c759" if chg >= 0 else "#ff3b30"
                     chg_sign = "+" if chg >= 0 else ""
                     idx_html += _sb_row(idx_name, f"{p:,.2f}", f"{chg_sign}{chg:.2f}%", chg_color)
             except Exception:
@@ -521,16 +521,16 @@ def render_sidebar(
         if _inactive:
             st.divider()
             st.markdown(
-                '<div style="font-size:.78rem;color:#F59E0B;font-weight:600;'
-                'letter-spacing:.3px;margin-bottom:6px">⚠️ 미연동 항목</div>',
+                '<div style="font-size:.78rem;color:#e07000;font-weight:600;'
+                'letter-spacing:0;margin-bottom:6px">⚠️ 미연동 항목</div>',
                 unsafe_allow_html=True,
             )
             for _ic, _it, _ih in _inactive:
                 st.markdown(
-                    f'<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);'
+                    f'<div style="background:rgba(255,149,0,0.06);border:1px solid rgba(255,149,0,0.2);'
                     f'border-radius:8px;padding:6px 10px;margin:3px 0;font-size:.75rem">'
-                    f'<span style="color:#FCD34D">{_ic} {_it}</span>'
-                    f'<div style="color:#78716C;margin-top:1px">{_ih}</div></div>',
+                    f'<span style="color:#e07000">{_ic} {_it}</span>'
+                    f'<div style="color:#7a7a7a;margin-top:1px">{_ih}</div></div>',
                     unsafe_allow_html=True,
                 )
 
@@ -619,10 +619,10 @@ def render_header(portfolio_summary: dict) -> None:
     """메인 헤더 타이틀 + 포트폴리오 3카드를 렌더링한다."""
     st.markdown("""
 <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;margin-top:4px">
-  <span class="gradient-text" style="font-size:1.75rem;font-weight:900">AI 주식 분석 대시보드</span>
-  <span style="font-size:.72rem;color:#8B5CF6;padding:3px 12px;
-               background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.35);
-               border-radius:20px;font-weight:700;letter-spacing:1px">PREMIUM</span>
+  <span style="font-size:1.6rem;font-weight:600;color:#1d1d1f;font-family:'SF Pro Display',system-ui,-apple-system,sans-serif;letter-spacing:-0.374px;">AI 주식 분석 대시보드</span>
+  <span style="font-size:.72rem;color:#0066cc;padding:3px 12px;
+               background:rgba(0,102,204,0.08);border:1px solid rgba(0,102,204,0.2);
+               border-radius:9999px;font-weight:600;letter-spacing:0">Pro</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -683,11 +683,11 @@ def _render_toss_mover_list(df: pd.DataFrame, show_market: bool = True) -> None:
         chg = row.get("등락률(%)", None)
         try:
             chg = float(chg)
-            color   = "#ef5350" if chg >= 0 else "#42a5f5"
+            color   = "#ff3b30" if chg >= 0 else "#0066cc"
             arrow   = "▲" if chg >= 0 else "▼"
             chg_str = f"{arrow} {abs(chg):.2f}%"
         except (TypeError, ValueError):
-            color, chg_str = "#888", "—"
+            color, chg_str = "#b0b0b0", "—"
         price = row.get("현재가", 0)
         try:
             price_str = f"₩{float(price):,.0f}"
@@ -731,13 +731,13 @@ def render_market_tab(
             _r  = info["rate"]
             _c  = info["change"]
             _arrow = "▲" if _c > 0 else "▼"
-            _cc    = "#ef5350" if _c > 0 else "#42a5f5"
+            _cc    = "#ff3b30" if _c > 0 else "#0066cc"
             _rfmt  = f"{_r:,.0f}" if _r >= 100 else f"{_r:,.2f}"
             _rates_html += (
                 f'<div class="toss-rate-card">'
-                f'<div style="font-size:.65rem;color:#8B949E;margin-bottom:4px;white-space:nowrap">{pair}</div>'
-                f'<div style="font-size:1rem;font-weight:700;color:#E6EDF3">{_rfmt}</div>'
-                f'<div style="font-size:.7rem;color:{_cc};font-weight:600;margin-top:2px">'
+                f'<div style="font-size:.65rem;color:#7a7a7a;margin-bottom:4px;white-space:nowrap">{pair}</div>'
+                f'<div style="font-size:1rem;font-weight:600;color:#1d1d1f;font-variant-numeric:tabular-nums;">{_rfmt}</div>'
+                f'<div style="font-size:.7rem;color:{_cc};font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;">'
                 f'{_arrow} {abs(_c):.2f}%</div>'
                 f'</div>'
             )
@@ -750,11 +750,11 @@ def render_market_tab(
                 if not fx.empty:
                     fig_fx = go.Figure(go.Scatter(
                         x=fx.index, y=fx["Close"],
-                        fill="tozeroy", fillcolor="rgba(31,119,180,0.12)",
-                        line=dict(color="#42a5f5", width=2),
+                        fill="tozeroy", fillcolor="rgba(0,102,204,0.08)",
+                        line=dict(color="#0066cc", width=2),
                     ))
                     fig_fx.update_layout(
-                        height=200, template="plotly_dark",
+                        height=200, template="plotly_white",
                         margin=dict(t=10, b=10), showlegend=False,
                         xaxis_rangeslider_visible=False,
                     )
@@ -809,12 +809,12 @@ def render_market_tab(
                     fig_bar = go.Figure(go.Bar(
                         x=chart_top["종목명"],
                         y=chart_top["등락률(%)"],
-                        marker_color=["#ef5350" if val >= 0 else "#42a5f5" for val in chart_top["등락률(%)"]],
+                        marker_color=["#ff3b30" if val >= 0 else "#0066cc" for val in chart_top["등락률(%)"]],
                         text=[f"{val:+.2f}%" for val in chart_top["등락률(%)"]],
                         textposition="outside",
                     ))
                     fig_bar.update_layout(
-                        height=360, template="plotly_dark",
+                        height=360, template="plotly_white",
                         margin=dict(t=10, b=70), xaxis_tickangle=-40,
                         yaxis_title="등락률 (%)",
                     )
@@ -824,8 +824,8 @@ def render_market_tab(
                     st.dataframe(
                         movers[["종목명", "티커", "현재가", "등락률(%)", "거래량"]].style
                         .format({"현재가": "{:,.0f}", "등락률(%)": "{:+.2f}%", "거래량": "{:,}"})
-                        .map(lambda v: "color:#ef5350" if isinstance(v, float) and v > 0
-                             else ("color:#42a5f5" if isinstance(v, float) and v < 0 else ""),
+                        .map(lambda v: "color:#ff3b30" if isinstance(v, float) and v > 0
+                             else ("color:#0066cc" if isinstance(v, float) and v < 0 else ""),
                              subset=["등락률(%)"]),
                         use_container_width=True, hide_index=True,
                     )
@@ -994,15 +994,16 @@ def render_rec_tab(
                 _pct  = r.get("change_pct", 0.0)
                 _clr  = COLORS["gain"] if _pct >= 0 else COLORS["loss"]
                 st.markdown(
-                    f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
-                    f'border-radius:10px;padding:12px 16px;margin:6px 0;'
-                    f'display:flex;justify-content:space-between;align-items:center;">'
-                    f'<div><b style="color:{COLORS["text"]}">{_nm}</b>'
-                    f'<span style="color:{COLORS["text_2"]};font-size:.8rem;margin-left:8px">({_tk})</span>'
-                    f'<div style="font-size:.78rem;color:{COLORS["text_2"]};margin-top:3px">{_lbl}</div></div>'
+                    f'<div style="background:#ffffff;border:1px solid #e0e0e0;'
+                    f'border-radius:12px;padding:14px 16px;margin:6px 0;'
+                    f'display:flex;justify-content:space-between;align-items:center;'
+                    f'box-shadow:0 1px 3px rgba(0,0,0,0.06);">'
+                    f'<div><b style="color:#1d1d1f">{_nm}</b>'
+                    f'<span style="color:#7a7a7a;font-size:.8rem;margin-left:8px">({_tk})</span>'
+                    f'<div style="font-size:.78rem;color:#7a7a7a;margin-top:3px">{_lbl}</div></div>'
                     f'<div style="text-align:right">'
-                    f'<div style="font-size:1.1rem;font-weight:700;color:{_clr}">{_pct:+.2f}%</div>'
-                    f'<div style="font-size:.72rem;color:{COLORS["text_2"]}">점수 {_sc:+.1f}</div>'
+                    f'<div style="font-size:1.1rem;font-weight:600;color:{_clr};font-variant-numeric:tabular-nums;">{_pct:+.2f}%</div>'
+                    f'<div style="font-size:.72rem;color:#7a7a7a;font-variant-numeric:tabular-nums;">점수 {_sc:+.1f}</div>'
                     f'</div></div>',
                     unsafe_allow_html=True,
                 )
@@ -1023,14 +1024,14 @@ def render_rec_tab(
                         _h_recs = _h.get("recommendations", [])
                         _h_names = ", ".join(r.get("name", r.get("ticker", "")) for r in _h_recs)
                         st.markdown(
-                            f'<div style="background:#1e2130;border-radius:8px;'
+                            f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:8px;'
                             f'padding:10px 14px;margin:4px 0;font-size:.85rem">'
-                            f'<span style="color:#9e9e9e">{_h_dt}</span>'
+                            f'<span style="color:#7a7a7a">{_h_dt}</span>'
                             f'&nbsp;|&nbsp;'
-                            f'<b style="color:#ddd">₩{_h_amt:,}</b>'
+                            f'<b style="color:#1d1d1f">₩{_h_amt:,}</b>'
                             f'&nbsp;·&nbsp;'
-                            f'<span style="color:#4fc3f7">{_h_prof}</span>'
-                            f'<div style="color:#aaa;margin-top:4px">{_h_names}</div>'
+                            f'<span style="color:#0066cc">{_h_prof}</span>'
+                            f'<div style="color:#7a7a7a;margin-top:4px">{_h_names}</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
@@ -1183,9 +1184,9 @@ def render_news_tab(
             _etf_sector, _etf_holdings_display = _etf_meta
             if _etf_sector or _etf_holdings_display:
                 st.markdown(
-                    f'<div style="background:#1a2f3a;border-radius:8px;padding:10px 16px;margin-bottom:10px;">'
-                    f'<span style="color:#80cbc4;font-weight:bold;">섹터: {_etf_sector or "N/A"}</span>'
-                    + (f'&nbsp;&nbsp;|&nbsp;&nbsp;<span style="color:#aaa;font-size:0.85rem;">'
+                    f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:8px;padding:10px 16px;margin-bottom:10px;">'
+                    f'<span style="color:#0066cc;font-weight:600;">섹터: {_etf_sector or "N/A"}</span>'
+                    + (f'&nbsp;&nbsp;|&nbsp;&nbsp;<span style="color:#7a7a7a;font-size:0.85rem;">'
                        f'구성종목 뉴스 포함: {", ".join(_etf_holdings_display)}</span>'
                        if _etf_holdings_display else "") +
                     f'</div>',
@@ -1240,11 +1241,11 @@ def render_news_tab(
                         _d_ttl  = d.get("title", "")[:60]
                         _d_sc   = d.get("score", 0.0)
                         st.markdown(
-                            f'<div style="background:#1a1d2e;border-radius:6px;padding:6px 10px;'
-                            f'margin:3px 0;font-size:.8rem;color:#aaa;display:flex;gap:6px;">'
+                            f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:6px;padding:6px 10px;'
+                            f'margin:3px 0;font-size:.8rem;color:#7a7a7a;display:flex;gap:6px;">'
                             f'<span>{_d_icon}</span>'
                             f'<span style="flex:1">{_d_ttl}</span>'
-                            f'<span style="color:{"#4caf50" if _d_sc >= 0 else "#ef5350"};'
+                            f'<span style="color:{"#34c759" if _d_sc >= 0 else "#ff3b30"};'
                             f'font-weight:700;white-space:nowrap">{_d_sc:+.1f}</span>'
                             f'</div>',
                             unsafe_allow_html=True,
@@ -1487,15 +1488,15 @@ def _build_plotly_chart(
     # 캔들스틱
     fig.add_trace(go.Candlestick(
         x=data.index, open=o, high=h, low=lo, close=c,
-        name="가격", increasing_line_color="#ef5350", decreasing_line_color="#42a5f5",
+        name="가격", increasing_line_color="#ff3b30", decreasing_line_color="#0066cc",
     ), row=1, col=1)
 
     # 이동평균선
     for col_name, color, lbl, width, dash in [
-        ("SMA_5",   "#ffa726", "SMA5",   1.4, "solid"),
-        ("EMA_20",  "#ab47bc", "EMA20",  1.4, "solid"),
-        ("EMA_50",  "#26c6da", "EMA50",  1.4, "solid"),
-        ("EMA_200", "#ffeb3b", "EMA200", 2.0, "dash"),
+        ("SMA_5",   "#ff9500", "SMA5",   1.4, "solid"),
+        ("EMA_20",  "#0066cc", "EMA20",  1.4, "solid"),
+        ("EMA_50",  "#34c759", "EMA50",  1.4, "solid"),
+        ("EMA_200", "#ff3b30", "EMA200", 2.0, "dash"),
     ]:
         if col_name in data.columns:
             fig.add_trace(go.Scatter(
@@ -1523,12 +1524,12 @@ def _build_plotly_chart(
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
             x=data.index, y=data["ICHI_SPAN_B"], name="선행스팬B",
-            line=dict(color="rgba(239,83,80,0.7)", width=1),
+            line=dict(color="rgba(255,59,48,0.7)", width=1),
             fill="tonexty", fillcolor="rgba(120,120,120,0.12)",
         ), row=1, col=1)
     for col_name, color, lbl, dash in [
-        ("ICHI_TENKAN", "#ef5350", "전환선", "dot"),
-        ("ICHI_KIJUN",  "#42a5f5", "기준선", "dot"),
+        ("ICHI_TENKAN", "#ff3b30", "전환선", "dot"),
+        ("ICHI_KIJUN",  "#0066cc", "기준선", "dot"),
     ]:
         if col_name in data.columns:
             fig.add_trace(go.Scatter(
@@ -1538,9 +1539,9 @@ def _build_plotly_chart(
 
     # VWAP 멀티 타임프레임
     for _vc, _color, _lbl, _w, _dash in [
-        ("VWAP_W", "#ff8f00", "VWAP 주간(5일)",  1.4, "solid"),
-        ("VWAP_M", "#ce93d8", "VWAP 월간(20일)", 1.6, "solid"),
-        ("VWAP_Q", "#80deea", "VWAP 분기(60일)", 2.0, "dash"),
+        ("VWAP_W", "#ff9500", "VWAP 주간(5일)",  1.4, "solid"),
+        ("VWAP_M", "#0066cc", "VWAP 월간(20일)", 1.6, "solid"),
+        ("VWAP_Q", "#34c759", "VWAP 분기(60일)", 2.0, "dash"),
     ]:
         if _vc in data.columns:
             fig.add_trace(go.Scatter(
@@ -1549,7 +1550,7 @@ def _build_plotly_chart(
             ), row=1, col=1)
 
     # 거래량 (Row 2)
-    vol_colors = ["#ef5350" if float(c.iloc[i]) >= float(o.iloc[i]) else "#42a5f5"
+    vol_colors = ["#ff3b30" if float(c.iloc[i]) >= float(o.iloc[i]) else "#0066cc"
                   for i in range(len(data))]
     fig.add_trace(go.Bar(
         x=data.index, y=v, name="거래량",
@@ -1558,7 +1559,7 @@ def _build_plotly_chart(
     if "Volume_MA20" in data.columns:
         fig.add_trace(go.Scatter(
             x=data.index, y=data["Volume_MA20"], name="Vol MA20",
-            line=dict(color="#ffa726", width=1.2),
+            line=dict(color="#ff9500", width=1.2),
         ), row=2, col=1)
 
     # OBV
@@ -1572,14 +1573,14 @@ def _build_plotly_chart(
             obv_scaled = obv_s * 0
         fig.add_trace(go.Scatter(
             x=data.index, y=obv_scaled, name="OBV(스케일)",
-            line=dict(color="#80cbc4", width=1.5, dash="dot"),
+            line=dict(color="#0066cc", width=1.5, dash="dot"),
         ), row=2, col=1)
 
     # RSI + MFI (Row 3)
     if "RSI" in data.columns:
         fig.add_trace(go.Scatter(
             x=data.index, y=data["RSI"], name="RSI",
-            line=dict(color="#ce93d8", width=2),
+            line=dict(color="#0066cc", width=2),
         ), row=3, col=1)
         for level, clr in [(70, "rgba(239,83,80,0.45)"), (30, "rgba(66,165,245,0.45)")]:
             fig.add_hline(y=level, line_color=clr, line_dash="dash", row=3, col=1)
@@ -1588,37 +1589,37 @@ def _build_plotly_chart(
     if "MFI" in data.columns:
         fig.add_trace(go.Scatter(
             x=data.index, y=data["MFI"], name="MFI",
-            line=dict(color="#4dd0e1", width=1.5, dash="dot"),
+            line=dict(color="#0066cc", width=1.5, dash="dot"),
         ), row=3, col=1)
 
     # MACD (Row 4)
     if "MACD" in data.columns:
         hist_vals   = data["MACD_Hist"]
-        hist_colors = ["#ef5350" if val >= 0 else "#42a5f5" for val in hist_vals]
+        hist_colors = ["#ff3b30" if val >= 0 else "#0066cc" for val in hist_vals]
         fig.add_trace(go.Bar(
             x=data.index, y=hist_vals, name="MACD Hist",
             marker_color=hist_colors, showlegend=False,
         ), row=4, col=1)
         fig.add_trace(go.Scatter(
             x=data.index, y=data["MACD"], name="MACD",
-            line=dict(color="#42a5f5", width=1.5),
+            line=dict(color="#0066cc", width=1.5),
         ), row=4, col=1)
         fig.add_trace(go.Scatter(
             x=data.index, y=data["MACD_Signal"], name="Signal",
-            line=dict(color="#ffa726", width=1.5),
+            line=dict(color="#ff9500", width=1.5),
         ), row=4, col=1)
 
     # ADX + ±DI (Row 5)
     if "ADX" in data.columns:
         fig.add_trace(go.Scatter(
             x=data.index, y=data["ADX"], name="ADX",
-            line=dict(color="#fff176", width=2),
+            line=dict(color="#1d1d1f", width=2),
         ), row=5, col=1)
-        fig.add_hline(y=25, line_color="rgba(255,255,255,0.3)", line_dash="dash", row=5, col=1)
-        fig.add_hline(y=35, line_color="rgba(255,235,59,0.3)",  line_dash="dot",  row=5, col=1)
+        fig.add_hline(y=25, line_color="rgba(0,0,0,0.2)", line_dash="dash", row=5, col=1)
+        fig.add_hline(y=35, line_color="rgba(255,149,0,0.3)",  line_dash="dot",  row=5, col=1)
     for col_name, color, lbl in [
-        ("ADX_POS", "#66bb6a", "+DI"),
-        ("ADX_NEG", "#ef5350", "-DI"),
+        ("ADX_POS", "#34c759", "+DI"),
+        ("ADX_NEG", "#ff3b30", "-DI"),
     ]:
         if col_name in data.columns:
             fig.add_trace(go.Scatter(
@@ -1630,8 +1631,8 @@ def _build_plotly_chart(
     if not kospi_df.empty:
         fig.add_trace(go.Scatter(
             x=kospi_df.index, y=kospi_df["Close"], name="KOSPI",
-            line=dict(color="#80cbc4", width=1.8),
-            fill="tozeroy", fillcolor="rgba(128,203,196,0.10)",
+            line=dict(color="#0066cc", width=1.8),
+            fill="tozeroy", fillcolor="rgba(0,102,204,0.08)",
         ), row=6, col=1)
 
     # 공통 레이아웃
@@ -1657,9 +1658,9 @@ def _build_plotly_chart(
         fixedrange=False, autorange=True,
     )
     fig.update_xaxes(rangeselector=_rangeselector, row=1, col=1)
-    fig.update_annotations(font_size=10, font_color="#9e9e9e")
+    fig.update_annotations(font_size=10, font_color="#7a7a7a")
     fig.update_layout(
-        height=1150, template="plotly_dark",
+        height=1150, template="plotly_white",
         dragmode=False, xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1,
                     font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
@@ -1729,16 +1730,16 @@ def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemin
                 if not _bt:
                     continue
                 _bt_val   = _bt.get("buy_target")
-                _bt_color = _bt.get("mode_color", "#E2E8F0")
+                _bt_color = _bt.get("mode_color", "#1d1d1f")
                 _timing   = _bt.get("timing", "")
-                _t_color  = _bt.get("timing_color", "#aaa")
+                _t_color  = _bt.get("timing_color", "#7a7a7a")
                 _bt_str   = _fmt.format(_bt_val) if _bt_val else "—"
                 st.markdown(
                     f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
                     f'border-left:3px solid {_bt_color};border-radius:10px;padding:8px 12px;margin-bottom:6px;">'
                     f'<div style="display:flex;justify-content:space-between;align-items:center;">'
                     f'<span style="font-size:0.72rem;color:{_bt_color};font-weight:600;">{_mode_short}</span>'
-                    f'<span style="font-size:0.95rem;font-weight:700;color:#E2E8F0;">{_bt_str}</span>'
+                    f'<span style="font-size:0.95rem;font-weight:600;color:#1d1d1f;font-variant-numeric:tabular-nums;">{_bt_str}</span>'
                     f'</div>'
                     f'<div style="font-size:0.72rem;color:{_t_color};margin-top:3px;">{_timing}</div>'
                     f'</div>',
@@ -1756,8 +1757,8 @@ def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemin
             ("탄력",  _ms, "⚡"),
             ("에너지", _vs, "🔋"),
         ]:
-            _sc = "#26a69a" if _score >= 65 else ("#ef5350" if _score <= 35 else "#eab308")
-            _bg = "rgba(38,166,154,0.12)" if _score >= 65 else ("rgba(239,83,80,0.12)" if _score <= 35 else "rgba(234,179,8,0.12)")
+            _sc = "#34c759" if _score >= 65 else ("#ff3b30" if _score <= 35 else "#ff9500")
+            _bg = "rgba(52,199,89,0.10)" if _score >= 65 else ("rgba(255,59,48,0.10)" if _score <= 35 else "rgba(255,149,0,0.10)")
             st.markdown(
                 f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
                 f'border-radius:10px;padding:9px 12px;margin-bottom:6px;">'
@@ -1778,10 +1779,10 @@ def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemin
             _trend = analyze_investor_trend(_inv_history)
             _t_score = _trend["score"]
 
-            if _t_score >= 3:    _inv_brd = "#22c55e"
-            elif _t_score >= 1:  _inv_brd = "#4b9cf5"
-            elif _t_score <= -2: _inv_brd = "#ef4444"
-            else:                _inv_brd = "#555"
+            if _t_score >= 3:    _inv_brd = "#34c759"
+            elif _t_score >= 1:  _inv_brd = "#0066cc"
+            elif _t_score <= -2: _inv_brd = "#ff3b30"
+            else:                _inv_brd = "#b0b0b0"
 
             # 가장 중요한 한 줄 — 경고 우선, 없으면 첫 번째 근거
             _key_line = (
@@ -1801,7 +1802,7 @@ def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemin
                 f'{_trend["status"]}</div>'
                 f'<div style="font-size:0.72rem;color:{COLORS["text_2"]};line-height:1.4;word-break:keep-all;">'
                 f'{_key_line}</div>'
-                f'<div style="font-size:0.65rem;color:#484F58;margin-top:5px;">{_trend["summary_text"]}</div>'
+                f'<div style="font-size:0.65rem;color:#b0b0b0;margin-top:5px;">{_trend["summary_text"]}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -1815,9 +1816,9 @@ def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemin
     _bk_detail = breakout.get("detail", "")
 
     if _dt_msg or _bk_detail:
-        _dt_border = "#f39c12" if _dt_dead else "#3B82F6"
+        _dt_border = "#ff9500" if _dt_dead else "#0066cc"
         _dt_icon   = "⏳" if _dt_dead else "📊"
-        _bk_border = "#22c55e" if _bk_status == "breakout_both" else ("#4b9cf5" if "breakout" in _bk_status else "#555")
+        _bk_border = "#34c759" if _bk_status == "breakout_both" else ("#0066cc" if "breakout" in _bk_status else "#b0b0b0")
         _bk_icon   = "🚀" if _bk_status == "breakout_both" else ("📈" if "breakout" in _bk_status else "⏸️")
         _bk_label  = "돌파 충족" if _bk_status == "breakout_both" else ("부분 돌파" if "breakout" in _bk_status else "관망")
 
@@ -1851,16 +1852,16 @@ def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemin
     # 전략 배지 — 적용된 투자 전략을 한눈에 표시
     if _h_strategy:
         _s_color = (
-            "#f59e0b" if "초단기" in _h_strategy else
-            "#3b82f6" if "단기"   in _h_strategy else
-            "#22c55e"
+            "#ff9500" if "초단기" in _h_strategy else
+            "#0066cc" if "단기"   in _h_strategy else
+            "#34c759"
         )
         st.markdown(
             f'<div style="display:inline-flex;align-items:center;gap:6px;'
-            f'background:rgba(255,255,255,0.04);'
-            f'border:1px solid {_s_color}55;border-radius:20px;'
+            f'background:rgba(0,0,0,0.04);'
+            f'border:1px solid {_s_color}55;border-radius:9999px;'
             f'padding:3px 14px;margin-bottom:10px;">'
-            f'<span style="color:{_s_color};font-size:0.72rem;font-weight:600;letter-spacing:0.4px;">'
+            f'<span style="color:{_s_color};font-size:0.72rem;font-weight:600;">'
             f'📊 {_h_strategy}</span></div>',
             unsafe_allow_html=True,
         )
@@ -1887,9 +1888,9 @@ def _render_signal_panel(*, state: dict, inv_data_fn, inv_history_fn=None, gemin
         )
         _reason_ctx.markdown(
             f'<div style="background:{COLORS["surface"]};border:1px solid {COLORS["border"]};'
-            f'border-left:3px solid #22c55e;border-radius:10px;'
+            f'border-left:3px solid #34c759;border-radius:10px;'
             f'padding:10px 14px;margin-bottom:8px;">'
-            f'<div style="font-size:0.65rem;color:#22c55e;letter-spacing:.8px;'
+            f'<div style="font-size:0.65rem;color:#34c759;letter-spacing:.8px;'
             f'text-transform:uppercase;font-weight:600;margin-bottom:6px;">📋 확정 매매 근거</div>'
             f'{_reasons_rows}</div>',
             unsafe_allow_html=True,
@@ -1942,25 +1943,25 @@ def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn
                 _v    = float(_vw_row[col])
                 _diff = (_cur - _v) / _v * 100
                 _arrow = "▲" if _diff >= 0 else "▼"
-                _dc   = "#69f0ae" if _diff >= 0 else "#ef9a9a"
+                _dc   = "#34c759" if _diff >= 0 else "#ff3b30"
                 return (
                     f'<div style="display:flex;justify-content:space-between;'
-                    f'align-items:center;padding:5px 0;border-bottom:1px solid #2a2d3e;gap:6px;">'
+                    f'align-items:center;padding:5px 0;border-bottom:1px solid #e0e0e0;gap:6px;">'
                     f'<span style="font-size:0.85rem;color:{color};white-space:nowrap;flex-shrink:0;">● {label}</span>'
-                    f'<span style="font-size:0.88rem;color:#ddd;white-space:nowrap;">{_pf.format(_v)}</span>'
+                    f'<span style="font-size:0.88rem;color:#1d1d1f;white-space:nowrap;font-variant-numeric:tabular-nums;">{_pf.format(_v)}</span>'
                     f'<span style="font-size:0.85rem;color:{_dc};white-space:nowrap;flex-shrink:0;">{_arrow}{abs(_diff):.1f}%</span>'
                     f'</div>'
                 )
 
             vwap_rows = (
-                _vwap_row_html("VWAP 주간(5일)",   "VWAP_W", "#ff8f00") +
-                _vwap_row_html("VWAP 월간(20일)",  "VWAP_M", "#ce93d8") +
-                _vwap_row_html("VWAP 분기(60일)",  "VWAP_Q", "#80deea")
+                _vwap_row_html("VWAP 주간(5일)",   "VWAP_W", "#ff9500") +
+                _vwap_row_html("VWAP 월간(20일)",  "VWAP_M", "#0066cc") +
+                _vwap_row_html("VWAP 분기(60일)",  "VWAP_Q", "#34c759")
             )
             if vwap_rows:
                 st.markdown("#### 📍 VWAP 위치")
                 st.markdown(
-                    f'<div style="background:#1a1d2e;border-radius:8px;padding:10px 14px;">'
+                    f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:8px;padding:10px 14px;">'
                     f'{vwap_rows}</div>',
                     unsafe_allow_html=True,
                 )
@@ -1974,19 +1975,19 @@ def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn
             _win_prob = expected.get("win_prob", 50.0)
             _exp_color = COLORS["gain"] if _exp_ret >= 0 else COLORS["loss"]
             st.markdown(
-                f'<div style="background:#1a1d2e;border-radius:8px;padding:12px 16px;">'
+                f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;">'
                 f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
-                f'<span style="color:#9e9e9e;font-size:.85rem">예상 수익률</span>'
-                f'<b style="color:{_exp_color}">{_exp_ret:+.1f}%</b></div>'
+                f'<span style="color:#7a7a7a;font-size:.85rem">예상 수익률</span>'
+                f'<b style="color:{_exp_color};font-variant-numeric:tabular-nums;">{_exp_ret:+.1f}%</b></div>'
                 f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
-                f'<span style="color:#9e9e9e;font-size:.85rem">샤프지수</span>'
-                f'<b style="color:#E6EDF3">{_sharpe:.2f}</b></div>'
+                f'<span style="color:#7a7a7a;font-size:.85rem">샤프지수</span>'
+                f'<b style="color:#1d1d1f;font-variant-numeric:tabular-nums;">{_sharpe:.2f}</b></div>'
                 f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
-                f'<span style="color:#9e9e9e;font-size:.85rem">최대 낙폭</span>'
-                f'<b style="color:{COLORS["loss"]}">{_max_dd:.1f}%</b></div>'
+                f'<span style="color:#7a7a7a;font-size:.85rem">최대 낙폭</span>'
+                f'<b style="color:{COLORS["loss"]};font-variant-numeric:tabular-nums;">{_max_dd:.1f}%</b></div>'
                 f'<div style="display:flex;justify-content:space-between;">'
-                f'<span style="color:#9e9e9e;font-size:.85rem">승률 추정</span>'
-                f'<b style="color:#E6EDF3">{_win_prob:.0f}%</b></div>'
+                f'<span style="color:#7a7a7a;font-size:.85rem">승률 추정</span>'
+                f'<b style="color:#1d1d1f;font-variant-numeric:tabular-nums;">{_win_prob:.0f}%</b></div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -2014,7 +2015,7 @@ def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn
                 ("1차 목표 (2R)",        "target_2r",  COLORS["gain"]),
                 ("2차 목표 (3R)",        "target_3r",  COLORS["gain"]),
                 ("52주 고가",            "high_52w",   COLORS["text_2"]),
-                ("볼린저밴드 상단",      "bb_upper",   "#ce93d8"),
+                ("볼린저밴드 상단",      "bb_upper",   "#0066cc"),
             ]:
                 _v = _sl.get(_key)
                 if _v:
@@ -2153,26 +2154,26 @@ def render_fund_tab(
                 _etf_s   = _etf_score.get("etf_score", 0.0)
                 _etf_lbl = _etf_score.get("etf_label", "N/A")
                 if _etf_s >= 1.5:
-                    _ebg, _efc = "#1a2f3a", "#80cbc4"
+                    _ebg, _efc = "rgba(52,199,89,0.06)", "#1a7a35"
                 elif _etf_s <= -0.5:
-                    _ebg, _efc = "#3a2a1a", "#ffcc80"
+                    _ebg, _efc = "rgba(255,59,48,0.06)", "#cc2200"
                 else:
-                    _ebg, _efc = "#1e2130", "#bdbdbd"
+                    _ebg, _efc = "#f5f5f7", "#7a7a7a"
                 st.markdown(f"""
 <div class="signal-box" style="background:{_ebg};">
-  <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">📊 ETF 투자 판정</div>
-  <div style="font-size:1.3rem;font-weight:bold;color:{_efc};">{_etf_lbl}</div>
-  <div style="font-size:0.9rem;color:#aaa;margin-top:4px;">점수: <b style="color:{_efc};">{_etf_s:+.1f}</b> / ±6.5</div>
+  <div style="font-size:0.7rem;color:#7a7a7a;margin-bottom:3px;">📊 ETF 투자 판정</div>
+  <div style="font-size:1.3rem;font-weight:600;color:{_efc};">{_etf_lbl}</div>
+  <div style="font-size:0.9rem;color:#7a7a7a;margin-top:4px;font-variant-numeric:tabular-nums;">점수: <b style="color:{_efc};">{_etf_s:+.1f}</b> / ±6.5</div>
 </div>
 """, unsafe_allow_html=True)
 
                 st.markdown("**항목별 점수**")
                 _bd = _etf_score.get("score_breakdown", {})
                 for _lbl, _rng, _clr in [
-                    ("괴리율",    "±3",   "#80cbc4"),
-                    ("운용보수",  "±2",   "#a5d6a7"),
-                    ("추적오차",  "±1.5", "#ce93d8"),
-                    ("배당수익률","±0.5", "#ffcc80"),
+                    ("괴리율",    "±3",   "#0066cc"),
+                    ("운용보수",  "±2",   "#34c759"),
+                    ("추적오차",  "±1.5", "#ff9500"),
+                    ("배당수익률","±0.5", "#ff9500"),
                 ]:
                     _sv  = _bd.get(_lbl, 0.0)
                     _max = float(_rng.replace("±", ""))
@@ -2180,10 +2181,10 @@ def render_fund_tab(
                     st.markdown(
                         f'<div style="margin-bottom:5px;">'
                         f'<div style="display:flex;justify-content:space-between;font-size:0.75rem;">'
-                        f'<span style="color:#ccc;">{_lbl} <span style="color:#555;">({_rng})</span></span>'
-                        f'<b style="color:{_clr};">{_sv:+.1f}</b></div>'
-                        f'<div style="background:#2a2d3e;border-radius:3px;height:5px;">'
-                        f'<div style="background:{_clr};width:{_pct}%;height:5px;border-radius:3px;"></div>'
+                        f'<span style="color:#1d1d1f;">{_lbl} <span style="color:#b0b0b0;">({_rng})</span></span>'
+                        f'<b style="color:{_clr};font-variant-numeric:tabular-nums;">{_sv:+.1f}</b></div>'
+                        f'<div style="background:#e0e0e0;border-radius:3px;height:4px;">'
+                        f'<div style="background:{_clr};width:{_pct}%;height:4px;border-radius:3px;"></div>'
                         f'</div></div>',
                         unsafe_allow_html=True,
                     )
@@ -2205,15 +2206,15 @@ def render_fund_tab(
             st.markdown("---")
 
             if _premium is not None:
-                _prem_color = "#ef5350" if _premium > 1 else ("#26a69a" if _premium < -0.5 else "#8B949E")
+                _prem_color = "#ff3b30" if _premium > 1 else ("#34c759" if _premium < -0.5 else "#7a7a7a")
                 st.markdown(
-                    f'<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;padding:16px 18px;">'
-                    f'<div style="font-size:0.72rem;color:#8B949E;letter-spacing:0.6px;margin-bottom:8px;">📐 NAV 괴리율이란?</div>'
-                    f'<div style="font-size:0.95rem;color:#E6EDF3;margin-bottom:6px;">'
+                    f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.06);">'
+                    f'<div style="font-size:0.72rem;color:#7a7a7a;margin-bottom:8px;">📐 NAV 괴리율이란?</div>'
+                    f'<div style="font-size:0.95rem;color:#1d1d1f;margin-bottom:6px;font-variant-numeric:tabular-nums;">'
                     f'현재가(<b>{_price:,.0f}원</b>) vs NAV(<b>{_nav:,.0f}원</b>)</div>'
                     f'<div style="font-size:1.2rem;font-weight:700;color:{_prem_color};">'
                     f'{"🔴 프리미엄" if _premium > 0 else "🟢 할인"} {_premium:+.2f}%</div>'
-                    f'<div style="font-size:0.78rem;color:#8B949E;margin-top:8px;line-height:1.6;word-break:keep-all;">'
+                    f'<div style="font-size:0.78rem;color:#7a7a7a;margin-top:8px;line-height:1.6;word-break:keep-all;">'
                     f'{"시장가가 NAV보다 높음 → 고평가. 매수 시 주의 필요" if _premium > 0.5 else "시장가가 NAV보다 낮음 → 저평가. 잠재적 매수 기회"}'
                     f'</div></div>',
                     unsafe_allow_html=True,
@@ -2240,12 +2241,12 @@ def render_fund_tab(
                 st.markdown("### 📈 기술적 분석 (ETF 동일 적용)")
                 _sig_score = signals.get("score", 0)
                 _sig_label = signals.get("label", "N/A")
-                _sig_clr   = "#a5d6a7" if _sig_score >= 3 else ("#ef9a9a" if _sig_score <= -3 else "#bdbdbd")
+                _sig_clr   = "#34c759" if _sig_score >= 3 else ("#ff3b30" if _sig_score <= -3 else "#b0b0b0")
                 st.markdown(
-                    f'<div style="background:#161B22;border:1px solid #30363D;border-radius:12px;'
-                    f'padding:14px 18px;display:flex;align-items:center;justify-content:space-between;">'
-                    f'<span style="font-size:0.85rem;color:#8B949E;">기술적 신호</span>'
-                    f'<b style="color:{_sig_clr};font-size:1rem;">{_sig_label} ({_sig_score:+.1f}점)</b>'
+                    f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;'
+                    f'padding:14px 18px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 2px rgba(0,0,0,0.06);">'
+                    f'<span style="font-size:0.85rem;color:#7a7a7a;">기술적 신호</span>'
+                    f'<b style="color:{_sig_clr};font-size:1rem;font-variant-numeric:tabular-nums;">{_sig_label} ({_sig_score:+.1f}점)</b>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -2289,28 +2290,28 @@ def render_fund_tab(
                 fs   = fund_score_data.get("fund_score", 0)
                 flbl = fund_score_data.get("fund_label", "N/A")
                 if fs >= 3:
-                    fbg, ffc = "#1a2f3a", "#80cbc4"
+                    fbg, ffc = "rgba(52,199,89,0.06)", "#1a7a35"
                 elif fs <= -2:
-                    fbg, ffc = "#3a2a1a", "#ffcc80"
+                    fbg, ffc = "rgba(255,59,48,0.06)", "#cc2200"
                 else:
-                    fbg, ffc = "#1e2130", "#bdbdbd"
+                    fbg, ffc = "#f5f5f7", "#7a7a7a"
                 st.markdown(f"""
 <div class="signal-box" style="background:{fbg};">
-  <div style="font-size:0.7rem;color:#888;margin-bottom:3px;letter-spacing:1px;">🏛️ 장투 신호</div>
-  <div style="font-size:1.25rem;font-weight:bold;color:{ffc};">🏛️ {flbl}</div>
-  <div style="font-size:0.8rem;color:#aaa;margin-top:3px;">장투 점수: <b style="color:{ffc};">{fs:+.1f}</b></div>
+  <div style="font-size:0.7rem;color:#7a7a7a;margin-bottom:3px;">🏛️ 장투 신호</div>
+  <div style="font-size:1.25rem;font-weight:600;color:{ffc};">🏛️ {flbl}</div>
+  <div style="font-size:0.8rem;color:#7a7a7a;margin-top:3px;font-variant-numeric:tabular-nums;">장투 점수: <b style="color:{ffc};">{fs:+.1f}</b></div>
 </div>
 """, unsafe_allow_html=True)
 
                 def _fund_bar(label, score, weight):
-                    c = "#a5d6a7" if score >= 65 else ("#ef9a9a" if score <= 35 else "#fff176")
+                    c = "#34c759" if score >= 65 else ("#ff3b30" if score <= 35 else "#ff9500")
                     st.markdown(
                         f'<div style="margin-bottom:5px;">'
                         f'<div style="display:flex;justify-content:space-between;font-size:0.75rem;">'
-                        f'<span style="color:#ccc;">{label} <span style="color:#555;">({weight})</span></span>'
-                        f'<b style="color:{c};">{score:.0f}</b></div>'
-                        f'<div style="background:#2a2d3e;border-radius:3px;height:5px;">'
-                        f'<div style="background:{c};width:{int(score)}%;height:5px;border-radius:3px;"></div>'
+                        f'<span style="color:#1d1d1f;">{label} <span style="color:#b0b0b0;">({weight})</span></span>'
+                        f'<b style="color:{c};font-variant-numeric:tabular-nums;">{score:.0f}</b></div>'
+                        f'<div style="background:#e0e0e0;border-radius:3px;height:4px;">'
+                        f'<div style="background:{c};width:{int(score)}%;height:4px;border-radius:3px;"></div>'
                         f'</div></div>',
                         unsafe_allow_html=True,
                     )
@@ -2413,10 +2414,10 @@ def render_fund_tab(
             st.markdown("### 🎖️ 투자 거장의 한 줄 평")
             _verdicts   = fund_score_data.get("master_verdicts", {})
             _master_meta = [
-                ("그레이엄", "📖 벤저민 그레이엄", "#80cbc4", "안전마진·가치투자의 아버지"),
-                ("버핏",    "🏛️ 워렌 버핏",       "#a5d6a7", "ROE 지속성·경제적 해자"),
-                ("린치",    "🚀 피터 린치",        "#ce93d8", "PEG·성장주 발굴"),
-                ("오닐",    "🔥 윌리엄 오닐",      "#ffcc80", "신고가·CANSLIM"),
+                ("그레이엄", "📖 벤저민 그레이엄", "#0066cc", "안전마진·가치투자의 아버지"),
+                ("버핏",    "🏛️ 워렌 버핏",       "#34c759", "ROE 지속성·경제적 해자"),
+                ("린치",    "🚀 피터 린치",        "#ff9500", "PEG·성장주 발굴"),
+                ("오닐",    "🔥 윌리엄 오닐",      "#ff3b30", "신고가·CANSLIM"),
             ]
             _vcols = st.columns(4)
             for _vcol, (_key, _name, _clr, _sub) in zip(_vcols, _master_meta):
@@ -2425,12 +2426,13 @@ def render_fund_tab(
                 _verdict = _v.get("판정", "N/A")
                 _comment = _v.get("comment", "데이터 부족")
                 _vcol.markdown(
-                    f'<div style="background:#161B22;border-radius:12px;padding:14px;'
-                    f'border:1px solid #30363D;border-top:3px solid {_clr};min-height:130px;">'
-                    f'<div style="font-size:0.65rem;color:#8B949E;letter-spacing:0.6px;margin-bottom:5px;">{_sub}</div>'
-                    f'<div style="font-size:0.85rem;font-weight:700;color:{_clr};margin-bottom:6px;">{_name}</div>'
-                    f'<div style="font-size:1rem;font-weight:700;color:#E6EDF3;margin-bottom:6px;">{_icon} {_verdict}</div>'
-                    f'<div style="font-size:0.75rem;color:#8B949E;line-height:1.6;word-break:keep-all;">{_comment}</div>'
+                    f'<div style="background:#ffffff;border-radius:12px;padding:14px;'
+                    f'border:1px solid #e0e0e0;border-top:3px solid {_clr};min-height:130px;'
+                    f'box-shadow:0 1px 3px rgba(0,0,0,0.06);">'
+                    f'<div style="font-size:0.65rem;color:#7a7a7a;margin-bottom:5px;">{_sub}</div>'
+                    f'<div style="font-size:0.85rem;font-weight:600;color:{_clr};margin-bottom:6px;">{_name}</div>'
+                    f'<div style="font-size:1rem;font-weight:600;color:#1d1d1f;margin-bottom:6px;">{_icon} {_verdict}</div>'
+                    f'<div style="font-size:0.75rem;color:#7a7a7a;line-height:1.6;word-break:keep-all;">{_comment}</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -2455,23 +2457,23 @@ def render_fund_tab(
                         val = _inv_f.get(key)
                         if val is not None:
                             _sign  = "+" if val > 0 else ""
-                            _color = "#26a69a" if val > 0 else ("#ef5350" if val < 0 else "#8B949E")
-                            _inv_bg = "rgba(38,166,154,0.08)" if val > 0 else ("rgba(239,83,80,0.08)" if val < 0 else "#161B22")
+                            _color = "#34c759" if val > 0 else ("#ff3b30" if val < 0 else "#7a7a7a")
+                            _inv_bg = "rgba(52,199,89,0.06)" if val > 0 else ("rgba(255,59,48,0.06)" if val < 0 else "#f5f5f7")
                             col.markdown(
-                                f'<div style="background:{_inv_bg};border:1px solid #30363D;border-radius:10px;'
+                                f'<div style="background:{_inv_bg};border:1px solid #e0e0e0;border-radius:10px;'
                                 f'padding:14px;text-align:center;">'
-                                f'<div style="font-size:0.72rem;color:#8B949E;letter-spacing:0.5px;margin-bottom:6px;">{label}</div>'
-                                f'<div style="font-size:1.1rem;font-weight:700;color:{_color};">{_sign}{val:,}</div>'
-                                f'<div style="font-size:0.68rem;color:#484F58;margin-top:3px;">주(株)</div>'
+                                f'<div style="font-size:0.72rem;color:#7a7a7a;margin-bottom:6px;">{label}</div>'
+                                f'<div style="font-size:1.1rem;font-weight:600;color:{_color};font-variant-numeric:tabular-nums;">{_sign}{val:,}</div>'
+                                f'<div style="font-size:0.68rem;color:#b0b0b0;margin-top:3px;">주(株)</div>'
                                 f'</div>',
                                 unsafe_allow_html=True,
                             )
                         else:
                             col.markdown(
-                                f'<div style="background:#161B22;border:1px solid #30363D;border-radius:10px;'
+                                f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:10px;'
                                 f'padding:14px;text-align:center;">'
-                                f'<div style="font-size:0.72rem;color:#8B949E;margin-bottom:6px;">{label}</div>'
-                                f'<div style="font-size:1.1rem;color:#484F58;">N/A</div>'
+                                f'<div style="font-size:0.72rem;color:#7a7a7a;margin-bottom:6px;">{label}</div>'
+                                f'<div style="font-size:1.1rem;color:#b0b0b0;">N/A</div>'
                                 f'</div>',
                                 unsafe_allow_html=True,
                             )
@@ -2485,10 +2487,10 @@ def render_fund_tab(
                     _trend = analyze_investor_trend(_hist)
                     _tr_score = _trend["score"]
 
-                    if _tr_score >= 3:    _tr_color = "#22c55e"
-                    elif _tr_score >= 1:  _tr_color = "#4b9cf5"
-                    elif _tr_score <= -2: _tr_color = "#ef4444"
-                    else:                 _tr_color = "#8B949E"
+                    if _tr_score >= 3:    _tr_color = "#34c759"
+                    elif _tr_score >= 1:  _tr_color = "#0066cc"
+                    elif _tr_score <= -2: _tr_color = "#ff3b30"
+                    else:                 _tr_color = "#7a7a7a"
 
                     st.markdown("---")
                     st.markdown(
@@ -2505,13 +2507,13 @@ def render_fund_tab(
                     _tr_col1, _tr_col2 = st.columns(2)
                     with _tr_col1:
                         st.markdown(
-                            '<div style="font-size:0.75rem;font-weight:600;color:#22c55e;'
+                            '<div style="font-size:0.75rem;font-weight:600;color:#34c759;'
                             'margin-bottom:8px;letter-spacing:0.5px;">🎯 수급 긍정 근거</div>',
                             unsafe_allow_html=True,
                         )
                         for _r in _trend["reasons"]:
                             st.markdown(
-                                f'<div style="background:rgba(38,166,154,0.07);border-left:3px solid #26a69a;'
+                                f'<div style="background:rgba(52,199,89,0.07);border-left:3px solid #34c759;'
                                 f'border-radius:8px;padding:8px 12px;margin-bottom:6px;'
                                 f'font-size:0.78rem;color:{COLORS["text"]};line-height:1.5;word-break:keep-all;">'
                                 f'{_r}</div>',
@@ -2519,14 +2521,14 @@ def render_fund_tab(
                             )
                     with _tr_col2:
                         st.markdown(
-                            '<div style="font-size:0.75rem;font-weight:600;color:#ef5350;'
+                            '<div style="font-size:0.75rem;font-weight:600;color:#ff3b30;'
                             'margin-bottom:8px;letter-spacing:0.5px;">⚠️ 수급 리스크 경고</div>',
                             unsafe_allow_html=True,
                         )
                         if _trend["warnings"]:
                             for _w in _trend["warnings"]:
                                 st.markdown(
-                                    f'<div style="background:rgba(239,83,80,0.08);border-left:3px solid #ef5350;'
+                                    f'<div style="background:rgba(255,59,48,0.08);border-left:3px solid #ff3b30;'
                                     f'border-radius:8px;padding:8px 12px;margin-bottom:6px;'
                                     f'font-size:0.78rem;color:{COLORS["text"]};line-height:1.5;word-break:keep-all;">'
                                     f'{_w}</div>',
@@ -2534,9 +2536,9 @@ def render_fund_tab(
                                 )
                         else:
                             st.markdown(
-                                f'<div style="background:rgba(38,166,154,0.07);border-left:3px solid #22c55e;'
+                                f'<div style="background:rgba(52,199,89,0.07);border-left:3px solid #34c759;'
                                 f'border-radius:8px;padding:8px 12px;'
-                                f'font-size:0.78rem;color:#22c55e;line-height:1.5;">'
+                                f'font-size:0.78rem;color:#34c759;line-height:1.5;">'
                                 f'✅ 메이저 수급 이탈 징후나 개인에게 물량을 떠넘기는 불리한 패턴이 발견되지 않았습니다.'
                                 f'</div>',
                                 unsafe_allow_html=True,
@@ -2734,13 +2736,13 @@ def _render_pf_body(
     _cum_buy_krw    = sum(_krw(t["buy_price"]  * t["quantity"], t["ticker"]) for t in _trade_history)
 
     st.markdown("""
-<div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);
+<div style="background:rgba(0,102,204,0.06);border:1px solid rgba(0,102,204,0.18);
         border-radius:12px;padding:12px 16px;margin-bottom:8px;
         display:flex;align-items:center;gap:10px">
   <span style="font-size:1.2rem">➕</span>
   <div>
-    <div style="font-size:.85rem;font-weight:600;color:#C4B5FD">종목 추가는 사이드바(좌측)에서</div>
-    <div style="font-size:.75rem;color:#94A3B8;margin-top:2px">로그인 상태에서 사이드바 하단 '포트폴리오 종목 추가' 섹션 이용</div>
+    <div style="font-size:.85rem;font-weight:600;color:#0066cc">종목 추가는 사이드바(좌측)에서</div>
+    <div style="font-size:.75rem;color:#7a7a7a;margin-top:2px">로그인 상태에서 사이드바 하단 '포트폴리오 종목 추가' 섹션 이용</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -2761,53 +2763,53 @@ def _render_pf_body(
             "overall_pct":   ((_total_val + _cum_sell_krw) / _hdr_total_in * 100 - 100) if _hdr_total_in > 0 else None,
         }
 
-        _pnl_color    = "#10B981" if _total_pnl >= 0 else "#3B82F6"
-        _profit_color = "#10B981" if _cum_profit_krw >= 0 else "#3B82F6"
+        _pnl_color    = COLORS["gain"] if _total_pnl >= 0 else COLORS["loss"]
+        _profit_color = COLORS["gain"] if _cum_profit_krw >= 0 else COLORS["loss"]
         _pnl_pct_str  = f"{_total_pnl_pct:+.2f}%"
         _m1, _m2, _m3, _m4 = st.columns(4)
         _m1.markdown(f"""
 <div class="ma-metric-card">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">총 매수 금액</span>
+    <span style="font-size:.75rem;color:#7a7a7a;font-weight:500;">총 매수 금액</span>
   </div>
-  <div style="font-size:1.35rem;font-weight:700;color:#E2E8F0;line-height:1.2">₩{_total_cost:,.0f}</div>
-  <div style="font-size:.72rem;color:#64748B;margin-top:6px">평단가 × 수량 합계</div>
+  <div style="font-size:1.35rem;font-weight:600;color:#1d1d1f;line-height:1.14;font-variant-numeric:tabular-nums;">₩{_total_cost:,.0f}</div>
+  <div style="font-size:.72rem;color:#7a7a7a;margin-top:6px">평단가 × 수량 합계</div>
 </div>
 """, unsafe_allow_html=True)
         _m2.markdown(f"""
 <div class="ma-metric-card">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">현재 평가금</span>
+    <span style="font-size:.75rem;color:#7a7a7a;font-weight:500;">현재 평가금</span>
   </div>
-  <div style="font-size:1.35rem;font-weight:700;color:#E2E8F0;line-height:1.2">₩{_total_val:,.0f}</div>
-  <div style="font-size:.72rem;color:{_pnl_color};margin-top:6px;font-weight:600">{_pnl_pct_str} &nbsp;·&nbsp; USD/KRW≈{_usd_krw:,.0f}</div>
+  <div style="font-size:1.35rem;font-weight:600;color:#1d1d1f;line-height:1.14;font-variant-numeric:tabular-nums;">₩{_total_val:,.0f}</div>
+  <div style="font-size:.72rem;color:{_pnl_color};margin-top:6px;font-weight:600;font-variant-numeric:tabular-nums;">{_pnl_pct_str} &nbsp;·&nbsp; USD/KRW≈{_usd_krw:,.0f}</div>
 </div>
 """, unsafe_allow_html=True)
         _m3.markdown(f"""
 <div class="ma-metric-card">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">누적 매도금</span>
+    <span style="font-size:.75rem;color:#7a7a7a;font-weight:500;">누적 매도금</span>
   </div>
-  <div style="font-size:1.35rem;font-weight:700;color:#E2E8F0;line-height:1.2">₩{_cum_sell_krw:,.0f}</div>
-  <div style="font-size:.72rem;color:#64748B;margin-top:6px">매도 회수 총액 (원금+수익)</div>
+  <div style="font-size:1.35rem;font-weight:600;color:#1d1d1f;line-height:1.14;font-variant-numeric:tabular-nums;">₩{_cum_sell_krw:,.0f}</div>
+  <div style="font-size:.72rem;color:#7a7a7a;margin-top:6px">매도 회수 총액 (원금+수익)</div>
 </div>
 """, unsafe_allow_html=True)
         _m4.markdown(f"""
 <div class="ma-metric-card">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-    <span style="font-size:.75rem;color:#94A3B8;font-weight:500;letter-spacing:.3px">누적 실현 손익</span>
+    <span style="font-size:.75rem;color:#7a7a7a;font-weight:500;">누적 실현 손익</span>
   </div>
-  <div style="font-size:1.35rem;font-weight:700;color:{_profit_color};line-height:1.2">₩{_cum_profit_krw:+,.0f}</div>
-  <div style="font-size:.72rem;color:#64748B;margin-top:6px">매도 완료 종목 손익 합계</div>
+  <div style="font-size:1.35rem;font-weight:600;color:{_profit_color};line-height:1.14;font-variant-numeric:tabular-nums;">₩{_cum_profit_krw:+,.0f}</div>
+  <div style="font-size:.72rem;color:#7a7a7a;margin-top:6px">매도 완료 종목 손익 합계</div>
 </div>
 """, unsafe_allow_html=True)
 
         _total_in = _total_cost + _cum_buy_krw
         if _total_in > 0:
             _overall_pct = (_total_val + _cum_sell_krw) / _total_in * 100 - 100
-            _ov_clr = "#4caf50" if _overall_pct >= 0 else "#ef4444"
+            _ov_clr = "#34c759" if _overall_pct >= 0 else "#ff3b30"
             st.markdown(
-                f'<div style="text-align:right;font-size:.82rem;color:#888;margin-top:-6px">'
+                f'<div style="text-align:right;font-size:.82rem;color:#7a7a7a;margin-top:-6px">'
                 f'전체 기간 수익률 &nbsp;'
                 f'<b style="color:{_ov_clr};font-size:.95rem">{_overall_pct:+.2f}%</b>'
                 f'&nbsp;&nbsp;|&nbsp;&nbsp;'
@@ -2858,19 +2860,19 @@ def _render_pf_body(
             _news_rt_ts = _pf_news_result.get("_rt_ts", _pf_news_rt_ts)
             if _news_rt_ts:
                 st.markdown(
-                    f'<div style="font-size:.75rem;color:#22c55e;margin-bottom:6px">'
+                    f'<div style="font-size:.75rem;color:#34c759;margin-bottom:6px">'
                     f'✅ 실시간 시세 반영 완료 &nbsp;|&nbsp; 기준 시각: <b>{_news_rt_ts}</b>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
             _avg_s = _pf_news_result.get("portfolio_sentiment_avg", 0.0)
             _avg_l = _pf_news_result.get("portfolio_sentiment_label", "중립")
-            _s_clr = "#4caf50" if _avg_s >= 0.5 else ("#ef4444" if _avg_s <= -0.5 else "#888")
+            _s_clr = "#34c759" if _avg_s >= 0.5 else ("#ff3b30" if _avg_s <= -0.5 else "#7a7a7a")
             _ew_c1, _ew_c2 = st.columns([1, 3])
             _ew_c1.markdown(
-                f'<div style="background:#1e2130;border-radius:10px;padding:18px;text-align:center">'
-                f'<div style="font-size:.75rem;color:#999;margin-bottom:6px">포트폴리오 심리 지수</div>'
-                f'<div style="font-size:2.2rem;font-weight:700;color:{_s_clr}">{_avg_s:+.2f}</div>'
+                f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:18px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,0.06)">'
+                f'<div style="font-size:.75rem;color:#7a7a7a;margin-bottom:6px">포트폴리오 심리 지수</div>'
+                f'<div style="font-size:2.2rem;font-weight:600;color:{_s_clr};font-variant-numeric:tabular-nums;">{_avg_s:+.2f}</div>'
                 f'<div style="font-size:.85rem;color:{_s_clr};margin-top:4px">{_avg_l}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -2880,15 +2882,15 @@ def _render_pf_body(
             for _bt, _br in _per_news.items():
                 _bs   = _br.get("score", 0.0)
                 _bl   = _br.get("label", "중립")
-                _bc   = "#4caf50" if _bs >= 0.5 else ("#ef4444" if _bs <= -0.5 else "#888")
+                _bc   = "#34c759" if _bs >= 0.5 else ("#ff3b30" if _bs <= -0.5 else "#7a7a7a")
                 _bnm  = _pf_nm.get(_bt, "")
-                _blbl = (f"{_bnm}<br><span style='font-size:.72rem;color:#777'>{_bt}</span>" if _bnm else _bt)
+                _blbl = (f"{_bnm}<br><span style='font-size:.72rem;color:#7a7a7a'>{_bt}</span>" if _bnm else _bt)
                 _cur_p  = _pf_prices.get(_bt, 0.0)
                 _avg_p  = next((i["avg_price"] for i in _items if i["ticker"] == _bt), 0.0)
                 _pnl_pc = (_cur_p / _avg_p - 1) * 100 if (_cur_p and _avg_p) else None
                 _pnl_html = ""
                 if _pnl_pc is not None:
-                    _pnl_c  = "#4caf50" if _pnl_pc >= 0 else "#ef4444"
+                    _pnl_c  = "#34c759" if _pnl_pc >= 0 else "#ff3b30"
                     _impact = (
                         "호재 반영↑" if (_bs >= 0.5 and _pnl_pc >= 0)
                         else "악재 하락↓" if (_bs <= -0.5 and _pnl_pc < 0)
@@ -2896,11 +2898,11 @@ def _render_pf_body(
                         else "뉴스↓ 가격↑" if (_bs <= -0.5 and _pnl_pc >= 0)
                         else "중립"
                     )
-                    _pnl_html = f"<span style='font-size:.7rem;color:{_pnl_c};margin-left:4px'>({_pnl_pc:+.1f}% {_impact})</span>"
+                    _pnl_html = f"<span style='font-size:.7rem;color:{_pnl_c};margin-left:4px;font-variant-numeric:tabular-nums;'>({_pnl_pc:+.1f}% {_impact})</span>"
                 _bdg += (
-                    f'<span style="background:#252836;border-radius:8px;padding:6px 12px;font-size:.85rem;line-height:1.5">'
-                    f'<b style="color:#ddd">{_blbl}</b> '
-                    f'<span style="color:{_bc}">{_bl} ({_bs:+.1f})</span>'
+                    f'<span style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:8px;padding:6px 12px;font-size:.85rem;line-height:1.5">'
+                    f'<b style="color:#1d1d1f">{_blbl}</b> '
+                    f'<span style="color:{_bc};font-variant-numeric:tabular-nums;">{_bl} ({_bs:+.1f})</span>'
                     f'{_pnl_html}</span>'
                 )
             _bdg += '</div>'
@@ -2911,15 +2913,15 @@ def _render_pf_body(
                 st.markdown("**🔔 중요 알림**")
                 for _al in _alerts:
                     _akw   = _al["keyword"]
-                    _ak_c  = "#ff6b6b" if _akw in ("증자", "상장폐지", "소송", "제재") else "#ffd93d"
+                    _ak_c  = "#ff3b30" if _akw in ("증자", "상장폐지", "소송", "제재") else "#ff9500"
                     _aname = _al.get("company_name") or _al["ticker"]
                     st.markdown(
-                        f'<div style="background:#1a1d2e;border-left:4px solid {_ak_c};'
+                        f'<div style="background:#f5f5f7;border-left:4px solid {_ak_c};border:1px solid #e0e0e0;'
                         f'padding:10px 16px;border-radius:0 8px 8px 0;margin:3px 0">'
                         f'<span style="background:{_ak_c};color:#000;font-size:.72rem;'
                         f'border-radius:4px;padding:2px 6px;margin-right:8px;font-weight:700">[{_akw}]</span>'
-                        f'<b style="color:#e0e0e0">{_aname}</b> — '
-                        f'<span style="color:#ccc">{_al["title"]}</span></div>',
+                        f'<b style="color:#1d1d1f">{_aname}</b> — '
+                        f'<span style="color:#7a7a7a">{_al["title"]}</span></div>',
                         unsafe_allow_html=True,
                     )
         else:
@@ -2930,16 +2932,17 @@ def _render_pf_body(
         _pf_per_news: dict = st.session_state.get("pf_news_result", {}).get("per_ticker", {})
         _tbl_css = """
 <style>
-.pf-tbl{width:100%;border-collapse:collapse;font-size:.9rem}
-.pf-tbl th{background:#1e2130;color:#9e9e9e;padding:10px 14px;text-align:right;
-       font-weight:500;border-bottom:2px solid #333;white-space:nowrap}
+.pf-tbl{width:100%;border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums;
+        font-family:"SF Pro Text",system-ui,-apple-system,sans-serif}
+.pf-tbl th{background:#f5f5f7;color:#7a7a7a;padding:10px 14px;text-align:right;
+       font-weight:600;border-bottom:1px solid #e0e0e0;white-space:nowrap;letter-spacing:-0.12px}
 .pf-tbl th:first-child,.pf-tbl th:last-child{text-align:left}
-.pf-tbl td{padding:10px 14px;border-bottom:1px solid #252836;text-align:right;color:#ccc}
-.pf-tbl td:first-child{text-align:left;color:#e0e0e0;font-weight:600}
+.pf-tbl td{padding:10px 14px;border-bottom:1px solid #e0e0e0;text-align:right;color:#1d1d1f}
+.pf-tbl td:first-child{text-align:left;color:#1d1d1f;font-weight:600}
 .pf-tbl tr:last-child td{border-bottom:none}
-.pf-tbl tr:hover td{background:#1a1d2e}
-.pp{color:#10B981;font-weight:700} .pn{color:#3B82F6;font-weight:700} .pz{color:#888}
-.ai-op{text-align:left!important;font-size:.8rem;max-width:200px;word-break:keep-all;line-height:1.4}
+.pf-tbl tr:hover td{background:rgba(0,102,204,0.04)}
+.pp{color:#34c759;font-weight:600} .pn{color:#ff3b30;font-weight:600} .pz{color:#b0b0b0}
+.ai-op{text-align:left!important;font-size:.8rem;max-width:200px;word-break:keep-all;line-height:1.4;color:#7a7a7a}
 </style>"""
         _tbl_head = (
             '<table class="pf-tbl"><thead><tr>'
@@ -2967,7 +2970,7 @@ def _render_pf_body(
                 _val_krw   = _krw(_cur, _t) * _qty
                 _val_str   = f"₩{_val_krw:,.0f}"
                 if not _is_krw_item:
-                    _val_str += f"<div style='font-size:.68rem;color:#555'>@{_usd_krw:,.0f}</div>"
+                    _val_str += f"<div style='font-size:.68rem;color:#7a7a7a'>@{_usd_krw:,.0f}</div>"
             else:
                 _cls = "pz"; _cur_str = "-"; _pct_str = "-"; _pnl_str = "-"; _val_str = "-"
             _nr   = _pf_per_news.get(_t)
@@ -2975,22 +2978,22 @@ def _render_pf_body(
             _nlb  = _nr.get("label", "중립") if _nr else None
             _pnlp = (_cur / _avg - 1) * 100 if (_cur and _avg) else None
             if _nsc is None:
-                _ai_txt, _ai_c = "분석 대기", "#666"
+                _ai_txt, _ai_c = "분석 대기", "#7a7a7a"
             elif _nsc >= 2 and _pnlp is not None and _pnlp >= 0:
-                _ai_txt, _ai_c = "호재 발생 + 수익 중 — 홀딩 권장", "#81c784"
+                _ai_txt, _ai_c = "호재 발생 + 수익 중 — 홀딩 권장", "#34c759"
             elif _nsc >= 1:
-                _ai_txt, _ai_c = f"뉴스 {_nlb} — 홀딩 유지", "#a5d6a7"
+                _ai_txt, _ai_c = f"뉴스 {_nlb} — 홀딩 유지", "#34c759"
             elif _nsc <= -2 and _pnlp is not None and _pnlp < -5:
-                _ai_txt, _ai_c = "부정 신호 + 손실 — 손절 검토", "#ef9a9a"
+                _ai_txt, _ai_c = "부정 신호 + 손실 — 손절 검토", "#ff3b30"
             elif _nsc <= -1:
-                _ai_txt, _ai_c = f"뉴스 {_nlb} — 비중 축소 검토", "#ffab91"
+                _ai_txt, _ai_c = f"뉴스 {_nlb} — 비중 축소 검토", "#ff9500"
             elif _pnlp is not None and _pnlp < -10:
-                _ai_txt, _ai_c = "큰 손실 중 — 손절라인 점검", "#ff8a65"
+                _ai_txt, _ai_c = "큰 손실 중 — 손절라인 점검", "#ff3b30"
             else:
-                _ai_txt, _ai_c = "중립 — 관망", "#aaa"
+                _ai_txt, _ai_c = "중립 — 관망", "#7a7a7a"
             _name_cell = (
                 f"<div style='font-weight:600;color:#e0e0e0'>{_nm}</div>"
-                f"<div style='font-size:.75rem;color:#666'>{_t}</div>"
+                f"<div style='font-size:.75rem;color:#7a7a7a'>{_t}</div>"
             ) if _nm else _t
             _tbl_rows_html.append(
                 f"<tr><td style='text-align:left'>{_name_cell}</td>"
@@ -3011,7 +3014,7 @@ def _render_pf_body(
         with st.expander("🎯 매도 가이드 (Exit Strategy)", expanded=False):
             _eg_h, _eg_btn = st.columns([5, 1])
             _eg_h.markdown(
-                "<small style='color:#999'>실시간가 기준 손절/익절 가이드 · 트레일링 스탑 · 목표가 근접 알림</small>",
+                "<small style='color:#7a7a7a'>실시간가 기준 손절/익절 가이드 · 트레일링 스탑 · 목표가 근접 알림</small>",
                 unsafe_allow_html=True,
             )
             _exit_result: dict = st.session_state.get("pf_exit_result", {})
@@ -3073,7 +3076,7 @@ def _render_pf_body(
                 _shown_rt = next((v.get("rt_ts") for v in _exit_result.values() if v.get("rt_ts")), _exit_rt_ts)
                 if _shown_rt:
                     st.markdown(
-                        f'<div style="font-size:.75rem;color:#22c55e;margin-bottom:8px">'
+                        f'<div style="font-size:.75rem;color:#34c759;margin-bottom:8px">'
                         f'✅ 실시간 시세 반영 완료 &nbsp;|&nbsp; 기준 시각: <b>{_shown_rt}</b>'
                         f'</div>',
                         unsafe_allow_html=True,
@@ -3092,7 +3095,7 @@ def _render_pf_body(
                 if _stp:
                     # ── ATR 가이드 결과 렌더링 ──────────────────────────────────
                     _status    = _stp.get("status", "")
-                    _guide_clr = _stp.get("guide_clr", "#888")
+                    _guide_clr = _stp.get("guide_clr", "#b0b0b0")
                     _message   = _stp.get("message", "")
                     _trigger   = _stp.get("final_trigger_line", 0.0)
                     _atr_v     = _stp.get("atr_14", 0.0)
@@ -3100,78 +3103,78 @@ def _render_pf_body(
                     _trail     = _stp.get("trail_stop", 0.0)
                     _t_max     = _stp.get("max_price_since_buy", _trailing.get(_t, 0.0))
                     _pnl_pc    = _stp.get("pnl_pct", 0.0)
-                    _pnl_clr   = "#4caf50" if _pnl_pc >= 0 else "#ef4444"
+                    _pnl_clr   = "#34c759" if _pnl_pc >= 0 else "#ff3b30"
 
                     # 가격 정보 행
                     _info_items = []
                     if _cur:
                         _info_items.append(
-                            f'{_cur_label} <b style="color:#ddd">{_efmt(_cur)}</b> '
+                            f'{_cur_label} <b style="color:#1d1d1f">{_efmt(_cur)}</b> '
                             f'<span style="color:{_pnl_clr}">({_pnl_pc:+.1f}%)</span>'
                         )
                     if _avg:
-                        _info_items.append(f'평단가 <b style="color:#aaa">{_efmt(_avg)}</b>')
+                        _info_items.append(f'평단가 <b style="color:#7a7a7a">{_efmt(_avg)}</b>')
                     if _t_max and _avg and _t_max > _avg:
                         _info_items.append(
-                            f'추적 최고가 <b style="color:#ffb74d">{_efmt(_t_max)}</b>'
+                            f'추적 최고가 <b style="color:#ff9500">{_efmt(_t_max)}</b>'
                         )
 
                     # ATR 분석 상세 행
                     _atr_items = []
                     if _atr_v:
-                        _atr_items.append(f'ATR(14) <b style="color:#90caf9">{_efmt(_atr_v)}</b>')
+                        _atr_items.append(f'ATR(14) <b style="color:#0066cc">{_efmt(_atr_v)}</b>')
                     if _atr_stop:
                         _atr_items.append(
-                            f'ATR 손절선 <b style="color:#ff8a65">{_efmt(_atr_stop)}</b>'
-                            f'<span style="color:#666;font-size:.75rem"> (평단 − ATR×2)</span>'
+                            f'ATR 손절선 <b style="color:#ff3b30">{_efmt(_atr_stop)}</b>'
+                            f'<span style="color:#7a7a7a;font-size:.75rem"> (평단 − ATR×2)</span>'
                         )
                     if _trail:
                         _atr_items.append(
-                            f'트레일링 스톱 <b style="color:#ff7043">{_efmt(_trail)}</b>'
-                            f'<span style="color:#666;font-size:.75rem"> (최고가 − ATR×2.5)</span>'
+                            f'트레일링 스톱 <b style="color:#ff3b30">{_efmt(_trail)}</b>'
+                            f'<span style="color:#7a7a7a;font-size:.75rem"> (최고가 − ATR×2.5)</span>'
                         )
 
                     _info_html = " &nbsp;|&nbsp; ".join(_info_items) if _info_items else ""
                     _atr_html  = " &nbsp;|&nbsp; ".join(_atr_items)  if _atr_items  else ""
                     _trigger_html = (
-                        f'<div style="margin-top:8px;padding:7px 12px;background:#1a2035;'
+                        f'<div style="margin-top:8px;padding:7px 12px;background:#f5f5f7;'
                         f'border:1px solid {_guide_clr};border-radius:8px;'
                         f'display:inline-flex;align-items:center;gap:10px">'
-                        f'<span style="font-size:.78rem;color:#999">📌 최종 기준선 (매도 트리거)</span>'
+                        f'<span style="font-size:.78rem;color:#7a7a7a">📌 최종 기준선 (매도 트리거)</span>'
                         f'<span style="font-size:1.05rem;font-weight:700;color:{_guide_clr}">'
                         f'{_efmt(_trigger)}</span></div>'
                     )
                     _status_html = (
-                        f'<div style="margin-top:6px;padding:8px 12px;background:#252836;'
-                        f'border-left:4px solid {_guide_clr};border-radius:0 8px 8px 0">'
-                        f'<div style="font-size:.95rem;font-weight:700;color:{_guide_clr};margin-bottom:3px">'
+                        f'<div style="margin-top:6px;padding:8px 12px;background:rgba(0,0,0,0.03);'
+                        f'border-left:3px solid {_guide_clr};border-radius:0 8px 8px 0">'
+                        f'<div style="font-size:.95rem;font-weight:600;color:{_guide_clr};margin-bottom:3px">'
                         f'{_status}</div>'
-                        f'<div style="font-size:.82rem;color:#bbb">{_message}</div></div>'
+                        f'<div style="font-size:.82rem;color:#7a7a7a">{_message}</div></div>'
                     )
 
                     st.markdown(
-                        f'<div style="background:#1e2130;border-radius:10px;padding:12px 16px;margin:6px 0">'
+                        f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:12px 16px;margin:6px 0;box-shadow:0 1px 2px rgba(0,0,0,0.05)">'
                         f'<div style="margin-bottom:6px">'
-                        + (f'<span style="font-size:.95rem;font-weight:700;color:#e0e0e0">{_enm}</span> ' if _enm else "")
-                        + f'<span style="font-size:.78rem;color:#666">{_t}</span></div>'
-                        f'<div style="font-size:.84rem;line-height:1.9">{_info_html}</div>'
-                        f'<div style="font-size:.80rem;line-height:1.9;margin-top:2px;color:#aaa">{_atr_html}</div>'
+                        + (f'<span style="font-size:.95rem;font-weight:600;color:#1d1d1f">{_enm}</span> ' if _enm else "")
+                        + f'<span style="font-size:.78rem;color:#7a7a7a">{_t}</span></div>'
+                        f'<div style="font-size:.84rem;line-height:1.9;color:#1d1d1f">{_info_html}</div>'
+                        f'<div style="font-size:.80rem;line-height:1.9;margin-top:2px;color:#7a7a7a">{_atr_html}</div>'
                         f'{_trigger_html}{_status_html}</div>',
                         unsafe_allow_html=True,
                     )
                 else:
                     # 분석 전 기본 카드 (분석 버튼 클릭 전)
                     _pnl_pc  = (_cur / _avg - 1) * 100 if (_cur and _avg) else 0.0
-                    _pnl_clr = "#4caf50" if _pnl_pc >= 0 else "#ef4444"
+                    _pnl_clr = "#34c759" if _pnl_pc >= 0 else "#ff3b30"
                     st.markdown(
-                        f'<div style="background:#1e2130;border-radius:10px;padding:12px 16px;margin:6px 0">'
+                        f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:12px 16px;margin:6px 0">'
                         f'<div style="margin-bottom:4px">'
-                        + (f'<span style="font-size:.95rem;font-weight:700;color:#e0e0e0">{_enm}</span> ' if _enm else "")
-                        + f'<span style="font-size:.78rem;color:#666">{_t}</span></div>'
-                        f'<div style="font-size:.84rem;color:#aaa">'
-                        f'{_cur_label} <b style="color:#ddd">{_efmt(_cur)}</b> '
+                        + (f'<span style="font-size:.95rem;font-weight:600;color:#1d1d1f">{_enm}</span> ' if _enm else "")
+                        + f'<span style="font-size:.78rem;color:#7a7a7a">{_t}</span></div>'
+                        f'<div style="font-size:.84rem;color:#7a7a7a;font-variant-numeric:tabular-nums;">'
+                        f'{_cur_label} <b style="color:#1d1d1f">{_efmt(_cur)}</b> '
                         f'<span style="color:{_pnl_clr}">({_pnl_pc:+.1f}%)</span>'
-                        f' &nbsp;|&nbsp; 평단가 <b style="color:#aaa">{_efmt(_avg)}</b>'
+                        f' &nbsp;|&nbsp; 평단가 <b style="color:#7a7a7a">{_efmt(_avg)}</b>'
                         f'</div></div>',
                         unsafe_allow_html=True,
                     )
@@ -3255,23 +3258,23 @@ def _render_pf_body(
             _kospi_up   = _mm_r.get("kospi_above_ma", True)
             _kosdaq_up  = _mm_r.get("kosdaq_above_ma", True)
             _mkt_status = _guide.get("market_status", "상승장")
-            _hhi_color  = "#ef4444" if _hhi > 2500 else ("#ffd93d" if _hhi > 1500 else "#4caf50")
-            _hhi_label  = "🔴 과집중" if _hhi > 2500 else ("🟡 중간" if _hhi > 1500 else "🟢 양호")
+            _hhi_color  = "#ff3b30" if _hhi > 2500 else ("#ff9500" if _hhi > 1500 else "#34c759")
+            _hhi_label  = "과집중" if _hhi > 2500 else ("중간" if _hhi > 1500 else "양호")
             _hhi_sub    = "섹터 집중 과도 — 분산 권고" if _is_conc else "균형 잡힌 분산 상태"
-            _mkt_color  = "#4caf50" if _kospi_up else "#ef4444"
+            _mkt_color  = "#34c759" if _kospi_up else "#ff3b30"
             _mkt_icon   = "📈" if _kospi_up else "📉"
             st.markdown(
                 f'<div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">'
-                f'<div style="background:#1e2130;border-radius:10px;padding:12px 18px;flex:1;min-width:160px">'
-                f'<div style="font-size:.75rem;color:#9e9e9e;margin-bottom:4px">HHI 편중도 지수</div>'
-                f'<div style="font-size:1.5rem;font-weight:700;color:{_hhi_color}">{_hhi:,.0f}</div>'
+                f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:12px 18px;flex:1;min-width:160px;box-shadow:0 1px 2px rgba(0,0,0,0.06)">'
+                f'<div style="font-size:.75rem;color:#7a7a7a;margin-bottom:4px">HHI 편중도 지수</div>'
+                f'<div style="font-size:1.5rem;font-weight:600;color:{_hhi_color};font-variant-numeric:tabular-nums;">{_hhi:,.0f}</div>'
                 f'<div style="font-size:.76rem;color:{_hhi_color}">{_hhi_label}</div>'
-                f'<div style="font-size:.72rem;color:#666;margin-top:2px">{_hhi_sub}</div>'
+                f'<div style="font-size:.72rem;color:#b0b0b0;margin-top:2px">{_hhi_sub}</div>'
                 f'</div>'
-                f'<div style="background:#1e2130;border-radius:10px;padding:12px 18px;flex:1;min-width:160px">'
-                f'<div style="font-size:.75rem;color:#9e9e9e;margin-bottom:4px">시장 추세 (20일 MA)</div>'
-                f'<div style="font-size:1.2rem;font-weight:700;color:{_mkt_color}">{_mkt_icon} {_mkt_status}</div>'
-                f'<div style="font-size:.76rem;color:#888;margin-top:4px">'
+                f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:12px 18px;flex:1;min-width:160px;box-shadow:0 1px 2px rgba(0,0,0,0.06)">'
+                f'<div style="font-size:.75rem;color:#7a7a7a;margin-bottom:4px">시장 추세 (20일 MA)</div>'
+                f'<div style="font-size:1.2rem;font-weight:600;color:{_mkt_color}">{_mkt_icon} {_mkt_status}</div>'
+                f'<div style="font-size:.76rem;color:#7a7a7a;margin-top:4px">'
                 f'KOSPI {"▲ MA 위" if _kospi_up else "▼ MA 아래"} &nbsp;·&nbsp; KOSDAQ {"▲ MA 위" if _kosdaq_up else "▼ MA 아래"}'
                 f'</div></div></div>',
                 unsafe_allow_html=True,
@@ -3287,18 +3290,18 @@ def _render_pf_body(
                 for _sn, _sv in _bar_sorted:
                     _sw    = _sv["weight"]
                     _rank  = _sc_rank_map.get(_sn, "")
-                    _bc    = "#ef4444" if _sw > 40 else ("#ff8a65" if _sw > 30 else ("#ffd93d" if _sw > 20 else "#4fc3f7"))
+                    _bc    = "#ff3b30" if _sw > 40 else ("#ff9500" if _sw > 30 else ("#ff9500" if _sw > 20 else "#0066cc"))
                     _bpct  = _sw / _bar_max * 100
                     _tks   = ", ".join(_pf_nm.get(t, t) or t for t in _sv["tickers"])
-                    _snc   = "#81c784" if _rank == "TOP" else ("#ef9a9a" if _rank == "BOTTOM" else "#ccc")
+                    _snc   = "#34c759" if _rank == "TOP" else ("#ff3b30" if _rank == "BOTTOM" else "#7a7a7a")
                     _snlbl = f"▲{_sn}" if _rank == "TOP" else (f"▼{_sn}" if _rank == "BOTTOM" else _sn)
                     _bar_html += (
                         f'<div style="display:flex;align-items:center;gap:8px">'
                         f'<div style="width:90px;font-size:.8rem;color:{_snc};text-align:right;white-space:nowrap">{_snlbl}</div>'
-                        f'<div style="flex:1;background:#252836;border-radius:4px;height:18px;overflow:hidden">'
+                        f'<div style="flex:1;background:#e0e0e0;border-radius:4px;height:14px;overflow:hidden">'
                         f'<div style="width:{_bpct:.0f}%;height:100%;background:{_bc};border-radius:4px"></div></div>'
-                        f'<div style="width:44px;font-size:.8rem;font-weight:700;color:{_bc}">{_sw:.1f}%</div>'
-                        f'<div style="font-size:.75rem;color:#666">{_tks}</div>'
+                        f'<div style="width:44px;font-size:.8rem;font-weight:600;color:{_bc};font-variant-numeric:tabular-nums;">{_sw:.1f}%</div>'
+                        f'<div style="font-size:.75rem;color:#7a7a7a">{_tks}</div>'
                         f'</div>'
                     )
                 _bar_html += "</div>"
@@ -3313,34 +3316,34 @@ def _render_pf_body(
                 _rnk_html = '<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">'
                 # 주도 섹터
                 _rnk_html += (
-                    '<div style="flex:1;min-width:180px;background:#1e2130;border-radius:10px;padding:10px 14px">'
-                    '<div style="font-size:.75rem;color:#81c784;font-weight:700;margin-bottom:6px">▲ 주도 섹터 TOP 3</div>'
+                    '<div style="flex:1;min-width:180px;background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:10px 14px">'
+                    '<div style="font-size:.75rem;color:#34c759;font-weight:600;margin-bottom:6px">▲ 주도 섹터 TOP 3</div>'
                 )
                 for _s in _top_secs[:3]:
                     _5d_str = f'+{_s["return_5d"]:.1f}%' if _s["return_5d"] >= 0 else f'{_s["return_5d"]:.1f}%'
                     _rnk_html += (
-                        f'<div style="font-size:.82rem;padding:4px 0;border-bottom:1px solid #252836">'
-                        f'<b style="color:#e0e0e0">{_s["sector"]}</b>'
-                        f'<span style="color:#81c784;margin-left:6px">{_5d_str}</span>'
-                        f'<span style="color:#555;font-size:.7rem;margin-left:6px">· 20d {_s["return_20d"]:+.1f}% · 거래량 {_s["vol_growth"]:+.0f}%</span>'
-                        f'<br><span style="font-size:.7rem;color:#666">{_s["name"]} · 점수 {_s["score"]:.1f}</span>'
+                        f'<div style="font-size:.82rem;padding:4px 0;border-bottom:1px solid #e0e0e0;font-variant-numeric:tabular-nums;">'
+                        f'<b style="color:#1d1d1f">{_s["sector"]}</b>'
+                        f'<span style="color:#34c759;margin-left:6px">{_5d_str}</span>'
+                        f'<span style="color:#b0b0b0;font-size:.7rem;margin-left:6px">· 20d {_s["return_20d"]:+.1f}% · 거래량 {_s["vol_growth"]:+.0f}%</span>'
+                        f'<br><span style="font-size:.7rem;color:#7a7a7a">{_s["name"]} · 점수 {_s["score"]:.1f}</span>'
                         f'</div>'
                     )
                 _rnk_html += '</div>'
                 # 소외 섹터
                 _rnk_html += (
-                    '<div style="flex:1;min-width:180px;background:#1e2130;border-radius:10px;padding:10px 14px">'
-                    '<div style="font-size:.75rem;color:#ef9a9a;font-weight:700;margin-bottom:6px">▼ 소외 섹터 BTM 3</div>'
+                    '<div style="flex:1;min-width:180px;background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:10px 14px">'
+                    '<div style="font-size:.75rem;color:#ff3b30;font-weight:600;margin-bottom:6px">▼ 소외 섹터 BTM 3</div>'
                 )
                 for _s in _btm_secs:
                     _5d_str = f'+{_s["return_5d"]:.1f}%' if _s["return_5d"] >= 0 else f'{_s["return_5d"]:.1f}%'
-                    _clr    = "#ef9a9a" if _s["return_5d"] < 0 else "#aaa"
+                    _clr    = "#ff3b30" if _s["return_5d"] < 0 else "#7a7a7a"
                     _rnk_html += (
-                        f'<div style="font-size:.82rem;padding:4px 0;border-bottom:1px solid #252836">'
-                        f'<b style="color:#e0e0e0">{_s["sector"]}</b>'
+                        f'<div style="font-size:.82rem;padding:4px 0;border-bottom:1px solid #e0e0e0;font-variant-numeric:tabular-nums;">'
+                        f'<b style="color:#1d1d1f">{_s["sector"]}</b>'
                         f'<span style="color:{_clr};margin-left:6px">{_5d_str}</span>'
-                        f'<span style="color:#555;font-size:.7rem;margin-left:6px">· 20d {_s["return_20d"]:+.1f}% · 거래량 {_s["vol_growth"]:+.0f}%</span>'
-                        f'<br><span style="font-size:.7rem;color:#666">{_s["name"]} · 점수 {_s["score"]:.1f}</span>'
+                        f'<span style="color:#b0b0b0;font-size:.7rem;margin-left:6px">· 20d {_s["return_20d"]:+.1f}% · 거래량 {_s["vol_growth"]:+.0f}%</span>'
+                        f'<br><span style="font-size:.7rem;color:#7a7a7a">{_s["name"]} · 점수 {_s["score"]:.1f}</span>'
                         f'</div>'
                     )
                 _rnk_html += '</div></div>'
@@ -3348,13 +3351,13 @@ def _render_pf_body(
 
             # ── 조건 매트릭스 진단 카드 ──────────────────────────────────
             st.markdown("""<style>
-.opt-card{background:#1e2130;border-radius:12px;padding:16px;margin-bottom:8px}
-.opt-card-title{font-size:.8rem;font-weight:700;color:#9e9e9e;margin-bottom:10px;letter-spacing:.5px}
-.opt-item{font-size:.85rem;line-height:1.7;padding:6px 10px;background:#252836;border-radius:8px;margin:4px 0;word-break:keep-all}
-.opt-empty{color:#555;font-size:.82rem;font-style:italic}
+.opt-card{background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;padding:16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06)}
+.opt-card-title{font-size:.8rem;font-weight:600;color:#7a7a7a;margin-bottom:10px;letter-spacing:0}
+.opt-item{font-size:.85rem;line-height:1.7;padding:6px 10px;background:#f5f5f7;border-radius:8px;margin:4px 0;word-break:keep-all;color:#1d1d1f}
+.opt-empty{color:#b0b0b0;font-size:.82rem;font-style:italic}
 </style>""", unsafe_allow_html=True)
 
-            _border_map = {"reduce": "#ef4444", "hold": "#81c784", "watch": "#ffd93d", "add": "#4fc3f7"}
+            _border_map = {"reduce": "#ff3b30", "hold": "#34c759", "watch": "#ff9500", "add": "#0066cc"}
             _recs       = _guide.get("recommendations", [])
             _miss       = _guide.get("missing_top", [])
             _pt         = _guide.get("profit_take", [])
@@ -3363,20 +3366,20 @@ def _render_pf_body(
             # 왼쪽: 조건 매트릭스 + 미보유 TOP 섹터
             _diag_html = ""
             for _r in _recs:
-                _bc2 = _border_map.get(_r["type"], "#555")
+                _bc2 = _border_map.get(_r["type"], "#b0b0b0")
                 _diag_html += (
                     f'<div class="opt-item" style="border-left:3px solid {_bc2}">'
-                    f'<b style="color:#e0e0e0">{_r["icon"]} {_r["sector"]} {_r["weight"]:.1f}%</b>'
-                    f'<br><span style="font-size:.78rem;color:#aaa">{_r["tickers"]}</span>'
-                    f'<br><span style="font-size:.74rem;color:#888">{_r["message"]}</span>'
+                    f'<b style="color:#1d1d1f">{_r["icon"]} {_r["sector"]} {_r["weight"]:.1f}%</b>'
+                    f'<br><span style="font-size:.78rem;color:#7a7a7a">{_r["tickers"]}</span>'
+                    f'<br><span style="font-size:.74rem;color:#b0b0b0">{_r["message"]}</span>'
                     f'</div>'
                 )
             for _m in _miss:
                 _diag_html += (
-                    f'<div class="opt-item" style="border-left:3px solid #4fc3f7">'
-                    f'<b style="color:#e0e0e0">🔍 {_m["sector"]} 미보유</b>'
-                    f'<br><span style="font-size:.78rem;color:#4fc3f7">{_m["name"]} · 5일 {_m["return_5d"]:+.1f}%</span>'
-                    f'<br><span style="font-size:.74rem;color:#888">포트폴리오에 없는 시장 주도 섹터 — 다변화 편입 검토</span>'
+                    f'<div class="opt-item" style="border-left:3px solid #0066cc">'
+                    f'<b style="color:#1d1d1f">🔍 {_m["sector"]} 미보유</b>'
+                    f'<br><span style="font-size:.78rem;color:#0066cc">{_m["name"]} · 5일 {_m["return_5d"]:+.1f}%</span>'
+                    f'<br><span style="font-size:.74rem;color:#b0b0b0">포트폴리오에 없는 시장 주도 섹터 — 다변화 편입 검토</span>'
                     f'</div>'
                 )
             if not _diag_html:
@@ -3388,10 +3391,10 @@ def _render_pf_body(
 
             # 오른쪽: 수익 확정 권고
             _pt_html = "".join(
-                f'<div class="opt-item" style="border-left:3px solid #ffd93d">'
-                f'<b style="color:#e0e0e0">{p["name"]}</b>'
-                f' <span style="color:#4caf50;font-weight:700">+{p["pnl_pct"]:.1f}%</span>'
-                f'<br><span style="font-size:.74rem;color:#888">{p["reason"]}</span></div>'
+                f'<div class="opt-item" style="border-left:3px solid #ff9500">'
+                f'<b style="color:#1d1d1f">{p["name"]}</b>'
+                f' <span style="color:#34c759;font-weight:600">+{p["pnl_pct"]:.1f}%</span>'
+                f'<br><span style="font-size:.74rem;color:#7a7a7a">{p["reason"]}</span></div>'
                 for p in _pt
             ) or '<span class="opt-empty">수익 확정 기준(+15%) 도달 종목 없음</span>'
             _gc2.markdown(
@@ -3461,24 +3464,24 @@ def _render_pf_body(
                         help=f"후보 풀 {_pool_sz}개 → L1 {_l1_cnt}개 → L2 {_l2_cnt}개 → 최종 {len(_recs)}개")
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("""<style>
-.rec-card{background:#1e2130;border-radius:12px;padding:16px 18px;margin-bottom:8px;border-top:3px solid #4fc3f7}
-.rec-card-name{font-size:1rem;font-weight:700;color:#e0e0e0}
-.rec-card-sector{font-size:.72rem;background:#252836;color:#9e9e9e;padding:2px 8px;border-radius:10px;margin-left:6px}
-.rec-card-reason{font-size:.8rem;color:#7ecfff;font-style:italic;margin-top:8px;line-height:1.5;
-             border-left:2px solid #4fc3f7;padding-left:8px}
-.rec-bar-bg{background:#252836;border-radius:4px;height:8px;margin:6px 0}
-.rec-bar-fg{height:8px;border-radius:4px;background:linear-gradient(90deg,#4fc3f7,#81c784)}
+.rec-card{background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;padding:16px 18px;margin-bottom:8px;border-top:3px solid #0066cc;box-shadow:0 1px 3px rgba(0,0,0,0.06)}
+.rec-card-name{font-size:1rem;font-weight:600;color:#1d1d1f}
+.rec-card-sector{font-size:.72rem;background:#f5f5f7;color:#7a7a7a;padding:2px 8px;border-radius:9999px;margin-left:6px;border:1px solid #e0e0e0}
+.rec-card-reason{font-size:.8rem;color:#0066cc;font-style:italic;margin-top:8px;line-height:1.5;
+             border-left:2px solid #0066cc;padding-left:8px}
+.rec-bar-bg{background:#e0e0e0;border-radius:4px;height:6px;margin:6px 0}
+.rec-bar-fg{height:6px;border-radius:4px;background:#0066cc}
 </style>""", unsafe_allow_html=True)
 
             def _render_rec_card(r, col):
                 _sent_pct  = round(r.sentiment_score * 100, 1)
                 _wt_pct    = round(r.weight * 100, 1)
-                _rsi_clr   = "#4caf50" if r.rsi < 50 else ("#ffd93d" if r.rsi < 70 else "#ef4444")
+                _rsi_clr   = "#34c759" if r.rsi < 50 else ("#ff9500" if r.rsi < 70 else "#ff3b30")
                 _cur_str   = getattr(r, "currency", "KRW")
                 _mkt       = getattr(r, "market", "KOSPI")
                 _native_px = getattr(r, "current_price", 0)
                 _price_str = f"₩{_native_px:,.0f}" if _cur_str == "KRW" else f"${_native_px:,.2f}"
-                _mkt_clr   = "#4fc3f7" if _mkt == "KOSPI" else ("#81c784" if _mkt == "KOSDAQ" else "#ffb74d")
+                _mkt_clr   = "#0066cc" if _mkt == "KOSPI" else ("#34c759" if _mkt == "KOSDAQ" else "#ff9500")
                 col.markdown(
                     f'<div class="rec-card">'
                     f'<div style="margin-bottom:6px">'
@@ -3486,17 +3489,17 @@ def _render_pf_body(
                     f'<span class="rec-card-sector">{r.sector}</span>'
                     f'<span style="font-size:.68rem;background:{_mkt_clr}22;color:{_mkt_clr};padding:1px 7px;border-radius:8px;margin-left:4px;font-weight:600">{_mkt}</span>'
                     f'</div>'
-                    f'<div style="font-size:.85rem;color:#aaa;margin-top:4px">현재가 <b style="color:#ddd">{_price_str}</b>'
+                    f'<div style="font-size:.85rem;color:#7a7a7a;margin-top:4px">현재가 <b style="color:#1d1d1f">{_price_str}</b>'
                     + (f' <span style="font-size:.75rem;color:#777">(₩{getattr(r,"current_price_krw",_native_px):,.0f})</span>' if _cur_str == "USD" else "")
                     + f'</div>'
                     f'<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">'
-                    f'<span style="font-size:.82rem;color:#9e9e9e">비중</span> <span style="font-size:.9rem;font-weight:700;color:#4fc3f7">{_wt_pct:.1f}%</span>'
-                    f'&nbsp;·&nbsp;<span style="font-size:.82rem;color:#9e9e9e">수량</span> <span style="font-size:.9rem;font-weight:700;color:#ffd93d">{r.quantity:,}주</span>'
-                    f'&nbsp;·&nbsp;<span style="font-size:.82rem;color:#9e9e9e">투자액</span> <span style="font-size:.9rem;font-weight:700;color:#81c784">₩{r.invested:,.0f}</span>'
+                    f'<span style="font-size:.82rem;color:#7a7a7a">비중</span> <span style="font-size:.9rem;font-weight:600;color:#0066cc;font-variant-numeric:tabular-nums;">{_wt_pct:.1f}%</span>'
+                    f'&nbsp;·&nbsp;<span style="font-size:.82rem;color:#7a7a7a">수량</span> <span style="font-size:.9rem;font-weight:600;color:#1d1d1f;font-variant-numeric:tabular-nums;">{r.quantity:,}주</span>'
+                    f'&nbsp;·&nbsp;<span style="font-size:.82rem;color:#7a7a7a">투자액</span> <span style="font-size:.9rem;font-weight:600;color:#34c759;font-variant-numeric:tabular-nums;">₩{r.invested:,.0f}</span>'
                     f'</div>'
                     f'<div style="margin-top:8px;display:flex;gap:16px">'
-                    f'<span style="font-size:.78rem;color:#999">뉴스감성 <b style="color:#4fc3f7">{_sent_pct:.0f}</b>/100</span>'
-                    f'<span style="font-size:.78rem;color:#999">RSI <b style="color:{_rsi_clr}">{r.rsi:.0f}</b></span>'
+                    f'<span style="font-size:.78rem;color:#7a7a7a">뉴스감성 <b style="color:#0066cc">{_sent_pct:.0f}</b>/100</span>'
+                    f'<span style="font-size:.78rem;color:#7a7a7a">RSI <b style="color:{_rsi_clr}">{r.rsi:.0f}</b></span>'
                     f'</div>'
                     f'<div class="rec-bar-bg"><div class="rec-bar-fg" style="width:{_wt_pct/40*100:.0f}%"></div></div>'
                     f'<div class="rec-card-reason">{r.reason}</div>'
@@ -3524,10 +3527,10 @@ def _render_pf_body(
                         for _mt in _missed:
                             _mn = _pf_nm.get(_mt, "") or _mt.split(".")[0]
                             st.markdown(
-                                f'<div style="background:#1e2130;border-radius:8px;padding:10px 14px;margin:5px 0;border-left:3px solid #555">'
-                                f'<span style="font-size:.9rem;font-weight:600;color:#e0e0e0">🟡 {_mn}</span>'
-                                f'<span style="font-size:.75rem;color:#666;margin-left:8px">{_mt}</span>'
-                                f'<div style="font-size:.82rem;color:#9e9e9e;margin-top:5px;line-height:1.5">'
+                                f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:8px;padding:10px 14px;margin:5px 0;border-left:3px solid #ff9500">'
+                                f'<span style="font-size:.9rem;font-weight:600;color:#1d1d1f">🟡 {_mn}</span>'
+                                f'<span style="font-size:.75rem;color:#7a7a7a;margin-left:8px">{_mt}</span>'
+                                f'<div style="font-size:.82rem;color:#7a7a7a;margin-top:5px;line-height:1.5">'
                                 f'선정 기준: RSI {RSI_OVERSOLD_BOUND}–{RSI_OVERBOUGHT_BOUND} + 20일 MA 돌파 + 뉴스 점수 {SENTIMENT_THRESHOLD*100:.0f}점 이상</div>'
                                 f'</div>',
                                 unsafe_allow_html=True,
@@ -3550,11 +3553,11 @@ def _render_pf_body(
                     _h_dt    = _h.get("created_at", "")[:16].replace("T", " ")
                     _h_names = ", ".join(r.get("name", r.get("ticker", "")) for r in _h.get("recommendations", []))
                     st.markdown(
-                        f'<div style="background:#1e2130;border-radius:8px;padding:10px 14px;margin:4px 0;font-size:.85rem">'
-                        f'<span style="color:#9e9e9e">{_h_dt}</span>&nbsp;|&nbsp;'
-                        f'<b style="color:#ddd">₩{_h.get("investment_amt",0):,}</b>&nbsp;·&nbsp;'
-                        f'<span style="color:#4fc3f7">{_h.get("risk_profile","중립형")}</span>'
-                        f'<div style="color:#aaa;margin-top:4px">{_h_names}</div>'
+                        f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:8px;padding:10px 14px;margin:4px 0;font-size:.85rem">'
+                        f'<span style="color:#7a7a7a">{_h_dt}</span>&nbsp;|&nbsp;'
+                        f'<b style="color:#1d1d1f">₩{_h.get("investment_amt",0):,}</b>&nbsp;·&nbsp;'
+                        f'<span style="color:#0066cc">{_h.get("risk_profile","중립형")}</span>'
+                        f'<div style="color:#7a7a7a;margin-top:4px">{_h_names}</div>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -3584,11 +3587,11 @@ def _render_pf_body(
                 _th_hdr_col, _th_clr_col = st.columns([7, 1])
                 _th_hdr_col.markdown(
                     f'<div style="display:flex;gap:24px;padding-top:6px;font-size:.85rem">'
-                    f'<span style="color:#9e9e9e">총 {_th_total_cnt}건</span>'
-                    f'<span style="color:#4caf50">수익 {_th_profit_cnt}건</span>'
-                    f'<span style="color:#ef4444">손실 {_th_total_cnt - _th_profit_cnt}건</span>'
-                    f'<span style="color:#aaa">누적 실현 손익 '
-                    f'<b style="color:{"#4caf50" if _cum_profit_krw >= 0 else "#ef4444"}">'
+                    f'<span style="color:#7a7a7a">총 {_th_total_cnt}건</span>'
+                    f'<span style="color:#34c759">수익 {_th_profit_cnt}건</span>'
+                    f'<span style="color:#ff3b30">손실 {_th_total_cnt - _th_profit_cnt}건</span>'
+                    f'<span style="color:#7a7a7a">누적 실현 손익 '
+                    f'<b style="color:{"#34c759" if _cum_profit_krw >= 0 else "#ff3b30"}">'
                     f'₩{_cum_profit_krw:+,.0f}</b></span></div>',
                     unsafe_allow_html=True,
                 )
