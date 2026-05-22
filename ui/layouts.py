@@ -486,7 +486,7 @@ def render_sidebar(
         rate_html = ""
         for pair, info in rates.items():
             chg_val = info["change"]
-            chg_color = "#34c759" if chg_val >= 0 else "#ff3b30"
+            chg_color = "#ff3b30" if chg_val >= 0 else "#0066cc"
             chg_sign = "+" if chg_val >= 0 else ""
             rate_html += _sb_row(pair, f"{info['rate']:,.2f}", f"{chg_sign}{chg_val:.3f}%", chg_color)
         st.markdown(rate_html, unsafe_allow_html=True)
@@ -502,7 +502,7 @@ def render_sidebar(
                 if len(d) >= 2:
                     p   = float(d["Close"].iloc[-1])
                     chg = (p - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2]) * 100
-                    chg_color = "#34c759" if chg >= 0 else "#ff3b30"
+                    chg_color = "#ff3b30" if chg >= 0 else "#0066cc"
                     chg_sign = "+" if chg >= 0 else ""
                     idx_html += _sb_row(idx_name, f"{p:,.2f}", f"{chg_sign}{chg:.2f}%", chg_color)
             except Exception:
@@ -3104,7 +3104,7 @@ def _render_pf_body(
 .pf-tbl td:first-child{text-align:left;color:#1d1d1f;font-weight:600}
 .pf-tbl tr:last-child td{border-bottom:none}
 .pf-tbl tr:hover td{background:rgba(0,102,204,0.04)}
-.pp{color:#34c759;font-weight:600} .pn{color:#ff3b30;font-weight:600} .pz{color:#b0b0b0}
+.pp{color:#ff3b30;font-weight:600} .pn{color:#0066cc;font-weight:600} .pz{color:#b0b0b0}
 .ai-op{text-align:left!important;font-size:.8rem;max-width:200px;word-break:keep-all;line-height:1.4;color:#7a7a7a}
 </style>"""
         _tbl_head = (
@@ -3155,7 +3155,7 @@ def _render_pf_body(
             else:
                 _ai_txt, _ai_c = "중립 — 관망", "#7a7a7a"
             _name_cell = (
-                f"<div style='font-weight:600;color:#e0e0e0'>{_nm}</div>"
+                f"<div style='font-weight:700;color:#1d1d1f'>{_nm}</div>"
                 f"<div style='font-size:.75rem;color:#7a7a7a'>{_t}</div>"
             ) if _nm else _t
             _tbl_rows_html.append(

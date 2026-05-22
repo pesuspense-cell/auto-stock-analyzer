@@ -85,7 +85,7 @@ body, .stApp, .stMarkdown, p, span, div {
   border-right: 1px solid var(--hairline) !important;
 }
 [data-testid="stSidebar"] * {
-  color: var(--ink) !important;
+  color: var(--) !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input {
@@ -1357,4 +1357,44 @@ div[data-testid="stProgress"] > div > div {
   .sdt-header { flex-direction: column; align-items: flex-start; }
   .sdt-price-row { justify-content: flex-start; }
   .sdt-sub-grid { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   커스텀 패치
+═══════════════════════════════════════════════════════════════════ */
+
+/* 1. 내부 캐시 클래스 배경 흰색 */
+.st-emotion-cache-qyg6jx {
+  background: #ffffff !important;
+}
+
+/* 2. 포트폴리오 테이블 종목명 셀 — 굵은 검은색 (인라인 스타일 override) */
+.pf-tbl tbody tr td div:first-child {
+  color: #000000 !important;
+  font-weight: 700 !important;
+}
+
+/* 3. 파란색 배경 버튼 → 흰색 텍스트 */
+button[style*="background:#0066cc"],
+button[style*="background: #0066cc"],
+button[style*="background:#2997ff"],
+button[style*="background: #2997ff"],
+[style*="background:#0066cc"],
+[style*="background: #0066cc"] {
+  color: #ffffff !important;
+}
+[style*="background:#0066cc"] *,
+[style*="background: #0066cc"] * {
+  color: #ffffff !important;
+}
+
+/* 4. 주요 섹터 ETF 컨테이너 — 회색 글래스모피즘 */
+.st-emotion-cache-twg6at.en7m6i60 > div > div,
+.en7m6i60 > div > div {
+  background: rgba(200, 200, 210, 0.45) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  border: 1px solid rgba(180, 180, 192, 0.35) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08) !important;
 }
