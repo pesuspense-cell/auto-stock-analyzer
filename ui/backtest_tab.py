@@ -15,6 +15,8 @@ import yfinance as yf
 # 마켓 선택지 정의
 _MARKETS = ["KOSPI", "KOSDAQ", "S&P500", "NASDAQ"]
 
+_BT_SCHEMA_VERSION = "v3"  # trade_log 스키마 변경 시 올려서 캐시 무효화
+
 _BENCHMARK_OPTIONS = {
     "^KS11 (KOSPI)":   "^KS11",
     "^KQ11 (KOSDAQ)":  "^KQ11",
@@ -128,7 +130,11 @@ def render_backtest_tab(tab) -> None:
             )
 
         elif "bt_result" in st.session_state:
-            _display_results(**st.session_state["bt_result"])
+            cached = st.session_state["bt_result"]
+            if cached.get("_schema") != _BT_SCHEMA_VERSION:
+                del st.session_state["bt_result"]
+            else:
+                _display_results(**cached)
 
 
 # ── 스크리닝 + 백테스트 실행 ────────────────────────────────────────────────────
@@ -178,21 +184,21 @@ def _run_and_display(
     df_sel["일평균 거래량"]   = df_sel["일평균 거래량"].apply(lambda x: f"{x:,.0f}")
     st.dataframe(df_sel, use_container_width=True)
 
-    tickers = [s["ticker"] for s in selected]
+    ticker_name_map = {s["ticker"]: s["name"] for s in selected}
 
     # ── Phase 2: 백테스트 ─────────────────────────────────────────────────
     st.markdown("#### 📊 Phase 2 — 백테스트 실행")
     bt_ph = st.empty()
-    bt_ph.caption(f"{len(tickers)}개 종목 · {start_date} ~ {end_date}")
+    bt_ph.caption(f"{len(ticker_name_map)}개 종목 · {start_date} ~ {end_date}")
 
     log_buf = io.StringIO()
     engine  = BacktestEngine(
-        tickers             = tickers,
         initial_capital     = initial_capital,
         start_date          = start_date,
         end_date            = end_date,
         deposit_schedule    = deposit_schedule,
         position_sizing_pct = position_pct,
+        ticker_name_map     = ticker_name_map,
     )
 
     with st.spinner("백테스트 실행 중... (다운로드 포함, 최대 수 분 소요)"):
@@ -212,6 +218,7 @@ def _run_and_display(
         bm_label         = benchmark_label,
         selected_stocks  = selected,
         deposit_schedule = deposit_schedule,
+        _schema          = _BT_SCHEMA_VERSION,
     )
     st.session_state["bt_result"] = result
     _display_results(**result)
@@ -390,14 +397,32 @@ def _display_results(
     with st.expander(f"📋 거래 내역 ({len(trade_log)}건)", expanded=False):
         if trade_log:
             df_tr = pd.DataFrame(trade_log)
-            df_tr["amount"] = df_tr["amount"].apply(lambda x: f"{x:,.0f}원")
+
+            # 구버전 캐시 호환 — 신규 필드 없으면 채워 넣기
+            if "name" not in df_tr.columns:
+                df_tr["name"] = df_tr["ticker"]
+            if "signal_tag" not in df_tr.columns:
+                df_tr["signal_tag"] = ""
+
+            _icon = {"BUY": "🛒", "SELL_TP": "💵✅", "SELL_SL": "💵❌", "SELL_TS": "🎯✅"}
+            df_tr["action"] = df_tr["action"].apply(lambda a: f"{_icon.get(a, '↩️')} {a}")
             df_tr["price"]  = df_tr["price"].apply(lambda x: f"{x:,.0f}원")
-            icon_map = {"BUY": "🛒", "SELL_TP": "💵✅", "SELL_SL": "💵❌"}
-            df_tr["action"] = df_tr["action"].apply(
-                lambda a: f"{icon_map.get(a, '↩️')} {a}"
+            df_tr["amount"] = df_tr["amount"].apply(lambda x: f"{x:,.0f}원")
+
+            df_display = (
+                df_tr[["date", "name", "action", "price", "qty", "amount", "signal_tag", "reason"]]
+                .rename(columns={
+                    "date":       "날짜",
+                    "name":       "종목명",
+                    "action":     "액션",
+                    "price":      "체결가",
+                    "qty":        "수량",
+                    "amount":     "거래금액",
+                    "signal_tag": "신호태그",
+                    "reason":     "사유",
+                })
             )
-            df_tr.columns = ["날짜", "종목", "액션", "체결가", "수량", "거래금액", "사유"]
-            st.dataframe(df_tr, use_container_width=True, hide_index=True)
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
         else:
             st.info("거래 내역이 없습니다.")
 

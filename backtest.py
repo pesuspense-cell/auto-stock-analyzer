@@ -174,6 +174,7 @@ class BacktestEngine:
         news_candidate_n: int = 15,
         deposit_schedule: dict[str, float] | None = None,
         position_sizing_pct: float = 0.20,
+        ticker_name_map: dict[str, str] | None = None,
     ):
         self.markets           = markets or ["KOSPI", "KOSDAQ"]
         self.universe_n        = universe_n
@@ -183,6 +184,7 @@ class BacktestEngine:
         self.end_date          = pd.Timestamp(end_date)
         self.deposit_schedule  = deposit_schedule or {}
         self.position_sizing_pct = position_sizing_pct
+        self._ticker_names: dict[str, str] = ticker_name_map or {}
 
         self.simulator    = TradingSimulator(initial_capital)
         self.strategy     = TradingStrategy()
@@ -196,10 +198,15 @@ class BacktestEngine:
         load_start = self.start_date - pd.Timedelta(days=self.WARMUP_DAYS)
         load_end   = self.end_date   + pd.Timedelta(days=2)
 
-        screener = StockScreener(universe_per_market=self.universe_n)
-        universe = screener.build_universe(self.markets)
-        all_tickers = [t for t, _ in universe]
-        print(f"  유니버스 크기: {len(all_tickers)}개 종목")
+        if self._ticker_names:
+            all_tickers = list(self._ticker_names.keys())
+            print(f"  유니버스 크기: {len(all_tickers)}개 종목 (사전 선정)")
+        else:
+            screener = StockScreener(universe_per_market=self.universe_n)
+            universe = screener.build_universe(self.markets)
+            all_tickers = [t for t, _ in universe]
+            self._ticker_names = {t: n for t, n in universe}
+            print(f"  유니버스 크기: {len(all_tickers)}개 종목")
 
         ticker_data: dict[str, pd.DataFrame] = {}
         CHUNK = 50
@@ -429,6 +436,7 @@ class BacktestEngine:
         self.trade_log.append({
             "date":        date,
             "ticker":      ticker,
+            "name":        self._ticker_names.get(ticker, ticker),
             "action":      action,
             "price":       price,
             "qty":         qty,
