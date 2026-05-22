@@ -728,24 +728,6 @@ def render_market_tab(
     with tab:
         st.subheader("🌐 시장 현황")
 
-        with st.expander("📈 USD/KRW 환율 추이 (3개월)"):
-            try:
-                fx = usdkrw_fn()
-                if not fx.empty:
-                    fig_fx = go.Figure(go.Scatter(
-                        x=fx.index, y=fx["Close"],
-                        fill="tozeroy", fillcolor="rgba(0,102,204,0.08)",
-                        line=dict(color="#0066cc", width=2),
-                    ))
-                    fig_fx.update_layout(
-                        height=200, template="plotly_white",
-                        margin=dict(t=10, b=10), showlegend=False,
-                        xaxis_rangeslider_visible=False,
-                    )
-                    st.plotly_chart(fig_fx, use_container_width=True)
-            except Exception:
-                pass
-
         # ── 섹터 ETF 등락표 ──────────────────────────────────────────
         st.divider()
         st.markdown("### 🗺️ 주요 섹터 ETF")

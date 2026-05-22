@@ -60,8 +60,19 @@ html, body, .stApp {
   color: var(--ink) !important;
 }
 
-/* 데스크탑: stHeader 숨김 */
-header[data-testid="stHeader"] { display: none !important; }
+/* 헤더 시각 요소 숨김 — collapsedControl(사이드바 재열기 버튼)은 유지 */
+header[data-testid="stHeader"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+header[data-testid="stHeader"] > *:not([data-testid="collapsedControl"]) {
+  display: none !important;
+}
+[data-testid="collapsedControl"] {
+  display: flex !important;
+  visibility: visible !important;
+}
 #MainMenu, footer { visibility: hidden; }
 
 .block-container {
@@ -196,12 +207,17 @@ div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="
   border-radius: 0 !important;
   border: none !important;
   border-bottom: 1px solid var(--hairline) !important;
-  padding: 6px 4px !important;
-  gap: 4px !important;
-  margin-left: -1rem !important;
-  margin-right: -1rem !important;
-  padding-left: 1rem !important;
-  padding-right: 1rem !important;
+  padding: 6px 8px !important;
+  gap: 2px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+  scrollbar-width: none !important;
+}
+[data-testid="stTabBar"]::-webkit-scrollbar,
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {
+  display: none !important;
 }
 .stTabs [data-baseweb="tab"] {
   border-radius: 8px !important;
@@ -1446,12 +1462,12 @@ button[style*="background: #2997ff"],
 
 /* ─── 주요 섹터 ETF — 중첩 탭 영역에만 글래스모피즘 ─────────────── */
 [data-testid="stTabs"] [data-testid="stTabs"] {
-  background: rgba(200, 200, 210, 0.40) !important;
+  background: rgba(255, 255, 255, 0.72) !important;
   backdrop-filter: blur(14px) !important;
   -webkit-backdrop-filter: blur(14px) !important;
-  border: 1px solid rgba(180, 180, 192, 0.35) !important;
+  border: 1px solid rgba(224, 224, 224, 0.70) !important;
   border-radius: var(--radius) !important;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.07) !important;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.05) !important;
   padding: 8px 8px 12px !important;
 }
 
