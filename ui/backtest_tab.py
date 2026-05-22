@@ -243,7 +243,8 @@ def _fetch_benchmark(ticker: str | None, equity_curve: list[dict]) -> pd.DataFra
 
 def _display_results(
     equity_curve, trade_log, log_text,
-    bm_df, bm_label, selected_stocks, deposit_schedule, **_,
+    bm_df, bm_label, deposit_schedule,
+    selected_stocks=None, **_,
 ):
     if not equity_curve:
         st.warning("결과 데이터가 없습니다.")
@@ -373,16 +374,17 @@ def _display_results(
         st.plotly_chart(fig2, use_container_width=True)
 
     # 선정 종목 요약
-    with st.expander(f"📋 선정 종목 ({len(selected_stocks)}개)", expanded=False):
-        df_sel = pd.DataFrame(selected_stocks)[
-            ["ticker", "name", "momentum", "volatility", "avg_volume"]
-        ]
-        df_sel.index = range(1, len(df_sel) + 1)
-        df_sel.columns = ["티커", "종목명", "3개월 수익률(%)", "변동성(%)", "일평균 거래량"]
-        df_sel["3개월 수익률(%)"] = df_sel["3개월 수익률(%)"].apply(lambda x: f"{x:+.1f}%")
-        df_sel["변동성(%)"]       = df_sel["변동성(%)"].apply(lambda x: f"{x:.2f}%")
-        df_sel["일평균 거래량"]   = df_sel["일평균 거래량"].apply(lambda x: f"{x:,.0f}")
-        st.dataframe(df_sel, use_container_width=True)
+    if selected_stocks:
+        with st.expander(f"📋 선정 종목 ({len(selected_stocks)}개)", expanded=False):
+            df_sel = pd.DataFrame(selected_stocks)[
+                ["ticker", "name", "momentum", "volatility", "avg_volume"]
+            ]
+            df_sel.index = range(1, len(df_sel) + 1)
+            df_sel.columns = ["티커", "종목명", "3개월 수익률(%)", "변동성(%)", "일평균 거래량"]
+            df_sel["3개월 수익률(%)"] = df_sel["3개월 수익률(%)"].apply(lambda x: f"{x:+.1f}%")
+            df_sel["변동성(%)"]       = df_sel["변동성(%)"].apply(lambda x: f"{x:.2f}%")
+            df_sel["일평균 거래량"]   = df_sel["일평균 거래량"].apply(lambda x: f"{x:,.0f}")
+            st.dataframe(df_sel, use_container_width=True)
 
     # 거래 내역
     with st.expander(f"📋 거래 내역 ({len(trade_log)}건)", expanded=False):
