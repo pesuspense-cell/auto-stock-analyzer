@@ -144,6 +144,7 @@ class PositionState:
     take_profit: float = -1.0
     stop_loss:   float = -1.0
     peak_price:  float = 0.0   # 진입 후 최고 종가 (트레일링 스톱 기준)
+    signal_tag:  str   = ""    # 매수 진입을 발생시킨 신호 태그
 
     def reset(self) -> None:
         self.in_position = False
@@ -152,6 +153,7 @@ class PositionState:
         self.take_profit = -1.0
         self.stop_loss   = -1.0
         self.peak_price  = 0.0
+        self.signal_tag  = ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -248,14 +250,21 @@ class BacktestEngine:
         self,
         date: pd.Timestamp,
         ticker_data: dict[str, pd.DataFrame],
-    ) -> list[str]:
+    ) -> dict[str, str]:
         """
         날짜 기준 3단계 매수 후보 선정.
 
         1단계: 거래대금(종가×거래량) 상위 volume_top_n
         2단계: SMA 골든크로스 + 기울기 신호 (미래 데이터 참조 없음)
+               — SMA_GOLDEN_CROSS : 이번 바에서 SMA5가 SMA20을 돌파 (신선한 교차)
+               — SMA_TREND_FOLLOW : 이미 SMA5 > SMA20, 추세 추종 진입
         3단계: 뉴스 감성 분석 — 백테스트에서는 news_candidate_n개 그대로 통과
                (실시간 운용 시 뉴스 API 연동 예정)
+
+        Returns
+        -------
+        dict[str, str]
+            {ticker: signal_tag}  — 매수 후보 및 진입 신호 태그
         """
         # 1단계: 거래대금 상위 N
         turnover_list: list[tuple[str, float]] = []
@@ -271,7 +280,7 @@ class BacktestEngine:
         top_volume = [t for t, _ in turnover_list[: self.volume_top_n]]
 
         # 2단계: 차트·모멘텀 신호
-        candidates: list[str] = []
+        candidates: dict[str, str] = {}
         for ticker in top_volume:
             df = ticker_data[ticker]
             if date not in df.index:
@@ -291,10 +300,11 @@ class BacktestEngine:
             if self.strategy.check_kill_switch(df["Close"].iloc[: idx + 1]):
                 continue
             if self.strategy.is_entry_signal(sma5, sma20, prev_sma5):
-                candidates.append(ticker)
+                tag = "SMA_GOLDEN_CROSS" if prev_sma5 <= sma20 else "SMA_TREND_FOLLOW"
+                candidates[ticker] = tag
 
         # 3단계: 뉴스 감성 (백테스트에서는 상위 N개 통과)
-        return candidates[: self.news_candidate_n]
+        return dict(list(candidates.items())[: self.news_candidate_n])
 
     # ── 매도 판단 (보유 포지션 점검 + 분할매수) ──────────────────────────────
 
@@ -328,6 +338,7 @@ class BacktestEngine:
                     date_str, ticker, "SELL_TP", price, qty,
                     f"익절 목표가 도달 ({pos.take_profit:,.0f}, P/L: {pnl_pct:+.1f}%)",
                     entry_price=pos.entry_price,
+                    signal_tag=pos.signal_tag,
                 )
                 del self.positions[ticker]
             return
@@ -350,7 +361,7 @@ class BacktestEngine:
                     action      = "SELL_SL"
                     reason_text = f"손절가 도달 ({pos.stop_loss:,.0f}, P/L: {pnl_pct:+.1f}%)"
                 self._log_trade(date_str, ticker, action, price, qty, reason_text,
-                                entry_price=pos.entry_price)
+                                entry_price=pos.entry_price, signal_tag=pos.signal_tag)
                 del self.positions[ticker]
             return
 
@@ -365,6 +376,7 @@ class BacktestEngine:
                     date_str, ticker, f"REBUY#{pos.rebuy_count}",
                     price, qty,
                     f"{pos.rebuy_count}차 분할매수 [배정 {alloc_cash:,.0f}원]",
+                    signal_tag=pos.signal_tag,
                 )
 
     # ── 매수 집행 (신규 진입) ─────────────────────────────────────────────────
@@ -376,6 +388,7 @@ class BacktestEngine:
         df: pd.DataFrame,
         idx: int,
         current_prices: dict[str, float],
+        signal_tag: str = "UNKNOWN",
     ) -> None:
         row   = df.iloc[idx]
         price = float(row["Close"])
@@ -400,16 +413,19 @@ class BacktestEngine:
         pos.rebuy_count = 0
         pos.take_profit = tp
         pos.stop_loss   = sl
+        pos.signal_tag  = signal_tag
         self.positions[ticker] = pos
 
         self._log_trade(
             date_str, ticker, "BUY", price, qty,
             f"일일스크리닝 선정 [총자산 {total_asset:,.0f} → 배정 {alloc_cash:,.0f}원]",
+            signal_tag=signal_tag,
         )
 
     def _log_trade(self, date: str, ticker: str, action: str,
                    price: float, qty: int, reason: str,
-                   entry_price: float = 0.0) -> None:
+                   entry_price: float = 0.0,
+                   signal_tag: str = "") -> None:
         self.trade_log.append({
             "date":        date,
             "ticker":      ticker,
@@ -419,6 +435,7 @@ class BacktestEngine:
             "amount":      price * qty,
             "reason":      reason,
             "entry_price": entry_price,
+            "signal_tag":  signal_tag,
         })
         icon = {"BUY": "🛒", "SELL_TP": "💵✅", "SELL_SL": "💵❌", "SELL_TS": "🎯✅"}.get(action, "↩️")
         print(f"  {icon} {date} [{ticker}] {action:10s}  "
@@ -500,7 +517,7 @@ class BacktestEngine:
             candidates = self._screen_daily(date, ticker_data)
 
             # ── 매수 집행 ─────────────────────────────────────────────────
-            for buy_ticker in candidates:
+            for buy_ticker, signal_tag in candidates.items():
                 if buy_ticker in self.positions:
                     continue  # 이미 보유 중
                 if self.simulator.cash <= 0:
@@ -509,7 +526,7 @@ class BacktestEngine:
                 if df is None or date not in df.index:
                     continue
                 idx = df.index.get_loc(date)
-                self._try_buy(date_str, buy_ticker, df, idx, current_prices)
+                self._try_buy(date_str, buy_ticker, df, idx, current_prices, signal_tag)
 
             # 수익률 기록
             total_asset = self.simulator.get_total_asset(current_prices)
@@ -631,6 +648,7 @@ class BacktestEngine:
 
         print("=" * 65)
         self._print_equity_chart(ec)
+        self._print_signal_report()
         self._save_results()
 
     def _print_equity_chart(self, ec: list[dict], width: int = 60, height: int = 15) -> None:
@@ -658,6 +676,65 @@ class BacktestEngine:
         last_date  = sample[-1]["date"][:7]
         padding    = " " * (len(sample) // 2 - len(first_date))
         print(f"         {first_date}{padding}{last_date}")
+
+    def _print_signal_report(self) -> None:
+        from collections import defaultdict
+
+        all_sells = [t for t in self.trade_log
+                     if t["action"] in ("SELL_TP", "SELL_TS", "SELL_SL")]
+        if not all_sells:
+            return
+
+        def _pnl_pct(t: dict) -> float:
+            ep = t.get("entry_price", 0)
+            return (t["price"] - ep) / ep * 100 if ep > 0 else 0.0
+
+        def _pnl_won(t: dict) -> float:
+            ep = t.get("entry_price", 0)
+            return (t["price"] - ep) * t.get("qty", 0) if ep > 0 else 0.0
+
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for t in all_sells:
+            groups[t.get("signal_tag") or "UNKNOWN"].append(t)
+
+        sorted_groups = sorted(
+            groups.items(),
+            key=lambda kv: sum(_pnl_won(t) for t in kv[1]),
+            reverse=True,
+        )
+
+        TAG_LABEL = {
+            "SMA_GOLDEN_CROSS": "SMA 골든크로스 (신선한 교차)",
+            "SMA_TREND_FOLLOW": "SMA 추세 추종 (이미 상승 중)",
+        }
+
+        print("\n" + "=" * 65)
+        print("  로직별 기여도 및 성적 분석 리포트")
+        print("=" * 65)
+
+        for rank, (tag, trades) in enumerate(sorted_groups, 1):
+            wins      = [t for t in trades if _pnl_pct(t) > 0]
+            win_rate  = len(wins) / len(trades) * 100 if trades else 0.0
+            total_pnl = sum(_pnl_won(t) for t in trades)
+            avg_pct   = sum(_pnl_pct(t) for t in trades) / len(trades) if trades else 0.0
+
+            label = TAG_LABEL.get(tag, tag)
+
+            if win_rate >= 55 and total_pnl > 0:
+                comment = "안정적이며 수익의 핵심 기여. 비중 확대 추천."
+            elif win_rate >= 45 and total_pnl > 0:
+                comment = "양호한 성과. 현행 유지 권장."
+            elif total_pnl < 0:
+                comment = "손실 발생. 진입 조건 강화 필요."
+            else:
+                comment = "보통 수준. 추가 필터 검토 권장."
+
+            print(f"\n{rank}. [{label}]")
+            print(f"   매매 횟수: {len(trades)}회  |  승률: {win_rate:.0f}%  "
+                  f"|  총 손익: {total_pnl:+,.0f}원  |  평균 수익률: {avg_pct:+.1f}%")
+            print(f"   한줄평: {comment}")
+
+        print("\n" + "=" * 65)
 
     def _save_results(self) -> None:
         RESULT_DIR.mkdir(exist_ok=True)
