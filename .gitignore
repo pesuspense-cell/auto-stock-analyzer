@@ -43,3 +43,12 @@ redis/
 # Claude 내부 파일
 .claude/
 settings.json.migrated
+
+# 백테스팅 결과 (로컬 자동 생성)
+backtest_results/
+
+# ETF 캐시 (로컬 자동 재생성)
+data/etf_fundamental_cache.json
+
+# 임시 스크린샷
+*.png
