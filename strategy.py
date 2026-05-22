@@ -44,16 +44,22 @@ class TradingStrategy:
         threshold_slope: float = 0.001,
         step_percent: float = 0.03,
         max_step: int = 3,
-        atr_multiplier: float = 1.5,
+        atr_multiplier: float = 1.5,    # 하위 호환용 — 직접 호출 시 override
+        tp_multiplier: float = 3.5,     # 익절 ATR 배수 (평단가 + ATR × 3.5)
+        sl_multiplier: float = 2.0,     # 손절 ATR 배수 (평단가 − ATR × 2.0)
+        trailing_multiplier: float = 3.0,  # 트레일링 스톱 ATR 배수 (최고가 − ATR × 3.0)
         atr_period: int = 14,
         kill_window: int = 20,
     ):
-        self.threshold_slope = threshold_slope
-        self.step_percent = step_percent
-        self.max_step = max_step
-        self.atr_multiplier = atr_multiplier
-        self.atr_period = atr_period
-        self.kill_window = kill_window
+        self.threshold_slope     = threshold_slope
+        self.step_percent        = step_percent
+        self.max_step            = max_step
+        self.atr_multiplier      = atr_multiplier
+        self.tp_multiplier       = tp_multiplier
+        self.sl_multiplier       = sl_multiplier
+        self.trailing_multiplier = trailing_multiplier
+        self.atr_period          = atr_period
+        self.kill_window         = kill_window
 
     # ── 1. 진입 로직: 추세 추종 (Momentum Entry) ─────────────────────────────
 
@@ -188,29 +194,32 @@ class TradingStrategy:
         multiplier: float | None = None,
     ) -> float:
         """
-        ATR 기반 다이내믹 익절·손절 가격 계산.
+        ATR 기반 비대칭 익절·손절 가격 계산.
 
         로직:
-          익절: current_price + (atr * multiplier)
-          손절: current_price - (atr * multiplier)
+          익절: current_price + (atr * tp_multiplier)   기본 × 3.5
+          손절: current_price - (atr * sl_multiplier)   기본 × 2.0
 
         Parameters
         ----------
         current_price : float
-            현재 가격
+            현재(진입) 가격
         atr : float
-            Average True Range 값 (compute_atr()로 산출)
+            Average True Range 값
         is_profit : bool
             True → 익절 목표가, False → 손절 목표가
         multiplier : float, optional
-            ATR 배수 (권장 범위 1.5~2.0). None이면 인스턴스 기본값.
+            직접 지정 시 tp/sl_multiplier 대신 사용.
 
         Returns
         -------
         float
             목표 가격. 입력 오류 시 -1.0 반환.
         """
-        mult = multiplier if multiplier is not None else self.atr_multiplier
+        if multiplier is not None:
+            mult = multiplier
+        else:
+            mult = self.tp_multiplier if is_profit else self.sl_multiplier
 
         try:
             if atr < 0:
@@ -232,6 +241,41 @@ class TradingStrategy:
 
         except (TypeError, ValueError) as e:
             logger.warning(f"get_exit_price 오류: {e}")
+            return -1.0
+
+    def get_trailing_stop(
+        self,
+        peak_price: float,
+        atr: float,
+        multiplier: float | None = None,
+    ) -> float:
+        """
+        트레일링 스톱 가격 = peak_price - (atr * trailing_multiplier).
+
+        최고가에서 ATR × 배수만큼 하락 시 청산. 배수가 클수록 버퍼가 넓어
+        일시적 노이즈에 털리지 않고 추세를 길게 추종한다.
+
+        Parameters
+        ----------
+        peak_price : float
+            진입 이후 최고 종가
+        atr : float
+            현재 ATR
+        multiplier : float, optional
+            trailing_multiplier 대신 사용할 배수.
+
+        Returns
+        -------
+        float
+            트레일링 스톱 가격. 입력 오류 시 -1.0 반환.
+        """
+        mult = multiplier if multiplier is not None else self.trailing_multiplier
+        try:
+            if atr < 0 or peak_price <= 0 or mult <= 0:
+                return -1.0
+            return round(peak_price - atr * mult, 4)
+        except Exception as e:
+            logger.warning(f"get_trailing_stop 오류: {e}")
             return -1.0
 
     # ── 4. 리스크 관리: 변동성 Kill-Switch ──────────────────────────────────

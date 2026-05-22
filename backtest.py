@@ -1,16 +1,18 @@
 """
-backtest.py — 과거 데이터 기반 백테스팅 엔진
+backtest.py — 날짜 중심(Date-Driven) 백테스팅 엔진
 
-TradingSimulator(펀드 회계) + TradingStrategy(매매 로직)를 결합하여
-과거 일봉 데이터로 수익률 검증을 수행합니다.
+매 거래일마다 전체 유니버스에서 실시간으로 종목을 선정한 뒤
+매수·매도를 집행합니다.
 
 실행:
   python backtest.py
 
 설정:
-  TICKERS            — 백테스트 종목 목록 (yfinance 티커)
-  START_DATE         — 백테스트 시작일 (YYYY-MM-DD)
-  END_DATE           — 백테스트 종료일 (YYYY-MM-DD)
+  SCREEN_MARKETS     — 대상 마켓 (KOSPI / KOSDAQ / S&P500 / NASDAQ)
+  SCREEN_UNIVERSE_N  — 마켓별 유니버스 후보 수
+  VOLUME_TOP_N       — 1단계: 일별 거래대금 상위 N
+  NEWS_CANDIDATE_N   — 3단계: 뉴스 분석 대상 상위 N (백테스트에서는 통과)
+  START_DATE / END_DATE  — 백테스트 기간
   INITIAL_CAPITAL    — 초기 투자 원금 (원)
   DEPOSIT_SCHEDULE   — 추가 입금 일정 {"YYYY-MM-DD": 금액, ...}
   POSITION_SIZING_PCT— 총자산 대비 1회 매수 비중 (0.0 ~ 1.0)
@@ -52,10 +54,12 @@ logger = logging.getLogger("backtest")
 # 설정 (CLI 직접 실행 시 여기를 수정하세요)
 # ══════════════════════════════════════════════════════════════════════════════
 
-# 종목은 StockScreener가 자동 선정합니다 — 아래 마켓/스크리닝 파라미터만 조정하세요
 SCREEN_MARKETS    = ["KOSPI", "KOSDAQ"]   # 대상 마켓
 SCREEN_UNIVERSE_N = 200                   # 마켓별 후보 종목 수 (시가총액 상위)
-SCREEN_TOP_N      = 20                    # 최종 선정 종목 수
+SCREEN_TOP_N      = 20                    # StockScreener 단독 실행 시 최종 선정 수
+
+VOLUME_TOP_N      = 100                   # 1단계 필터: 일별 거래대금 상위 N
+NEWS_CANDIDATE_N  = 15                    # 3단계 필터: 뉴스 분석 대상 상위 N
 
 START_DATE = "2020-01-01"
 END_DATE   = "2024-12-31"
@@ -139,6 +143,7 @@ class PositionState:
     rebuy_count: int   = 0
     take_profit: float = -1.0
     stop_loss:   float = -1.0
+    peak_price:  float = 0.0   # 진입 후 최고 종가 (트레일링 스톱 기준)
 
     def reset(self) -> None:
         self.in_position = False
@@ -146,10 +151,11 @@ class PositionState:
         self.rebuy_count = 0
         self.take_profit = -1.0
         self.stop_loss   = -1.0
+        self.peak_price  = 0.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 백테스팅 엔진
+# 백테스팅 엔진 (날짜 중심)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class BacktestEngine:
@@ -157,173 +163,298 @@ class BacktestEngine:
 
     def __init__(
         self,
-        tickers: list[str],
         initial_capital: float,
         start_date: str,
         end_date: str,
+        markets: list[str] | None = None,
+        universe_n: int = 200,
+        volume_top_n: int = 100,
+        news_candidate_n: int = 15,
         deposit_schedule: dict[str, float] | None = None,
         position_sizing_pct: float = 0.20,
     ):
-        self.tickers             = tickers
-        self.start_date          = pd.Timestamp(start_date)
-        self.end_date            = pd.Timestamp(end_date)
-        self.deposit_schedule    = deposit_schedule or {}
+        self.markets           = markets or ["KOSPI", "KOSDAQ"]
+        self.universe_n        = universe_n
+        self.volume_top_n      = volume_top_n
+        self.news_candidate_n  = news_candidate_n
+        self.start_date        = pd.Timestamp(start_date)
+        self.end_date          = pd.Timestamp(end_date)
+        self.deposit_schedule  = deposit_schedule or {}
         self.position_sizing_pct = position_sizing_pct
 
-        self.simulator  = TradingSimulator(initial_capital)
-        self.strategy   = TradingStrategy()
-        self.positions  = {t: PositionState() for t in tickers}
-        self.trade_log:  list[dict] = []
+        self.simulator    = TradingSimulator(initial_capital)
+        self.strategy     = TradingStrategy()
+        self.positions:    dict[str, PositionState] = {}   # 동적 관리
+        self.trade_log:    list[dict] = []
         self.equity_curve: list[dict] = []
 
-    # ── 데이터 다운로드 & 지표 계산 ──────────────────────────────────────────
+    # ── 전체 유니버스 데이터 로딩 ────────────────────────────────────────────
 
     def _load_data(self) -> dict[str, pd.DataFrame]:
         load_start = self.start_date - pd.Timedelta(days=self.WARMUP_DAYS)
         load_end   = self.end_date   + pd.Timedelta(days=2)
 
+        screener = StockScreener(universe_per_market=self.universe_n)
+        universe = screener.build_universe(self.markets)
+        all_tickers = [t for t, _ in universe]
+        print(f"  유니버스 크기: {len(all_tickers)}개 종목")
+
         ticker_data: dict[str, pd.DataFrame] = {}
-        for ticker in self.tickers:
-            print(f"  [{ticker}] 데이터 다운로드 중...", end=" ", flush=True)
-            raw = yf.download(
-                ticker,
-                start=load_start.strftime("%Y-%m-%d"),
-                end=load_end.strftime("%Y-%m-%d"),
-                auto_adjust=True,
-                progress=False,
-            )
-            if raw.empty or len(raw) < 60:
-                print(f"데이터 부족 — 건너뜀")
+        CHUNK = 50
+
+        for i in range(0, len(all_tickers), CHUNK):
+            chunk = all_tickers[i: i + CHUNK]
+            hi = min(i + CHUNK, len(all_tickers))
+            print(f"  [{i + 1}~{hi}] 배치 다운로드 중...", end=" ", flush=True)
+            try:
+                raw = yf.download(
+                    chunk if len(chunk) > 1 else chunk[0],
+                    start=load_start.strftime("%Y-%m-%d"),
+                    end=load_end.strftime("%Y-%m-%d"),
+                    auto_adjust=True,
+                    progress=False,
+                )
+            except Exception as e:
+                print(f"오류: {e}")
                 continue
-            df = _flatten_columns(raw)
-            df = _add_indicators(df)
-            ticker_data[ticker] = df
-            print(f"{len(df)}개 봉 로드 완료")
+
+            if raw.empty:
+                print("데이터 없음")
+                continue
+
+            for ticker in chunk:
+                try:
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        df = raw.xs(ticker, axis=1, level=1).dropna(how="all")
+                    else:
+                        df = raw.dropna(how="all")
+
+                    if df.empty or len(df) < 60:
+                        continue
+
+                    df = _flatten_columns(df)
+                    df = _add_indicators(df)
+                    ticker_data[ticker] = df
+                except Exception:
+                    continue
+
+            print(f"누적 {len(ticker_data)}개 유효")
+
         return ticker_data
 
-    # ── 매매 결정 로직 ────────────────────────────────────────────────────────
+    # ── 일일 종목 스크리닝 ────────────────────────────────────────────────────
 
-    def _decide(
+    def _screen_daily(
         self,
+        date: pd.Timestamp,
+        ticker_data: dict[str, pd.DataFrame],
+    ) -> list[str]:
+        """
+        날짜 기준 3단계 매수 후보 선정.
+
+        1단계: 거래대금(종가×거래량) 상위 volume_top_n
+        2단계: SMA 골든크로스 + 기울기 신호 (미래 데이터 참조 없음)
+        3단계: 뉴스 감성 분석 — 백테스트에서는 news_candidate_n개 그대로 통과
+               (실시간 운용 시 뉴스 API 연동 예정)
+        """
+        # 1단계: 거래대금 상위 N
+        turnover_list: list[tuple[str, float]] = []
+        for ticker, df in ticker_data.items():
+            if date not in df.index:
+                continue
+            row    = df.loc[date]
+            close  = float(row.get("Close",  0) or 0)
+            volume = float(row.get("Volume", 0) or 0)
+            turnover_list.append((ticker, close * volume))
+
+        turnover_list.sort(key=lambda x: x[1], reverse=True)
+        top_volume = [t for t, _ in turnover_list[: self.volume_top_n]]
+
+        # 2단계: 차트·모멘텀 신호
+        candidates: list[str] = []
+        for ticker in top_volume:
+            df = ticker_data[ticker]
+            if date not in df.index:
+                continue
+            idx = df.index.get_loc(date)
+            if idx < self.strategy.kill_window + 60:
+                continue
+
+            row       = df.iloc[idx]
+            prev      = df.iloc[idx - 1]
+            sma5      = float(row.get("SMA_5",  np.nan))
+            sma20     = float(row.get("SMA_20", np.nan))
+            prev_sma5 = float(prev.get("SMA_5", np.nan))
+
+            if any(np.isnan(v) for v in [sma5, sma20, prev_sma5]):
+                continue
+            if self.strategy.check_kill_switch(df["Close"].iloc[: idx + 1]):
+                continue
+            if self.strategy.is_entry_signal(sma5, sma20, prev_sma5):
+                candidates.append(ticker)
+
+        # 3단계: 뉴스 감성 (백테스트에서는 상위 N개 통과)
+        return candidates[: self.news_candidate_n]
+
+    # ── 매도 판단 (보유 포지션 점검 + 분할매수) ──────────────────────────────
+
+    def _try_sell(
+        self,
+        date_str: str,
         ticker: str,
         df: pd.DataFrame,
         idx: int,
         current_prices: dict[str, float],
     ) -> None:
-        row  = df.iloc[idx]
-        prev = df.iloc[idx - 1]
-        price = float(row["Close"])
-        pos   = self.positions[ticker]
-        date_str = df.index[idx].strftime("%Y-%m-%d")
-
-        # 지표 유효성 확인
-        sma5      = float(row.get("SMA_5",  np.nan))
-        sma20     = float(row.get("SMA_20", np.nan))
-        prev_sma5 = float(prev.get("SMA_5", np.nan))
-        atr       = float(row.get("ATR",    np.nan))
-
-        if any(np.isnan(v) for v in [sma5, sma20, prev_sma5]):
+        pos = self.positions.get(ticker)
+        if pos is None or not pos.in_position:
             return
+
+        row   = df.iloc[idx]
+        price = float(row["Close"])
+        atr   = float(row.get("ATR", np.nan))
         if np.isnan(atr) or atr <= 0:
             atr = -1.0
 
-        # Kill-Switch: 최근 20봉 변동성 체크
-        kill = self.strategy.check_kill_switch(df["Close"].iloc[: idx + 1])
+        # 최고가 갱신 (트레일링 스톱 기준)
+        pos.peak_price = max(pos.peak_price, price)
 
-        if not pos.in_position:
-            # ── 신규 진입 신호 ─────────────────────────────────────────────
-            if kill:
-                return
-            if not self.strategy.is_entry_signal(sma5, sma20, prev_sma5):
-                return
+        # 익절 목표가 도달
+        if pos.take_profit > 0 and price >= pos.take_profit:
+            qty = self.simulator.portfolio.get(ticker, 0)
+            if qty and self.simulator.execute_sell(ticker, price, qty):
+                pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+                self._log_trade(
+                    date_str, ticker, "SELL_TP", price, qty,
+                    f"익절 목표가 도달 ({pos.take_profit:,.0f}, P/L: {pnl_pct:+.1f}%)",
+                    entry_price=pos.entry_price,
+                )
+                del self.positions[ticker]
+            return
 
+        # 트레일링 스톱 + 하드 손절 (effective = 더 높은 쪽 적용)
+        trailing_sl  = self.strategy.get_trailing_stop(pos.peak_price, atr) if atr > 0 else -1.0
+        hard_sl      = pos.stop_loss if pos.stop_loss  > 0 else float("-inf")
+        ts_val       = trailing_sl   if trailing_sl    > 0 else float("-inf")
+        effective_sl = max(hard_sl, ts_val)
+
+        if effective_sl > float("-inf") and price <= effective_sl:
+            qty = self.simulator.portfolio.get(ticker, 0)
+            if qty and self.simulator.execute_sell(ticker, price, qty):
+                pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+                if trailing_sl > 0 and trailing_sl >= pos.stop_loss:
+                    action      = "SELL_TS"
+                    reason_text = (f"트레일링 스톱 (최고가 {pos.peak_price:,.0f} → "
+                                   f"청산선 {effective_sl:,.0f}, P/L: {pnl_pct:+.1f}%)")
+                else:
+                    action      = "SELL_SL"
+                    reason_text = f"손절가 도달 ({pos.stop_loss:,.0f}, P/L: {pnl_pct:+.1f}%)"
+                self._log_trade(date_str, ticker, action, price, qty, reason_text,
+                                entry_price=pos.entry_price)
+                del self.positions[ticker]
+            return
+
+        # 분할매수 (물타기) — 보유 중 하락 시
+        if self.strategy.is_rebuy_signal(price, pos.entry_price, pos.rebuy_count):
             total_asset = self.simulator.get_total_asset(current_prices)
             alloc_cash  = total_asset * self.position_sizing_pct
             qty = max(1, int(alloc_cash / price))
+            if self.simulator.execute_buy(ticker, price, qty):
+                pos.rebuy_count += 1
+                self._log_trade(
+                    date_str, ticker, f"REBUY#{pos.rebuy_count}",
+                    price, qty,
+                    f"{pos.rebuy_count}차 분할매수 [배정 {alloc_cash:,.0f}원]",
+                )
 
-            if not self.simulator.execute_buy(ticker, price, qty):
-                return
+    # ── 매수 집행 (신규 진입) ─────────────────────────────────────────────────
 
-            tp = self.strategy.get_exit_price(price, atr, is_profit=True)  if atr > 0 else -1.0
-            sl = self.strategy.get_exit_price(price, atr, is_profit=False) if atr > 0 else -1.0
+    def _try_buy(
+        self,
+        date_str: str,
+        ticker: str,
+        df: pd.DataFrame,
+        idx: int,
+        current_prices: dict[str, float],
+    ) -> None:
+        row   = df.iloc[idx]
+        price = float(row["Close"])
+        atr   = float(row.get("ATR", np.nan))
+        if np.isnan(atr) or atr <= 0:
+            atr = -1.0
 
-            pos.in_position = True
-            pos.entry_price = price
-            pos.rebuy_count = 0
-            pos.take_profit = tp
-            pos.stop_loss   = sl
+        total_asset = self.simulator.get_total_asset(current_prices)
+        alloc_cash  = total_asset * self.position_sizing_pct
+        qty = max(1, int(alloc_cash / price))
 
-            self._log_trade(date_str, ticker, "BUY", price, qty, "SMA 골든크로스+기울기 돌파")
+        if not self.simulator.execute_buy(ticker, price, qty):
+            return
 
-        else:
-            # ── 익절 ──────────────────────────────────────────────────────
-            if pos.take_profit > 0 and price >= pos.take_profit:
-                qty = self.simulator.portfolio.get(ticker, 0)
-                if qty and self.simulator.execute_sell(ticker, price, qty):
-                    self._log_trade(date_str, ticker, "SELL_TP", price, qty,
-                                    f"익절 목표가 도달 ({pos.take_profit:,.0f})")
-                    pos.reset()
-                return
+        tp = self.strategy.get_exit_price(price, atr, is_profit=True)  if atr > 0 else -1.0
+        sl = self.strategy.get_exit_price(price, atr, is_profit=False) if atr > 0 else -1.0
 
-            # ── 손절 ──────────────────────────────────────────────────────
-            if pos.stop_loss > 0 and price <= pos.stop_loss:
-                qty = self.simulator.portfolio.get(ticker, 0)
-                if qty and self.simulator.execute_sell(ticker, price, qty):
-                    self._log_trade(date_str, ticker, "SELL_SL", price, qty,
-                                    f"손절가 도달 ({pos.stop_loss:,.0f})")
-                    pos.reset()
-                return
+        pos = PositionState()
+        pos.in_position = True
+        pos.entry_price = price
+        pos.peak_price  = price
+        pos.rebuy_count = 0
+        pos.take_profit = tp
+        pos.stop_loss   = sl
+        self.positions[ticker] = pos
 
-            # ── 분할매수 (물타기) ──────────────────────────────────────────
-            if self.strategy.is_rebuy_signal(price, pos.entry_price, pos.rebuy_count):
-                total_asset = self.simulator.get_total_asset(current_prices)
-                alloc_cash  = total_asset * self.position_sizing_pct
-                qty = max(1, int(alloc_cash / price))
-                if self.simulator.execute_buy(ticker, price, qty):
-                    pos.rebuy_count += 1
-                    self._log_trade(date_str, ticker, f"REBUY#{pos.rebuy_count}",
-                                    price, qty, f"{pos.rebuy_count}차 분할매수")
+        self._log_trade(
+            date_str, ticker, "BUY", price, qty,
+            f"일일스크리닝 선정 [총자산 {total_asset:,.0f} → 배정 {alloc_cash:,.0f}원]",
+        )
 
     def _log_trade(self, date: str, ticker: str, action: str,
-                   price: float, qty: int, reason: str) -> None:
+                   price: float, qty: int, reason: str,
+                   entry_price: float = 0.0) -> None:
         self.trade_log.append({
-            "date":   date,
-            "ticker": ticker,
-            "action": action,
-            "price":  price,
-            "qty":    qty,
-            "amount": price * qty,
-            "reason": reason,
+            "date":        date,
+            "ticker":      ticker,
+            "action":      action,
+            "price":       price,
+            "qty":         qty,
+            "amount":      price * qty,
+            "reason":      reason,
+            "entry_price": entry_price,
         })
-        icon = {"BUY": "🛒", "SELL_TP": "💵✅", "SELL_SL": "💵❌"}.get(action, "↩️")
+        icon = {"BUY": "🛒", "SELL_TP": "💵✅", "SELL_SL": "💵❌", "SELL_TS": "🎯✅"}.get(action, "↩️")
         print(f"  {icon} {date} [{ticker}] {action:10s}  "
               f"가격 {price:>10,.0f}  수량 {qty:>5}  ({reason})")
 
-    # ── 메인 루프 ────────────────────────────────────────────────────────────
+    # ── 메인 루프 (날짜 중심) ─────────────────────────────────────────────────
 
     def run(self) -> None:
         print("\n" + "=" * 65)
-        print("  백테스팅 엔진 시작")
+        print("  백테스팅 엔진 시작 (날짜 중심 / 일일 종목 선정)")
         print("=" * 65)
         print(f"  기간     : {self.start_date.date()} ~ {self.end_date.date()}")
         print(f"  초기자본 : {self.simulator.cash:,.0f}원")
-        print(f"  종목     : {', '.join(self.tickers)}")
-        print(f"  포지션   : 총자산의 {self.position_sizing_pct:.0%}씩 매수")
+        print(f"  마켓     : {', '.join(self.markets)}")
+        print(f"  유니버스 : 마켓별 {self.universe_n}개 후보")
+        print(f"  거래대금 필터 : 일별 상위 {self.volume_top_n}개")
+        print(f"  뉴스 분석 대상: 상위 {self.news_candidate_n}개 (백테스트 통과)")
+        print(f"  포지션   : 총자산의 {self.position_sizing_pct:.0%}씩 동적 배분")
+        print(f"  익절 ATR : ×{self.strategy.tp_multiplier:.1f}  "
+              f"손절 ATR : ×{self.strategy.sl_multiplier:.1f}  "
+              f"트레일링 : ×{self.strategy.trailing_multiplier:.1f}")
         print("=" * 65)
 
-        print("\n[1] 데이터 준비")
+        print("\n[1] 유니버스 데이터 준비")
         ticker_data = self._load_data()
         if not ticker_data:
             print("❌ 유효한 데이터 없음. 종료.")
             return
 
-        # 백테스트 구간에 해당하는 거래일 목록 (전체 종목 합집합)
+        # 거래일 목록 (전체 유니버스 합집합)
         all_dates: set[pd.Timestamp] = set()
         for df in ticker_data.values():
             all_dates.update(df.index[(df.index >= self.start_date) & (df.index <= self.end_date)])
         trading_dates = sorted(all_dates)
 
-        # 입금 일정을 실제 거래일로 매핑 (공휴일 → 다음 거래일 이월)
+        # 입금 일정 이월 처리 (공휴일 → 다음 거래일)
         deposit_on: dict[str, float] = {}
         for dep_date_str, amount in self.deposit_schedule.items():
             dep_ts = pd.Timestamp(dep_date_str)
@@ -332,49 +463,63 @@ class BacktestEngine:
                 key = target.strftime("%Y-%m-%d")
                 deposit_on[key] = deposit_on.get(key, 0) + amount
                 if key != dep_date_str:
-                    print(f"  ℹ️  입금일 이월: {dep_date_str} → {key}  "
-                          f"({amount:,.0f}원, 공휴일/비거래일)")
+                    print(f"  ℹ️  입금일 이월: {dep_date_str} → {key}  ({amount:,.0f}원)")
 
-        print(f"\n[2] 백테스트 실행  ({len(trading_dates)}거래일)")
+        print(f"\n[2] 백테스트 실행  ({len(trading_dates)}거래일 × 유니버스 {len(ticker_data)}종목)")
 
         prev_year = None
         for date in trading_dates:
             date_str = date.strftime("%Y-%m-%d")
 
-            # 연도가 바뀌면 구분선 출력
             if date.year != prev_year:
                 print(f"\n  ── {date.year}년 ──────────────────────────────────")
                 prev_year = date.year
 
-            # 현재 시장가 수집
-            current_prices: dict[str, float] = {}
-            for ticker, df in ticker_data.items():
-                if date in df.index:
-                    current_prices[ticker] = float(df.loc[date, "Close"])
+            # 오늘 전 종목 시장가
+            current_prices: dict[str, float] = {
+                ticker: float(df.loc[date, "Close"])
+                for ticker, df in ticker_data.items()
+                if date in df.index
+            }
 
-            # 추가 입금 처리 (공휴일 이월 적용)
+            # 추가 입금 처리
             if date_str in deposit_on:
                 self.simulator.deposit(deposit_on[date_str], current_prices)
 
-            # 종목별 매매 판단
-            for ticker, df in ticker_data.items():
-                if date not in df.index:
+            # ── 매도 우선 ─────────────────────────────────────────────────
+            for held_ticker in list(self.positions.keys()):
+                df = ticker_data.get(held_ticker)
+                if df is None or date not in df.index:
                     continue
                 idx = df.index.get_loc(date)
-                if idx < self.strategy.kill_window + 60:
+                if idx < 1:
                     continue
-                self._decide(ticker, df, idx, current_prices)
+                self._try_sell(date_str, held_ticker, df, idx, current_prices)
+
+            # ── 일일 스크리닝 → 매수 후보 ────────────────────────────────
+            candidates = self._screen_daily(date, ticker_data)
+
+            # ── 매수 집행 ─────────────────────────────────────────────────
+            for buy_ticker in candidates:
+                if buy_ticker in self.positions:
+                    continue  # 이미 보유 중
+                if self.simulator.cash <= 0:
+                    break
+                df = ticker_data.get(buy_ticker)
+                if df is None or date not in df.index:
+                    continue
+                idx = df.index.get_loc(date)
+                self._try_buy(date_str, buy_ticker, df, idx, current_prices)
 
             # 수익률 기록
-            total_asset   = self.simulator.get_total_asset(current_prices)
-            return_pct    = self.simulator.get_current_return(current_prices)
-            invested      = self.simulator.invested_capital
+            total_asset = self.simulator.get_total_asset(current_prices)
+            return_pct  = self.simulator.get_current_return(current_prices)
             self.equity_curve.append({
-                "date":         date_str,
-                "total_asset":  round(total_asset),
-                "return_pct":   round(return_pct, 4),
-                "cash":         round(self.simulator.cash),
-                "invested":     round(invested),
+                "date":        date_str,
+                "total_asset": round(total_asset),
+                "return_pct":  round(return_pct, 4),
+                "cash":        round(self.simulator.cash),
+                "invested":    round(self.simulator.invested_capital),
             })
 
         print("\n[3] 결과 분석")
@@ -390,13 +535,12 @@ class BacktestEngine:
         ec   = self.equity_curve
         last = ec[-1]
 
-        # ── 기본 성과 지표 ─────────────────────────────────────────────────
         initial_investment = ec[0]["invested"]
         final_asset        = last["total_asset"]
         final_return_pct   = last["return_pct"]
         invested           = last["invested"]
 
-        # MDD 계산 (최대 낙폭)
+        # MDD
         assets = [r["total_asset"] for r in ec]
         peak   = assets[0]
         mdd    = 0.0
@@ -406,16 +550,29 @@ class BacktestEngine:
             dd = (peak - a) / peak * 100
             mdd = max(mdd, dd)
 
-        # CAGR 계산
-        n_days = (pd.Timestamp(ec[-1]["date"]) - pd.Timestamp(ec[0]["date"])).days
+        # CAGR
+        n_days  = (pd.Timestamp(ec[-1]["date"]) - pd.Timestamp(ec[0]["date"])).days
         n_years = n_days / 365.25
         cagr = ((final_asset / initial_investment) ** (1 / n_years) - 1) * 100 if n_years > 0 else 0.0
 
         # 매매 통계
-        buys     = [t for t in self.trade_log if "BUY" in t["action"]]
-        sell_tp  = [t for t in self.trade_log if t["action"] == "SELL_TP"]
-        sell_sl  = [t for t in self.trade_log if t["action"] == "SELL_SL"]
-        win_rate = len(sell_tp) / (len(sell_tp) + len(sell_sl)) * 100 if (sell_tp or sell_sl) else 0.0
+        buys    = [t for t in self.trade_log if "BUY" in t["action"]]
+        sell_tp = [t for t in self.trade_log if t["action"] == "SELL_TP"]
+        sell_ts = [t for t in self.trade_log if t["action"] == "SELL_TS"]
+        sell_sl = [t for t in self.trade_log if t["action"] == "SELL_SL"]
+        all_sells = sell_tp + sell_ts + sell_sl
+
+        def _pnl_pct(t: dict) -> float:
+            ep = t.get("entry_price", 0)
+            return (t["price"] - ep) / ep * 100 if ep > 0 else 0.0
+
+        win_trades  = [t for t in all_sells if _pnl_pct(t) > 0]
+        loss_trades = [t for t in all_sells if _pnl_pct(t) <= 0]
+        win_rate    = len(win_trades) / len(all_sells) * 100 if all_sells else 0.0
+
+        avg_profit = (sum(_pnl_pct(t) for t in win_trades)  / len(win_trades))  if win_trades  else 0.0
+        avg_loss   = (sum(_pnl_pct(t) for t in loss_trades) / len(loss_trades)) if loss_trades else 0.0
+        pl_ratio   = abs(avg_profit / avg_loss) if avg_loss != 0 else float("inf")
 
         print("\n" + "=" * 65)
         print("  백테스트 결과 요약")
@@ -433,12 +590,21 @@ class BacktestEngine:
         print(f"  최대 낙폭(MDD): {-mdd:>+14.2f} %")
         print("─" * 65)
         print(f"  총 매수 횟수  : {len(buys):>5}회")
-        print(f"  익절 횟수     : {len(sell_tp):>5}회")
-        print(f"  손절 횟수     : {len(sell_sl):>5}회")
-        print(f"  승률          : {win_rate:>14.1f} %")
+        print(f"  익절 (TP)     : {len(sell_tp):>5}회  목표가 직접 도달")
+        print(f"  트레일링 (TS) : {len(sell_ts):>5}회  트레일링 스톱 청산")
+        print(f"  손절 (SL)     : {len(sell_sl):>5}회  하드 손절")
+        print(f"  승률          : {win_rate:>14.1f} %  (실제 P/L 기준)")
+        print("─" * 65)
+        print(f"  평균 익절률   : {avg_profit:>+14.2f} %")
+        print(f"  평균 손실률   : {avg_loss:>+14.2f} %")
+        if pl_ratio == float("inf"):
+            print(f"  손익비 (P/L)  : {'∞':>15s}  (손절 거래 없음)")
+        else:
+            marker = "✅" if pl_ratio >= 1.5 else ("⚠️" if pl_ratio >= 1.0 else "❌")
+            print(f"  손익비 (P/L)  : {pl_ratio:>14.2f}  {marker} (>1.5 목표)")
 
         # 현재 보유 포지션
-        current_prices = {}
+        current_prices: dict[str, float] = {}
         for ticker, df in ticker_data.items():
             latest = df["Close"].dropna()
             if not latest.empty:
@@ -448,27 +614,23 @@ class BacktestEngine:
             print("\n  보유 포지션:")
             for ticker, qty in self.simulator.portfolio.items():
                 price = current_prices.get(ticker, 0)
-                pos   = self.positions[ticker]
+                pos   = self.positions.get(ticker)
+                entry = pos.entry_price if pos else 0
                 value = price * qty
-                pnl   = (price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price else 0
+                pnl   = (price - entry) / entry * 100 if entry else 0
                 print(f"    {ticker:15s} {qty:>6}주  "
-                      f"평단 {pos.entry_price:>10,.0f}  "
+                      f"평단 {entry:>10,.0f}  "
                       f"현재 {price:>10,.0f}  "
                       f"평가 {value:>12,.0f}  "
                       f"수익률 {pnl:>+6.1f}%")
 
-        # 입금 이벤트 요약
         if self.deposit_schedule:
             print("\n  추가 입금 내역:")
             for d, amt in sorted(self.deposit_schedule.items()):
                 print(f"    {d}  +{amt:,.0f}원")
 
         print("=" * 65)
-
-        # ── ASCII 에쿼티 커브 ──────────────────────────────────────────────
         self._print_equity_chart(ec)
-
-        # ── 결과 파일 저장 ─────────────────────────────────────────────────
         self._save_results()
 
     def _print_equity_chart(self, ec: list[dict], width: int = 60, height: int = 15) -> None:
@@ -477,7 +639,6 @@ class BacktestEngine:
         max_r   = max(returns)
         span    = max_r - min_r if max_r != min_r else 1.0
 
-        # 월 단위로 샘플링 (최대 width 포인트)
         step   = max(1, len(ec) // width)
         sample = ec[::step]
 
@@ -523,7 +684,7 @@ class BacktestEngine:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 종목 자동 선정 스크리너
+# 종목 자동 선정 스크리너 (단독 실행 또는 유니버스 빌드용)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class StockScreener:
@@ -540,7 +701,6 @@ class StockScreener:
       - 일평균 거래량 > min_volume
     """
 
-    # 지원 마켓 → (로더 함수명, 최소 거래량)
     MARKET_CFG: dict[str, tuple[str, float]] = {
         "KOSPI":   ("get_top_kospi_stocks",  50_000),
         "KOSDAQ":  ("get_top_kosdaq_stocks", 30_000),
@@ -550,8 +710,6 @@ class StockScreener:
 
     def __init__(self, universe_per_market: int = 200):
         self.universe_per_market = universe_per_market
-
-    # ── 유니버스 로드 ────────────────────────────────────────────────────────
 
     def build_universe(self, markets: list[str]) -> list[tuple[str, str]]:
         """마켓별 후보 종목 목록 반환. [(ticker, name), ...]"""
@@ -571,14 +729,12 @@ class StockScreener:
             fn = loaders.get(market)
             if fn is None:
                 continue
-            stocks: dict[str, str] = fn(self.universe_per_market)  # {name: ticker}
+            stocks: dict[str, str] = fn(self.universe_per_market)
             for name, ticker in stocks.items():
                 if ticker not in seen:
                     seen.add(ticker)
                     result.append((ticker, name))
         return result
-
-    # ── 배치 스코어링 ────────────────────────────────────────────────────────
 
     def _score_chunk(
         self,
@@ -586,7 +742,6 @@ class StockScreener:
         lookback: str,
         min_volume: float,
     ) -> list[dict]:
-        """청크 단위 배치 다운로드 후 스코어 계산."""
         tickers = [t for t, _ in chunk]
         name_map = {t: n for t, n in chunk}
         scored: list[dict] = []
@@ -603,7 +758,6 @@ class StockScreener:
 
             for ticker in tickers:
                 try:
-                    # MultiIndex: (field, ticker) 또는 단일 종목 flat
                     if isinstance(raw.columns, pd.MultiIndex):
                         close  = raw["Close"][ticker].dropna()
                         volume = raw["Volume"][ticker].dropna()
@@ -621,7 +775,7 @@ class StockScreener:
                     sma20   = float(close.rolling(20).mean().iloc[-1])
                     current = float(close.iloc[-1])
                     if current <= sma20:
-                        continue  # 상승 추세 아님
+                        continue
 
                     momentum   = (current / float(close.iloc[0]) - 1) * 100
                     volatility = float(close.pct_change().std()) * 100 or 0.001
@@ -647,8 +801,6 @@ class StockScreener:
 
         return scored
 
-    # ── 퍼블릭 API ───────────────────────────────────────────────────────────
-
     def screen(
         self,
         markets: list[str],
@@ -657,7 +809,7 @@ class StockScreener:
         progress_cb: Optional[Callable[[float, str], None]] = None,
     ) -> list[dict]:
         """
-        자동 종목 선정 실행.
+        자동 종목 선정 실행 (단독 스크리닝 용도).
 
         Parameters
         ----------
@@ -665,11 +817,6 @@ class StockScreener:
         top_n       : 최종 선정 종목 수
         lookback    : 스크리닝 기간 (yfinance period 문자열)
         progress_cb : (pct: float, msg: str) → None  (UI 진행률 콜백)
-
-        Returns
-        -------
-        [{"ticker", "name", "score", "momentum", "volatility", "avg_volume"}, ...]
-        sorted by score descending, length <= top_n
         """
         if progress_cb:
             progress_cb(0.0, "종목 유니버스 로딩 중...")
@@ -678,7 +825,6 @@ class StockScreener:
         if not universe:
             return []
 
-        # 마켓별 최소 거래량 매핑 (혼합 마켓 대응)
         min_vol_map = {t: self.MARKET_CFG.get(m, ("", 50_000))[1]
                        for m in markets
                        for t, _ in self.build_universe([m])}
@@ -716,36 +862,14 @@ class StockScreener:
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    # ── 자동 종목 선정 ─────────────────────────────────────────────────────
-    print("\n[0] 종목 자동 선정 (스크리닝)")
-    screener = StockScreener(universe_per_market=SCREEN_UNIVERSE_N)
-
-    def _cli_progress(pct: float, msg: str) -> None:
-        print(f"  [{pct:5.1f}%] {msg}")
-
-    selected = screener.screen(
-        markets     = SCREEN_MARKETS,
-        top_n       = SCREEN_TOP_N,
-        progress_cb = _cli_progress,
-    )
-
-    if not selected:
-        print("❌ 스크리닝 통과 종목 없음. 종료.")
-        sys.exit(1)
-
-    print(f"\n  선정된 {len(selected)}개 종목:")
-    for rank, s in enumerate(selected, 1):
-        print(f"  {rank:2d}. [{s['ticker']:15s}] {s['name']:20s}  "
-              f"모멘텀 {s['momentum']:>+6.1f}%  변동성 {s['volatility']:.2f}%")
-
-    tickers = [s["ticker"] for s in selected]
-
-    # ── 백테스트 실행 ──────────────────────────────────────────────────────
     engine = BacktestEngine(
-        tickers             = tickers,
         initial_capital     = INITIAL_CAPITAL,
         start_date          = START_DATE,
         end_date            = END_DATE,
+        markets             = SCREEN_MARKETS,
+        universe_n          = SCREEN_UNIVERSE_N,
+        volume_top_n        = VOLUME_TOP_N,
+        news_candidate_n    = NEWS_CANDIDATE_N,
         deposit_schedule    = DEPOSIT_SCHEDULE,
         position_sizing_pct = POSITION_SIZING_PCT,
     )
