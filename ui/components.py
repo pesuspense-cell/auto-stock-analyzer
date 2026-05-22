@@ -368,3 +368,218 @@ def info_chip_html(text: str, color: str = "") -> str:
         f'font-size:0.76rem;color:{fg};margin:2px 3px;'
         f'font-family:{_FONT_TEXT};">{text}</span>'
     )
+
+
+# ─── SDT: 헤더 바 ─────────────────────────────────────────────────────────────
+def stock_dashboard_header_html(
+    title: str,
+    price_str: str,
+    chg_pct: float | None,
+    is_realtime: bool,
+    rt_ts: str,
+) -> str:
+    """Stock Dashboard Tile — header bar with stock name, live price, and change badge."""
+    rt_label = "● 실시간" if is_realtime else "○ 장마감"
+    rt_color  = _C["gain"] if is_realtime else _C["text_3"]
+
+    if chg_pct is not None:
+        _c     = _C["gain"] if chg_pct >= 0 else _C["loss"]
+        _arrow = "▲" if chg_pct >= 0 else "▼"
+        chg_html = (
+            f'<span class="sdt-chg" style="color:{_c};">{_arrow}&nbsp;{chg_pct:+.2f}%</span>'
+        )
+    else:
+        chg_html = f'<span class="sdt-chg" style="color:{_C["text_3"]};">— —</span>'
+
+    return (
+        f'<div class="sdt-header">'
+        f'<span class="sdt-stock-name">{title}</span>'
+        f'<div style="display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;gap:2px;">'
+        f'<div class="sdt-price-row">'
+        f'<span class="sdt-price">{price_str}</span>'
+        f'{chg_html}'
+        f'</div>'
+        f'<span style="font-size:.68rem;color:{rt_color};font-family:{_FONT_TEXT};">'
+        f'{rt_label}{(" · " + rt_ts) if rt_ts else ""}'
+        f'</span>'
+        f'</div>'
+        f'</div>'
+    )
+
+
+# ─── SDT: AI Signal Card (우측 패널) ──────────────────────────────────────────
+def signal_card_compact_html(
+    signal: str,
+    h_label: str,
+    h_score: float,
+    exp_return: float | None,
+    risk_state: str,
+    buy_price_str: str,
+    sell_price_str: str,
+) -> str:
+    """Stock Dashboard Tile — compact AI signal card for the right split-pane."""
+    if signal == "BUY":
+        pill_bg, pill_fg, top_border = "var(--gain-dim)", _C["gain"],  _C["gain"]
+        _br = "rgba(52,199,89,0.3)"
+    elif signal == "SELL":
+        pill_bg, pill_fg, top_border = "var(--loss-dim)", _C["loss"],  _C["loss"]
+        _br = "rgba(255,59,48,0.3)"
+    else:
+        pill_bg, pill_fg, top_border = "rgba(255,149,0,0.10)", "#e07000", "#ff9500"
+        _br = "rgba(255,149,0,0.3)"
+
+    score_c = _C["gain"] if h_score >= 0 else _C["loss"]
+    ret_c   = (
+        (_C["gain"] if (exp_return or 0) >= 0 else _C["loss"])
+        if exp_return is not None else _C["text_2"]
+    )
+    ret_str = f"{exp_return:+.1f}%" if exp_return is not None else "—"
+
+    def _row(key: str, val: str, val_color: str | None = None) -> str:
+        vc = val_color or _C["text"]
+        return (
+            f'<div class="sdt-signal-row">'
+            f'<span class="sdt-signal-key">{key}</span>'
+            f'<span class="sdt-signal-val" style="color:{vc};">{val}</span>'
+            f'</div>'
+        )
+
+    return (
+        f'<div class="sdt-signal-card" style="border-top:3px solid {top_border};">'
+        f'<div class="sdt-signal-eyebrow">'
+        f'<span style="width:6px;height:6px;border-radius:50%;background:{top_border};'
+        f'display:inline-block;flex-shrink:0;"></span>'
+        f'Enhanced Hybrid Signal'
+        f'</div>'
+        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+        f'<span class="sdt-signal-pill" style="background:{pill_bg};color:{pill_fg};'
+        f'border:1px solid {_br};">{signal}</span>'
+        f'<span style="font-size:0.82rem;font-weight:600;color:{score_c};'
+        f'font-variant-numeric:tabular-nums;font-family:{_FONT_DISPLAY};">'
+        f'{h_score:+.1f}점</span>'
+        f'</div>'
+        f'<div style="font-size:0.78rem;color:{_C["text_2"]};margin-bottom:14px;'
+        f'line-height:1.45;word-break:keep-all;font-family:{_FONT_TEXT};">{h_label}</div>'
+        f'{_row("예상 수익률", ret_str, ret_c)}'
+        f'{_row("리스크 상태", risk_state)}'
+        f'{_row("추천 매수가", buy_price_str, _C["gain"])}'
+        f'{_row("1차 목표가", sell_price_str, _C["gain"])}'
+        f'</div>'
+    )
+
+
+# ─── SDT: 서브 데이터 그리드 (3칼럼) ───────────────────────────────────────────
+def sub_data_grid_html(
+    fund_score: float,
+    fund_label: str,
+    fund_weight: str,
+    news_score: float,
+    news_senti: str,
+    pos_kw: int,
+    neg_kw: int,
+    vol_anomaly: bool,
+    adv_rsi: float | None,
+    adv_macd_cross: str,
+    breakout_status: str,
+) -> str:
+    """Stock Dashboard Tile — 3-column sub-data grid (Fundamental · Sentiment · Technical)."""
+    # ── Fundamental Score Card ────────────────────────────────────────────────
+    if fund_score >= 3:    _fc, _fb = _C["gain"],   "rgba(52,199,89,0.06)"
+    elif fund_score >= 1:  _fc, _fb = _C["accent"],  "rgba(0,102,204,0.06)"
+    elif fund_score <= -2: _fc, _fb = _C["loss"],   "rgba(255,59,48,0.06)"
+    else:                  _fc, _fb = _C["text_2"],  "rgba(0,0,0,0.02)"
+
+    _fw_html = (
+        f'&nbsp;<span style="font-size:0.72rem;color:{_C["text_2"]};font-weight:500;">'
+        f'(Weight: {fund_weight})</span>'
+    ) if fund_weight else ""
+
+    card_fund = (
+        f'<div class="sdt-sub-card" style="background:{_fb};">'
+        f'<div class="sdt-sub-eyebrow">Fundamental Score</div>'
+        f'<div class="sdt-sub-score" style="color:{_fc};">{fund_score:+.0f}'
+        f'<span style="font-size:0.72rem;color:{_C["text_2"]};font-weight:500;"> / ±6</span>'
+        f'</div>'
+        f'<div class="sdt-sub-label" style="color:{_fc};">{fund_label}{_fw_html}</div>'
+        f'<div class="sdt-sub-row">'
+        f'<span class="sdt-sub-row-k">판정 기준</span>'
+        f'<span class="sdt-sub-row-v" style="color:{_C["text_2"]};">Graham·Buffett·Lynch</span>'
+        f'</div>'
+        f'</div>'
+    )
+
+    # ── Sentiment Analysis Card ───────────────────────────────────────────────
+    if news_senti == "긍정":   _sc, _sb = _C["gain"],  "rgba(52,199,89,0.06)"
+    elif news_senti == "부정": _sc, _sb = _C["loss"],  "rgba(255,59,48,0.06)"
+    else:                       _sc, _sb = _C["text_2"], "rgba(0,0,0,0.02)"
+
+    _kw_pos_c = _C["gain"]   if pos_kw > 0 else _C["text_2"]
+    _kw_neg_c = _C["loss"]   if neg_kw > 0 else _C["text_2"]
+
+    card_senti = (
+        f'<div class="sdt-sub-card" style="background:{_sb};">'
+        f'<div class="sdt-sub-eyebrow">Sentiment Analysis</div>'
+        f'<div class="sdt-sub-score" style="color:{_sc};">{news_score:+.1f}'
+        f'<span style="font-size:0.72rem;color:{_C["text_2"]};font-weight:500;"> pts</span>'
+        f'</div>'
+        f'<div class="sdt-sub-label" style="color:{_sc};">{news_senti}</div>'
+        f'<div class="sdt-sub-row">'
+        f'<span class="sdt-sub-row-k">긍정 키워드</span>'
+        f'<span class="sdt-sub-row-v" style="color:{_kw_pos_c};">+{pos_kw}</span>'
+        f'</div>'
+        f'<div class="sdt-sub-row">'
+        f'<span class="sdt-sub-row-k">부정 키워드</span>'
+        f'<span class="sdt-sub-row-v" style="color:{_kw_neg_c};">−{neg_kw}</span>'
+        f'</div>'
+        f'</div>'
+    )
+
+    # ── Technical Analysis Card ───────────────────────────────────────────────
+    _va_lbl = "감지됨 ⚠️" if vol_anomaly else "정상"
+    _va_c   = _C["loss"] if vol_anomaly else _C["gain"]
+
+    _rsi_str = f"{adv_rsi:.1f}" if adv_rsi is not None else "—"
+    _rsi_c   = (
+        (_C["loss"] if adv_rsi > 70 else (_C["gain"] if adv_rsi < 30 else _C["text"]))
+        if adv_rsi is not None else _C["text_2"]
+    )
+
+    _macd_c = (
+        _C["gain"] if "골든" in adv_macd_cross else
+        (_C["loss"] if "데드" in adv_macd_cross else _C["text_2"])
+    ) if adv_macd_cross else _C["text_2"]
+
+    if breakout_status == "breakout_both":
+        _bk_lbl, _bk_c = "돌파 확인 🚀", _C["gain"]
+    elif "breakout" in breakout_status:
+        _bk_lbl, _bk_c = "부분 돌파",   _C["accent"]
+    else:
+        _bk_lbl, _bk_c = "관망",         _C["text_2"]
+
+    card_tech = (
+        f'<div class="sdt-sub-card">'
+        f'<div class="sdt-sub-eyebrow">Technical Analysis</div>'
+        f'<div class="sdt-sub-row">'
+        f'<span class="sdt-sub-row-k">거래량 이상</span>'
+        f'<span class="sdt-sub-row-v" style="color:{_va_c};">{_va_lbl}</span>'
+        f'</div>'
+        f'<div class="sdt-sub-row">'
+        f'<span class="sdt-sub-row-k">RSI (14)</span>'
+        f'<span class="sdt-sub-row-v" style="color:{_rsi_c};">{_rsi_str}</span>'
+        f'</div>'
+        f'<div class="sdt-sub-row">'
+        f'<span class="sdt-sub-row-k">MACD 크로스</span>'
+        f'<span class="sdt-sub-row-v" style="color:{_macd_c};">{adv_macd_cross or "—"}</span>'
+        f'</div>'
+        f'<div class="sdt-sub-row">'
+        f'<span class="sdt-sub-row-k">돌파 신호</span>'
+        f'<span class="sdt-sub-row-v" style="color:{_bk_c};">{_bk_lbl}</span>'
+        f'</div>'
+        f'</div>'
+    )
+
+    return (
+        f'<div class="sdt-sub-grid sdt-fade-in">'
+        f'{card_fund}{card_senti}{card_tech}'
+        f'</div>'
+    )

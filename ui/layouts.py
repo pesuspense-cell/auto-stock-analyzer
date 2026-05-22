@@ -28,6 +28,9 @@ from ui.components import (
     halted_banner_html,
     signal_report_html,
     stock_badge_html,
+    stock_dashboard_header_html,
+    signal_card_compact_html,
+    sub_data_grid_html,
     SVG_WALLET, SVG_BAR_CHART, SVG_TREND,
 )
 from ui.styles import COLORS, RADIUS
@@ -1320,16 +1323,37 @@ def render_chart_tab(
         if not data_ready:
             st.info("👈 사이드바에서 종목을 선택하고 **분석 시작** 버튼을 눌러주세요.", icon="📊")
 
-        # 관심종목 버튼
+        # ── 공통 값 사전 계산 ─────────────────────────────────────────
+        title_label  = f"{sname} ({ticker})" if sname != ticker else ticker
+        _is_krw      = ticker.upper().endswith((".KS", ".KQ"))
+        _pricefmt    = "{:,.0f}" if _is_krw else "{:,.2f}"
+        _has_close2  = not close.empty and len(close) >= 2
+        _c_last      = float(close.iloc[-1]) if _has_close2 else 0.0
+        _c_prev      = float(close.iloc[-2]) if _has_close2 else 0.0
+        _c_cur       = rt_price if (rt_price > 0 and data_ready) else _c_last
+        _chg_pct     = ((_c_cur - _c_prev) / _c_prev * 100) if _c_prev else None
+        _price_str   = (("₩" if _is_krw else "$") + _pricefmt.format(_c_cur)) if _c_cur else "—"
+        _rt_active   = rt_realtime and data_ready and rt_price > 0
+
+        # ── SDT Header ───────────────────────────────────────────────
+        _hdr_col, _wl_col = st.columns([9, 1.5])
         _wl: list = st.session_state.get("watchlist", [])
-        is_in_wl = any(w["ticker"] == ticker for w in _wl)
-        wl_col1, wl_col2 = st.columns([6, 1])
-        with wl_col2:
+        is_in_wl  = any(w["ticker"] == ticker for w in _wl)
+        with _hdr_col:
+            st.markdown(
+                stock_dashboard_header_html(
+                    title=title_label,
+                    price_str=_price_str,
+                    chg_pct=_chg_pct,
+                    is_realtime=_rt_active,
+                    rt_ts=rt_ts if _rt_active else "",
+                ),
+                unsafe_allow_html=True,
+            )
+        with _wl_col:
             if is_in_wl:
                 if st.button("★ 관심 해제", use_container_width=True):
-                    st.session_state["watchlist"] = [
-                        w for w in _wl if w["ticker"] != ticker
-                    ]
+                    st.session_state["watchlist"] = [w for w in _wl if w["ticker"] != ticker]
                     save_watchlist_fn(st.session_state["watchlist"])
                     st.rerun()
             else:
@@ -1354,7 +1378,7 @@ def render_chart_tab(
                 unsafe_allow_html=True,
             )
 
-        # ── 차트 생성 (dialog용) ───────────────────────────────────────────
+        # ── 차트 빌드 ─────────────────────────────────────────────────
         try:
             _kospi_raw = yf.download("^KS11", period=aperiod, auto_adjust=True, progress=False)
             _kospi_raw = _flatten_columns(_kospi_raw)
@@ -1362,81 +1386,141 @@ def render_chart_tab(
         except Exception:
             _kospi_df = pd.DataFrame()
 
-        data = _flatten_columns(data)
-        fig  = _build_plotly_chart(data, _kospi_df, ticker, aperiod)
+        data     = _flatten_columns(data)
+        fig      = _build_plotly_chart(data, _kospi_df, ticker, aperiod)
+        fig_mini = _build_compact_chart(data, ticker)
 
-        # ── 종목 배지 + 차트 보기 버튼 + 진단기준 (한 줄) ───────────────
-        title_label = f"{sname} ({ticker})" if sname != ticker else ticker
-        _badge_is_krw = ticker.upper().endswith((".KS", ".KQ"))
-        _badge_price_str = (
-            ("₩" if _badge_is_krw else "$") +
-            ("{:,.0f}" if _badge_is_krw else "{:,.2f}").format(rt_price)
-        ) if (rt_price > 0 and data_ready) else "—"
-
-        # 등락률 계산
-        _has_close2 = not close.empty and len(close) >= 2
-        if _has_close2:
-            _c_last = float(close.iloc[-1])
-            _c_prev = float(close.iloc[-2])
-            _c_cur  = rt_price if (rt_price > 0 and data_ready) else _c_last
-            _badge_chg = (_c_cur - _c_prev) / _c_prev * 100
-        else:
-            _badge_chg = None
-
-        _badge_col, _btn_chart_col, _btn_diag_col = st.columns([6, 1, 1])
-        with _badge_col:
-            st.markdown(
-                stock_badge_html(title_label, _badge_price_str,
-                                 rt_realtime and data_ready and rt_price > 0,
-                                 chg_pct=_badge_chg,
-                                 rt_ts=rt_ts if (data_ready and rt_price > 0) else ""),
-                unsafe_allow_html=True,
-            )
-        with _btn_chart_col:
-            if st.button("📊 차트", key="show_chart_btn",
-                         help="캔들·EMA·볼린저밴드·RSI·MACD·ADX·KOSPI 6패널",
-                         use_container_width=True):
-                chart_dialog(fig, ticker)
-        with _btn_diag_col:
-            with st.expander("🔍 진단기준"):
-                st.caption(
-                    "역추세 기술적 진단 — RSI·MACD·볼린저밴드·ADX·일목균형표 등 10개+ 지표 종합.  \n"
-                    "Naver·RSS·YouTube 멀티소스 뉴스 LLM 감성 포함. "
-                    "포트폴리오 탭 AI 모멘텀 추천과 결과가 다를 수 있습니다."
-                )
-
-        # AI 종합 리포트 배너
+        # ── 신호 / 가격 공통 계산 ──────────────────────────────────────
         if data_ready:
             _rpt_signal, _rpt_action, _rpt_reasons = generate_signal(
                 data=data, advanced=advanced, hybrid=hybrid,
                 news_result=news_result, expected=expected, signals=signals,
             )
-            _sl_rpt  = get_stop_loss_targets(data) if not data.empty else None
-            _has_rpt = not close.empty
-            _rpt_cur = float(close.iloc[-1]) if _has_rpt else 0
-            _is_krw  = _rpt_cur > 500
-            _fmt     = "{:,.0f}" if _is_krw else "{:,.2f}"
-            _rpt_sl  = _fmt.format(_sl_rpt["stop_8pct"]) if _sl_rpt else "—"
-            _rpt_tgt = _fmt.format(_sl_rpt["target_2r"])  if _sl_rpt else "—"
+        else:
+            _rpt_signal, _rpt_action, _rpt_reasons = "WAIT", "", []
 
+        _sl_data  = get_stop_loss_targets(data) if (data_ready and not data.empty) else None
+        _rpt_cur  = _c_last
+        _rpt_fmt  = "{:,.0f}" if _rpt_cur > 500 else "{:,.2f}"
+        _rpt_sl   = _rpt_fmt.format(_sl_data["stop_8pct"]) if _sl_data else "—"
+        _rpt_tgt  = _rpt_fmt.format(_sl_data["target_2r"])  if _sl_data else "—"
+
+        _buy_data = get_buy_target_price(data, mode="classic") if data_ready else {}
+        _buy_val  = _buy_data.get("buy_target")
+        _buy_str  = (("₩" if _rpt_cur > 500 else "$") + _rpt_fmt.format(_buy_val)) if _buy_val else "—"
+
+        _exp_ret  = expected.get("expected_return_pct") if expected else None
+        _risk_lbl = (
+            "보수적 조정" if (risk_adj and risk_adj.get("conservative_target")
+                            and risk_adj.get("win_prob", 100) < 50)
+            else "표준"
+        )
+
+        _rsi_val = None
+        if "RSI" in data.columns and not data.empty:
+            _rv = data["RSI"].iloc[-1]
+            if pd.notna(_rv):
+                _rsi_val = float(_rv)
+
+        _macd_cross = "—"
+        if "MACD" in data.columns and "MACD_Signal" in data.columns and len(data) >= 2:
+            _mc = float(data["MACD"].iloc[-1]);  _mp = float(data["MACD"].iloc[-2])
+            _sc = float(data["MACD_Signal"].iloc[-1]); _sp = float(data["MACD_Signal"].iloc[-2])
+            if _mp < _sp and _mc >= _sc:    _macd_cross = "골든크로스 🟢"
+            elif _mp > _sp and _mc <= _sc:  _macd_cross = "데드크로스 🔴"
+            elif _mc > _sc:                  _macd_cross = "MACD 위"
+            else:                             _macd_cross = "Signal 위"
+
+        _news_res   = news_result if isinstance(news_result, dict) else {}
+        _news_score = _news_res.get("score", 0.0)
+        _news_senti = _news_res.get("sentiment", "중립")
+        _news_pos   = int(_news_res.get("pos_count", 0))
+        _news_neg   = int(_news_res.get("neg_count", 0))
+
+        # ── Main Split-Grid: 차트(좌) + AI Signal Card(우) ────────────
+        _chart_col, _signal_col = st.columns([7, 3])
+
+        with _chart_col:
+            st.plotly_chart(
+                fig_mini,
+                use_container_width=True,
+                config={"scrollZoom": False, "displayModeBar": False},
+                key="sdt_compact_chart",
+            )
+            _btn_full_col, _btn_diag_col = st.columns([1, 1])
+            with _btn_full_col:
+                if st.button(
+                    "📊 전체 차트 (6패널)", key="show_chart_btn",
+                    help="캔들·EMA·BB·RSI·MACD·ADX·KOSPI 6패널 풀뷰",
+                    use_container_width=True,
+                ):
+                    chart_dialog(fig, ticker)
+            with _btn_diag_col:
+                with st.expander("🔍 진단 기준"):
+                    st.caption(
+                        "RSI·MACD·볼린저밴드·ADX·일목균형표 등 10개+ 지표 종합.  \n"
+                        "뉴스 LLM 감성 포함. 포트폴리오 탭 AI 추천과 결과가 다를 수 있습니다."
+                    )
+
+        with _signal_col:
+            st.markdown(
+                signal_card_compact_html(
+                    signal=_rpt_signal,
+                    h_label=hybrid.get("label", "중립/관망"),
+                    h_score=hybrid.get("hybrid_score", 0.0),
+                    exp_return=_exp_ret,
+                    risk_state=_risk_lbl,
+                    buy_price_str=_buy_str,
+                    sell_price_str=_rpt_tgt,
+                ),
+                unsafe_allow_html=True,
+            )
+
+        # ── Sub-Data Grid ─────────────────────────────────────────────
+        _fund_score  = fund_score_data.get("fund_score", 0)
+        _fund_label  = fund_score_data.get("fund_label", "N/A")
+        _fund_weight = str(fund_info.get("rec_weight", "")) if fund_info else ""
+        _vol_anom    = bool(vol_anomaly.get("is_anomaly", False))
+
+        st.markdown(
+            sub_data_grid_html(
+                fund_score=_fund_score,
+                fund_label=_fund_label,
+                fund_weight=_fund_weight,
+                news_score=_news_score,
+                news_senti=_news_senti,
+                pos_kw=_news_pos,
+                neg_kw=_news_neg,
+                vol_anomaly=_vol_anom,
+                adv_rsi=_rsi_val,
+                adv_macd_cross=_macd_cross,
+                breakout_status=breakout.get("status", "wait"),
+            ),
+            unsafe_allow_html=True,
+        )
+
+        st.divider()
+
+        # ── AI 종합 리포트 배너 ───────────────────────────────────────
+        if data_ready:
             st.markdown(
                 signal_report_html(
                     signal=_rpt_signal, action=_rpt_action, reasons=_rpt_reasons,
                     h_label=hybrid.get("label", "중립/관망"),
                     h_badge=hybrid.get("badge", "⚪"),
                     h_score=hybrid.get("hybrid_score", 0.0),
-                    news_score=news_result.get("score", 0.0) if isinstance(news_result, dict) else 0.0,
-                    fund_score=fund_score_data.get("fund_score", 0),
-                    fund_label=fund_score_data.get("fund_label", "N/A"),
+                    news_score=_news_score,
+                    fund_score=_fund_score,
+                    fund_label=_fund_label,
                     cur_price=_rpt_cur,
                     sl_price=_rpt_sl,
                     tgt_price=_rpt_tgt,
-                    is_krw=_is_krw,
+                    is_krw=_rpt_cur > 500,
                 ),
                 unsafe_allow_html=True,
             )
 
-        # ── AI 매매 신호 패널 (풀 너비) ──────────────────────────────────
+        # ── AI 매매 신호 패널 (상세) ──────────────────────────────────
         _render_signal_panel(
             state=state,
             inv_data_fn=inv_data_fn,
@@ -1445,7 +1529,7 @@ def render_chart_tab(
             groq_key=groq_key,
         )
 
-        # ── 차트 하단 추가 분석 섹션들 ────────────────────────────────────
+        # ── 차트 하단 추가 분석 섹션들 ────────────────────────────────
         if data_ready:
             _render_chart_bottom_sections(
                 state=state,
@@ -1667,6 +1751,83 @@ def _build_plotly_chart(
         margin=dict(t=30, b=10, l=10, r=10),
         uirevision=ticker, hovermode="x unified",
     )
+    return fig
+
+
+def _build_compact_chart(data: pd.DataFrame, ticker: str) -> go.Figure:
+    """2-panel compact chart for the SDT inline left pane (price + volume, 400px)."""
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.78, 0.22],
+    )
+
+    if not all(col in data.columns for col in ("Open", "High", "Low", "Close", "Volume")):
+        return fig
+
+    o, h, lo = data["Open"], data["High"], data["Low"]
+    c, v     = data["Close"], data["Volume"]
+
+    fig.add_trace(go.Candlestick(
+        x=data.index, open=o, high=h, low=lo, close=c,
+        name="가격",
+        increasing_line_color="#ff3b30",
+        decreasing_line_color="#0066cc",
+        showlegend=False,
+    ), row=1, col=1)
+
+    for col_name, color, lbl in [
+        ("EMA_20",  "#0066cc", "EMA20"),
+        ("EMA_50",  "#34c759", "EMA50"),
+        ("EMA_200", "#ff3b30", "EMA200"),
+    ]:
+        if col_name in data.columns:
+            fig.add_trace(go.Scatter(
+                x=data.index, y=data[col_name],
+                name=lbl, line=dict(color=color, width=1.3),
+            ), row=1, col=1)
+
+    if "BB_Upper" in data.columns and "BB_Lower" in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data["BB_Upper"],
+            line=dict(color="rgba(158,158,158,0.5)", width=1, dash="dot"),
+            showlegend=False,
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data["BB_Lower"],
+            line=dict(color="rgba(158,158,158,0.5)", width=1, dash="dot"),
+            fill="tonexty", fillcolor="rgba(158,158,158,0.06)",
+            showlegend=False,
+        ), row=1, col=1)
+
+    vol_colors = [
+        "#ff3b30" if float(c.iloc[i]) >= float(o.iloc[i]) else "#0066cc"
+        for i in range(len(data))
+    ]
+    fig.add_trace(go.Bar(
+        x=data.index, y=v,
+        marker_color=vol_colors, opacity=0.65,
+        showlegend=False,
+    ), row=2, col=1)
+
+    fig.update_layout(
+        height=400,
+        template="plotly_white",
+        dragmode=False,
+        xaxis_rangeslider_visible=False,
+        margin=dict(t=8, b=8, l=0, r=0),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01,
+            xanchor="right", x=1, font=dict(size=9),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        hovermode="x unified",
+        uirevision=ticker,
+    )
+    fig.update_xaxes(showspikes=True, spikemode="across", spikethickness=1,
+                     spikecolor="rgba(150,150,150,0.5)", spikedash="solid")
+    fig.update_yaxes(fixedrange=False, autorange=True)
     return fig
 
 
