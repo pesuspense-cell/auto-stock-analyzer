@@ -3376,7 +3376,7 @@ def calc_atr_trailing_guide(
             f"최고점 대비 변동성 임계점(ATR)을 하향 돌파했습니다. "
             f"수익 확보를 권장합니다. (매도 기준선: {_fmt(final)})"
         )
-        guide_clr = "#ffd93d"
+        guide_clr = "#c47f00"
     elif below and not above:
         case      = 2
         status    = "🚨 리스크 관리(손절) 추천"
@@ -3400,7 +3400,7 @@ def calc_atr_trailing_guide(
             f"평단가 아래이나 아직 지지선 내의 정상 변동 범위입니다. "
             f"최종 방어선을 주시하세요. (최종 방어선: {_fmt(final)})"
         )
-        guide_clr = "#fff176"
+        guide_clr = "#8a7200"
 
     return {
         "max_price_since_buy": round(max_price_since_buy, 2),

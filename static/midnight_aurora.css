@@ -122,7 +122,8 @@ body, .stApp, .stMarkdown, p, span, div {
 
 /* ─── 사이드바 버튼 (primary) ─────────────────────────────────── */
 [data-testid="stSidebar"] .stButton > button[kind="primary"],
-[data-testid="stSidebar"] button[data-testid="baseButton-primary"] {
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"],
+[data-testid="stSidebar"] button[data-testid="baseButton-primaryFormSubmit"] {
   background: var(--action-blue) !important;
   border: none !important;
   border-radius: var(--radius-pill) !important;
@@ -130,8 +131,13 @@ body, .stApp, .stMarkdown, p, span, div {
   font-weight: 600 !important;
   font-size: 0.9rem !important;
   letter-spacing: 0 !important;
-  transition: transform 0.15s ease !important;
+  transition: background 0.15s ease, transform 0.15s ease !important;
   box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover,
+[data-testid="stSidebar"] button[data-testid="baseButton-primaryFormSubmit"]:hover {
+  background: #0055aa !important;
+  color: #fff !important;
 }
 [data-testid="stSidebar"] .stButton > button[kind="primary"]:active {
   transform: scale(0.95) !important;
@@ -201,8 +207,8 @@ div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="
   border-radius: 8px !important;
   color: var(--ink-muted) !important;
   font-weight: 500 !important;
-  font-size: 0.85rem !important;
-  padding: 7px 14px !important;
+  font-size: 0.9rem !important;
+  padding: 7px 16px !important;
   transition: all 0.15s ease !important;
   white-space: nowrap !important;
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
@@ -223,7 +229,8 @@ div[data-testid="metric-container"] [data-testid="stMetricDelta"] [data-testid="
 
 /* ─── Primary 버튼 (Action Blue Pill) ─────────────────────────── */
 .stButton > button[kind="primary"],
-button[data-testid="baseButton-primary"] {
+button[data-testid="baseButton-primary"],
+button[data-testid="baseButton-primaryFormSubmit"] {
   background: var(--action-blue) !important;
   border: none !important;
   border-radius: var(--radius-pill) !important;
@@ -232,19 +239,23 @@ button[data-testid="baseButton-primary"] {
   font-size: 0.9rem !important;
   color: #fff !important;
   letter-spacing: 0 !important;
-  transition: transform 0.15s ease !important;
+  transition: background 0.15s ease, transform 0.15s ease !important;
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
 }
 .stButton > button[kind="primary"]:hover,
-button[data-testid="baseButton-primary"]:hover {
+button[data-testid="baseButton-primary"]:hover,
+button[data-testid="baseButton-primaryFormSubmit"]:hover {
   background: #0055aa !important;
+  color: #fff !important;
   transform: none !important;
   box-shadow: none !important;
 }
-.stButton > button[kind="primary"]:active {
+.stButton > button[kind="primary"]:active,
+button[data-testid="baseButton-primaryFormSubmit"]:active {
   transform: scale(0.95) !important;
 }
-.stButton > button[kind="primary"]:focus-visible {
+.stButton > button[kind="primary"]:focus-visible,
+button[data-testid="baseButton-primaryFormSubmit"]:focus-visible {
   outline: 2px solid var(--focus-blue) !important;
   outline-offset: 2px !important;
 }
@@ -305,16 +316,20 @@ button[data-testid="baseButton-primary"]:hover {
   background: var(--canvas) !important;
   border: 1px solid var(--hairline) !important;
   border-radius: var(--radius) !important;
-  margin-bottom: 8px !important;
+  margin-bottom: 10px !important;
   box-shadow: var(--shadow-soft) !important;
 }
 .stExpander summary {
   color: var(--ink) !important;
   font-weight: 500 !important;
-  font-size: 0.9rem !important;
+  font-size: 0.92rem !important;
+  padding: 14px 16px !important;
 }
 .stExpander summary:hover {
   color: var(--action-blue) !important;
+}
+.stExpander [data-testid="stExpanderDetails"] {
+  padding: 4px 8px 8px !important;
 }
 
 /* ─── Success / Warning / Error / Info ─────────────────────────── */
@@ -346,7 +361,23 @@ div[data-testid="stNotification"][data-type="info"] {
 /* ─── Divider ────────────────────────────────────────────────────── */
 hr {
   border-color: var(--hairline) !important;
-  margin: 14px 0 !important;
+  margin: 18px 0 !important;
+}
+
+/* ─── 전체 섹션 간격 개선 ─────────────────────────────────────── */
+.block-container > div > div > div {
+  gap: 1rem !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"] {
+  margin-bottom: 6px !important;
+}
+/* 탭 패널 내부 여백 */
+.stTabs [data-baseweb="tab-panel"] {
+  padding-top: 1.4rem !important;
+}
+/* metric 컨테이너 간격 */
+div[data-testid="metric-container"] {
+  margin-bottom: 8px !important;
 }
 
 /* ─── Input fields ──────────────────────────────────────────────── */
@@ -379,15 +410,80 @@ hr {
   color: var(--ink) !important;
 }
 
+/* ─── Selectbox / Multiselect 드롭다운 팝오버 ──────────────────── */
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div {
+  background: var(--canvas) !important;
+}
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] ul[role="listbox"],
+[data-baseweb="popover"] [role="listbox"] {
+  background: var(--canvas) !important;
+  border: 1px solid var(--hairline-md) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12) !important;
+  overflow: hidden !important;
+}
+[data-baseweb="option"],
+[data-baseweb="menu-item"],
+li[role="option"] {
+  background: var(--canvas) !important;
+  color: var(--ink) !important;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
+  font-size: 0.88rem !important;
+}
+[data-baseweb="option"]:hover,
+[data-baseweb="menu-item"]:hover,
+li[role="option"]:hover {
+  background: var(--action-dim) !important;
+  color: var(--ink) !important;
+}
+[data-baseweb="option"][aria-selected="true"],
+li[role="option"][aria-selected="true"] {
+  background: var(--action-dim) !important;
+  color: var(--action-blue) !important;
+  font-weight: 600 !important;
+}
+/* listbox 내 모든 div/span 텍스트 */
+[data-baseweb="popover"] div,
+[data-baseweb="popover"] span,
+[data-baseweb="popover"] p {
+  color: var(--ink) !important;
+  background: transparent !important;
+}
+[data-baseweb="option"] div,
+[data-baseweb="option"] span {
+  color: inherit !important;
+  background: transparent !important;
+}
+/* 사이드바 내 드롭다운도 동일 적용 */
+[data-testid="stSidebar"] [data-baseweb="popover"] div,
+[data-testid="stSidebar"] [data-baseweb="popover"] span {
+  color: var(--ink) !important;
+}
+
 /* ─── Radio ────────────────────────────────────────────────────── */
 .stRadio [data-testid="stWidgetLabel"] {
   color: var(--ink-muted) !important;
 }
 
+/* ─── 본문 텍스트 크기 기준 ──────────────────────────────────────── */
+.stMarkdown p,
+.stMarkdown li,
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li {
+  font-size: 0.95rem !important;
+  line-height: 1.75 !important;
+}
+.stExpander [data-testid="stMarkdownContainer"] p,
+.stExpander [data-testid="stMarkdownContainer"] li {
+  font-size: 0.9rem !important;
+}
+
 /* ─── Caption / small text ───────────────────────────────────────── */
 .stCaption, small, .caption {
   color: var(--ink-muted) !important;
-  font-size: 0.78rem !important;
+  font-size: 0.82rem !important;
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif !important;
 }
 
@@ -482,7 +578,7 @@ div[data-testid="stProgress"] > div > div {
 
 /* ─── 카드 헤더 ─────────────────────────────────────────────────── */
 .card-label {
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   color: var(--ink-muted);
   font-weight: 600;
   letter-spacing: -0.12px;
@@ -491,7 +587,7 @@ div[data-testid="stProgress"] > div > div {
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 .card-title {
-  font-size: 1.05rem;
+  font-size: 1.08rem;
   font-weight: 600;
   color: var(--ink);
   margin-bottom: 4px;
@@ -695,7 +791,7 @@ div[data-testid="stProgress"] > div > div {
   flex-shrink: 0;
 }
 .section-heading-text {
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 600;
   color: var(--ink);
   font-family: "SF Pro Display", system-ui, -apple-system, sans-serif;
@@ -760,7 +856,7 @@ div[data-testid="stProgress"] > div > div {
 .toss-item:last-child { border-bottom: none; }
 .toss-item:hover { background: rgba(0,0,0,0.02); }
 .toss-item-name {
-  font-size: .9rem;
+  font-size: .92rem;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
@@ -770,13 +866,13 @@ div[data-testid="stProgress"] > div > div {
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 .toss-item-sub {
-  font-size: .7rem;
+  font-size: .75rem;
   color: var(--ink-muted);
   margin-top: 2px;
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
 }
 .toss-item-price {
-  font-size: .92rem;
+  font-size: .95rem;
   font-weight: 600;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -1062,7 +1158,7 @@ div[data-testid="stProgress"] > div > div {
 }
 
 .sdt-signal-eyebrow {
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   color: var(--ink-muted);
   letter-spacing: 0.8px;
@@ -1100,7 +1196,7 @@ div[data-testid="stProgress"] > div > div {
 .sdt-signal-row:last-child { border-bottom: none; }
 
 .sdt-signal-key {
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--ink-muted);
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
   white-space: nowrap;
@@ -1108,7 +1204,7 @@ div[data-testid="stProgress"] > div > div {
 }
 
 .sdt-signal-val {
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -1141,7 +1237,7 @@ div[data-testid="stProgress"] > div > div {
 .sdt-sub-card:active { transform: scale(0.98); }
 
 .sdt-sub-eyebrow {
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   color: var(--ink-muted);
   letter-spacing: 0.8px;
@@ -1164,7 +1260,7 @@ div[data-testid="stProgress"] > div > div {
 }
 
 .sdt-sub-label {
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   font-weight: 600;
   margin-bottom: 10px;
   white-space: nowrap;
@@ -1184,7 +1280,7 @@ div[data-testid="stProgress"] > div > div {
 .sdt-sub-row:last-child { border-bottom: none; }
 
 .sdt-sub-row-k {
-  font-size: 0.73rem;
+  font-size: 0.78rem;
   color: var(--ink-muted);
   font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
   white-space: nowrap;
@@ -1192,7 +1288,7 @@ div[data-testid="stProgress"] > div > div {
 }
 
 .sdt-sub-row-v {
-  font-size: 0.78rem;
+  font-size: 0.83rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;

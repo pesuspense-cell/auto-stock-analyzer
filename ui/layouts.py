@@ -998,15 +998,15 @@ def render_rec_tab(
                 _clr  = COLORS["gain"] if _pct >= 0 else COLORS["loss"]
                 st.markdown(
                     f'<div style="background:#ffffff;border:1px solid #e0e0e0;'
-                    f'border-radius:12px;padding:14px 16px;margin:6px 0;'
+                    f'border-radius:12px;padding:16px 18px;margin:8px 0;'
                     f'display:flex;justify-content:space-between;align-items:center;'
                     f'box-shadow:0 1px 3px rgba(0,0,0,0.06);">'
-                    f'<div><b style="color:#1d1d1f">{_nm}</b>'
-                    f'<span style="color:#7a7a7a;font-size:.8rem;margin-left:8px">({_tk})</span>'
-                    f'<div style="font-size:.78rem;color:#7a7a7a;margin-top:3px">{_lbl}</div></div>'
+                    f'<div><b style="color:#1d1d1f;font-size:1rem">{_nm}</b>'
+                    f'<span style="color:#7a7a7a;font-size:.82rem;margin-left:8px">({_tk})</span>'
+                    f'<div style="font-size:.83rem;color:#555;margin-top:4px">{_lbl}</div></div>'
                     f'<div style="text-align:right">'
-                    f'<div style="font-size:1.1rem;font-weight:600;color:{_clr};font-variant-numeric:tabular-nums;">{_pct:+.2f}%</div>'
-                    f'<div style="font-size:.72rem;color:#7a7a7a;font-variant-numeric:tabular-nums;">점수 {_sc:+.1f}</div>'
+                    f'<div style="font-size:1.15rem;font-weight:600;color:{_clr};font-variant-numeric:tabular-nums;">{_pct:+.2f}%</div>'
+                    f'<div style="font-size:.76rem;color:#7a7a7a;font-variant-numeric:tabular-nums;margin-top:2px">점수 {_sc:+.1f}</div>'
                     f'</div></div>',
                     unsafe_allow_html=True,
                 )
@@ -1244,9 +1244,9 @@ def render_news_tab(
                         _d_ttl  = d.get("title", "")[:60]
                         _d_sc   = d.get("score", 0.0)
                         st.markdown(
-                            f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:6px;padding:6px 10px;'
-                            f'margin:3px 0;font-size:.8rem;color:#7a7a7a;display:flex;gap:6px;">'
-                            f'<span>{_d_icon}</span>'
+                            f'<div style="background:#f5f5f7;border:1px solid #e0e0e0;border-radius:8px;padding:8px 12px;'
+                            f'margin:4px 0;font-size:.85rem;color:#555;display:flex;gap:8px;line-height:1.5;">'
+                            f'<span style="flex-shrink:0">{_d_icon}</span>'
                             f'<span style="flex:1">{_d_ttl}</span>'
                             f'<span style="color:{"#34c759" if _d_sc >= 0 else "#ff3b30"};'
                             f'font-weight:700;white-space:nowrap">{_d_sc:+.1f}</span>'
@@ -1728,9 +1728,9 @@ def _build_plotly_chart(
             dict(count=1,  label="1Y", step="year",  stepmode="backward"),
             dict(step="all", label="ALL"),
         ],
-        bgcolor="#263238", activecolor="#1565c0",
-        font=dict(color="#cfd8dc", size=10),
-        bordercolor="#455a64", borderwidth=1,
+        bgcolor="#f5f5f7", activecolor="#0066cc",
+        font=dict(color="#1d1d1f", size=10),
+        bordercolor="#e0e0e0", borderwidth=1,
     )
     fig.update_xaxes(
         showspikes=True, spikemode="across", spikesnap="cursor",
@@ -3079,7 +3079,7 @@ def _render_pf_body(
                     st.markdown(
                         f'<div style="background:#f5f5f7;border-left:4px solid {_ak_c};border:1px solid #e0e0e0;'
                         f'padding:10px 16px;border-radius:0 8px 8px 0;margin:3px 0">'
-                        f'<span style="background:{_ak_c};color:#000;font-size:.72rem;'
+                        f'<span style="background:{_ak_c};color:#fff;font-size:.75rem;'
                         f'border-radius:4px;padding:2px 6px;margin-right:8px;font-weight:700">[{_akw}]</span>'
                         f'<b style="color:#1d1d1f">{_aname}</b> — '
                         f'<span style="color:#7a7a7a">{_al["title"]}</span></div>',
@@ -3298,28 +3298,28 @@ def _render_pf_body(
                     _info_html = " &nbsp;|&nbsp; ".join(_info_items) if _info_items else ""
                     _atr_html  = " &nbsp;|&nbsp; ".join(_atr_items)  if _atr_items  else ""
                     _trigger_html = (
-                        f'<div style="margin-top:8px;padding:7px 12px;background:#f5f5f7;'
+                        f'<div style="margin-top:10px;padding:9px 14px;background:#f5f5f7;'
                         f'border:1px solid {_guide_clr};border-radius:8px;'
-                        f'display:inline-flex;align-items:center;gap:10px">'
-                        f'<span style="font-size:.78rem;color:#7a7a7a">📌 최종 기준선 (매도 트리거)</span>'
-                        f'<span style="font-size:1.05rem;font-weight:700;color:{_guide_clr}">'
+                        f'display:inline-flex;align-items:center;gap:12px">'
+                        f'<span style="font-size:.82rem;color:#7a7a7a">📌 최종 기준선 (매도 트리거)</span>'
+                        f'<span style="font-size:1.1rem;font-weight:700;color:{_guide_clr}">'
                         f'{_efmt(_trigger)}</span></div>'
                     )
                     _status_html = (
-                        f'<div style="margin-top:6px;padding:8px 12px;background:rgba(0,0,0,0.03);'
+                        f'<div style="margin-top:8px;padding:10px 14px;background:rgba(0,0,0,0.025);'
                         f'border-left:3px solid {_guide_clr};border-radius:0 8px 8px 0">'
-                        f'<div style="font-size:.95rem;font-weight:600;color:{_guide_clr};margin-bottom:3px">'
+                        f'<div style="font-size:.95rem;font-weight:600;color:{_guide_clr};margin-bottom:4px">'
                         f'{_status}</div>'
-                        f'<div style="font-size:.82rem;color:#7a7a7a">{_message}</div></div>'
+                        f'<div style="font-size:.85rem;color:#555;line-height:1.6">{_message}</div></div>'
                     )
 
                     st.markdown(
-                        f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:12px 16px;margin:6px 0;box-shadow:0 1px 2px rgba(0,0,0,0.05)">'
-                        f'<div style="margin-bottom:6px">'
-                        + (f'<span style="font-size:.95rem;font-weight:600;color:#1d1d1f">{_enm}</span> ' if _enm else "")
-                        + f'<span style="font-size:.78rem;color:#7a7a7a">{_t}</span></div>'
-                        f'<div style="font-size:.84rem;line-height:1.9;color:#1d1d1f">{_info_html}</div>'
-                        f'<div style="font-size:.80rem;line-height:1.9;margin-top:2px;color:#7a7a7a">{_atr_html}</div>'
+                        f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;padding:14px 18px;margin:8px 0;box-shadow:0 1px 3px rgba(0,0,0,0.06)">'
+                        f'<div style="margin-bottom:8px">'
+                        + (f'<span style="font-size:1rem;font-weight:600;color:#1d1d1f">{_enm}</span> ' if _enm else "")
+                        + f'<span style="font-size:.82rem;color:#7a7a7a">{_t}</span></div>'
+                        f'<div style="font-size:.88rem;line-height:1.9;color:#1d1d1f">{_info_html}</div>'
+                        f'<div style="font-size:.83rem;line-height:1.9;margin-top:3px;color:#555">{_atr_html}</div>'
                         f'{_trigger_html}{_status_html}</div>',
                         unsafe_allow_html=True,
                     )
@@ -3328,14 +3328,14 @@ def _render_pf_body(
                     _pnl_pc  = (_cur / _avg - 1) * 100 if (_cur and _avg) else 0.0
                     _pnl_clr = "#34c759" if _pnl_pc >= 0 else "#ff3b30"
                     st.markdown(
-                        f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:10px;padding:12px 16px;margin:6px 0">'
-                        f'<div style="margin-bottom:4px">'
-                        + (f'<span style="font-size:.95rem;font-weight:600;color:#1d1d1f">{_enm}</span> ' if _enm else "")
-                        + f'<span style="font-size:.78rem;color:#7a7a7a">{_t}</span></div>'
-                        f'<div style="font-size:.84rem;color:#7a7a7a;font-variant-numeric:tabular-nums;">'
+                        f'<div style="background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;padding:14px 18px;margin:8px 0">'
+                        f'<div style="margin-bottom:6px">'
+                        + (f'<span style="font-size:1rem;font-weight:600;color:#1d1d1f">{_enm}</span> ' if _enm else "")
+                        + f'<span style="font-size:.82rem;color:#7a7a7a">{_t}</span></div>'
+                        f'<div style="font-size:.88rem;color:#555;font-variant-numeric:tabular-nums;">'
                         f'{_cur_label} <b style="color:#1d1d1f">{_efmt(_cur)}</b> '
                         f'<span style="color:{_pnl_clr}">({_pnl_pc:+.1f}%)</span>'
-                        f' &nbsp;|&nbsp; 평단가 <b style="color:#7a7a7a">{_efmt(_avg)}</b>'
+                        f' &nbsp;|&nbsp; 평단가 <b style="color:#555">{_efmt(_avg)}</b>'
                         f'</div></div>',
                         unsafe_allow_html=True,
                     )
