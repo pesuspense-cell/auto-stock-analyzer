@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -521,12 +523,230 @@ class BacktestEngine:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 종목 자동 선정 스크리너
+# ══════════════════════════════════════════════════════════════════════════════
+
+class StockScreener:
+    """
+    전체 종목 유니버스에서 백테스트 대상을 자동 선정.
+
+    선정 기준 (복합 점수):
+      - 3개월 모멘텀  (50%) — 단기 상승 추세 강도
+      - 변동성 역수    (30%) — 안정적 종목 선호
+      - 거래량 점수   (20%) — 유동성
+
+    필터:
+      - 가격 > SMA20 (상승 추세 종목만)
+      - 일평균 거래량 > min_volume
+    """
+
+    # 지원 마켓 → (로더 함수명, 최소 거래량)
+    MARKET_CFG: dict[str, tuple[str, float]] = {
+        "KOSPI":   ("get_top_kospi_stocks",  50_000),
+        "KOSDAQ":  ("get_top_kosdaq_stocks", 30_000),
+        "S&P500":  ("get_top_us_stocks",     200_000),
+        "NASDAQ":  ("get_top_nasdaq_stocks", 100_000),
+    }
+
+    def __init__(self, universe_per_market: int = 200):
+        self.universe_per_market = universe_per_market
+
+    # ── 유니버스 로드 ────────────────────────────────────────────────────────
+
+    def build_universe(self, markets: list[str]) -> list[tuple[str, str]]:
+        """마켓별 후보 종목 목록 반환. [(ticker, name), ...]"""
+        from stock_ai import (
+            get_top_kospi_stocks, get_top_kosdaq_stocks,
+            get_top_us_stocks,   get_top_nasdaq_stocks,
+        )
+        loaders = {
+            "KOSPI":   get_top_kospi_stocks,
+            "KOSDAQ":  get_top_kosdaq_stocks,
+            "S&P500":  get_top_us_stocks,
+            "NASDAQ":  get_top_nasdaq_stocks,
+        }
+        seen: set[str] = set()
+        result: list[tuple[str, str]] = []
+        for market in markets:
+            fn = loaders.get(market)
+            if fn is None:
+                continue
+            stocks: dict[str, str] = fn(self.universe_per_market)  # {name: ticker}
+            for name, ticker in stocks.items():
+                if ticker not in seen:
+                    seen.add(ticker)
+                    result.append((ticker, name))
+        return result
+
+    # ── 배치 스코어링 ────────────────────────────────────────────────────────
+
+    def _score_chunk(
+        self,
+        chunk: list[tuple[str, str]],
+        lookback: str,
+        min_volume: float,
+    ) -> list[dict]:
+        """청크 단위 배치 다운로드 후 스코어 계산."""
+        tickers = [t for t, _ in chunk]
+        name_map = {t: n for t, n in chunk}
+        scored: list[dict] = []
+
+        try:
+            raw = yf.download(
+                tickers if len(tickers) > 1 else tickers[0],
+                period=lookback,
+                auto_adjust=True,
+                progress=False,
+            )
+            if raw.empty:
+                return scored
+
+            for ticker in tickers:
+                try:
+                    # MultiIndex: (field, ticker) 또는 단일 종목 flat
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        close  = raw["Close"][ticker].dropna()
+                        volume = raw["Volume"][ticker].dropna()
+                    else:
+                        close  = raw["Close"].dropna()
+                        volume = raw["Volume"].dropna()
+
+                    if len(close) < 20:
+                        continue
+
+                    avg_vol = float(volume.mean())
+                    if avg_vol < min_volume:
+                        continue
+
+                    sma20   = float(close.rolling(20).mean().iloc[-1])
+                    current = float(close.iloc[-1])
+                    if current <= sma20:
+                        continue  # 상승 추세 아님
+
+                    momentum   = (current / float(close.iloc[0]) - 1) * 100
+                    volatility = float(close.pct_change().std()) * 100 or 0.001
+                    vol_score  = math.log10(max(avg_vol, 1))
+
+                    score = (
+                        momentum   * 0.5
+                        + (1 / volatility) * 10 * 0.3
+                        + vol_score        * 0.2
+                    )
+                    scored.append({
+                        "ticker":     ticker,
+                        "name":       name_map.get(ticker, ticker),
+                        "score":      round(score, 4),
+                        "momentum":   round(momentum, 2),
+                        "volatility": round(volatility, 4),
+                        "avg_volume": round(avg_vol),
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return scored
+
+    # ── 퍼블릭 API ───────────────────────────────────────────────────────────
+
+    def screen(
+        self,
+        markets: list[str],
+        top_n: int = 20,
+        lookback: str = "3mo",
+        progress_cb: Optional[Callable[[float, str], None]] = None,
+    ) -> list[dict]:
+        """
+        자동 종목 선정 실행.
+
+        Parameters
+        ----------
+        markets     : ["KOSPI", "KOSDAQ", "S&P500", "NASDAQ"] 중 선택
+        top_n       : 최종 선정 종목 수
+        lookback    : 스크리닝 기간 (yfinance period 문자열)
+        progress_cb : (pct: float, msg: str) → None  (UI 진행률 콜백)
+
+        Returns
+        -------
+        [{"ticker", "name", "score", "momentum", "volatility", "avg_volume"}, ...]
+        sorted by score descending, length <= top_n
+        """
+        if progress_cb:
+            progress_cb(0.0, "종목 유니버스 로딩 중...")
+
+        universe = self.build_universe(markets)
+        if not universe:
+            return []
+
+        # 마켓별 최소 거래량 매핑 (혼합 마켓 대응)
+        min_vol_map = {t: self.MARKET_CFG.get(m, ("", 50_000))[1]
+                       for m in markets
+                       for t, _ in self.build_universe([m])}
+        default_min_vol = min(v for _, v in self.MARKET_CFG.values())
+
+        CHUNK = 50
+        all_scored: list[dict] = []
+        total = len(universe)
+
+        if progress_cb:
+            progress_cb(2.0, f"{total}개 후보 종목 배치 다운로드 시작...")
+
+        for i in range(0, total, CHUNK):
+            chunk = universe[i: i + CHUNK]
+            chunk_min_vol = min(
+                min_vol_map.get(t, default_min_vol) for t, _ in chunk
+            )
+            all_scored.extend(self._score_chunk(chunk, lookback, chunk_min_vol))
+
+            if progress_cb:
+                pct = 5.0 + (i + len(chunk)) / total * 90.0
+                progress_cb(pct, f"스크리닝 {i + len(chunk)}/{total}개 완료...")
+
+        all_scored.sort(key=lambda x: x["score"], reverse=True)
+        selected = all_scored[:top_n]
+
+        if progress_cb:
+            progress_cb(100.0,
+                        f"스크리닝 완료 — {len(all_scored)}개 통과 → 상위 {len(selected)}개 선정")
+        return selected
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 실행 진입점
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    # ── 자동 종목 선정 ─────────────────────────────────────────────────────
+    MARKETS            = ["KOSPI", "KOSDAQ"]
+    SCREEN_UNIVERSE_N  = 200    # 마켓별 후보 종목 수 (시가총액 상위)
+    SCREEN_TOP_N       = 20     # 최종 선정 종목 수
+
+    print("\n[0] 종목 자동 선정 (스크리닝)")
+    screener = StockScreener(universe_per_market=SCREEN_UNIVERSE_N)
+
+    def _cli_progress(pct: float, msg: str) -> None:
+        print(f"  [{pct:5.1f}%] {msg}")
+
+    selected = screener.screen(
+        markets     = MARKETS,
+        top_n       = SCREEN_TOP_N,
+        progress_cb = _cli_progress,
+    )
+
+    if not selected:
+        print("❌ 스크리닝 통과 종목 없음. 종료.")
+        sys.exit(1)
+
+    print(f"\n  선정된 {len(selected)}개 종목:")
+    for rank, s in enumerate(selected, 1):
+        print(f"  {rank:2d}. [{s['ticker']:15s}] {s['name']:20s}  "
+              f"모멘텀 {s['momentum']:>+6.1f}%  변동성 {s['volatility']:.2f}%")
+
+    tickers = [s["ticker"] for s in selected]
+
+    # ── 백테스트 실행 ──────────────────────────────────────────────────────
     engine = BacktestEngine(
-        tickers             = TICKERS,
+        tickers             = tickers,
         initial_capital     = INITIAL_CAPITAL,
         start_date          = START_DATE,
         end_date            = END_DATE,
