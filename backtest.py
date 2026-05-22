@@ -186,11 +186,14 @@ class BacktestEngine:
         self.position_sizing_pct = position_sizing_pct
         self._ticker_names: dict[str, str] = ticker_name_map or {}
 
+        self._base_position_sizing_pct = position_sizing_pct
+
         self.simulator    = TradingSimulator(initial_capital)
         self.strategy     = TradingStrategy()
         self.positions:    dict[str, PositionState] = {}   # 동적 관리
         self.trade_log:    list[dict] = []
         self.equity_curve: list[dict] = []
+        self._kosdaq_df:   Optional[pd.DataFrame] = None
 
     # ── 전체 유니버스 데이터 로딩 ────────────────────────────────────────────
 
@@ -250,6 +253,43 @@ class BacktestEngine:
             print(f"누적 {len(ticker_data)}개 유효")
 
         return ticker_data
+
+    # ── KOSDAQ 지수 로딩 + 시장 상황 판단 ────────────────────────────────────
+
+    def _load_kosdaq_index(self) -> None:
+        load_start = self.start_date - pd.Timedelta(days=self.WARMUP_DAYS)
+        load_end   = self.end_date   + pd.Timedelta(days=2)
+        print("  KOSDAQ 지수(^KQ11) 로딩 중...", end=" ", flush=True)
+        try:
+            raw = yf.download(
+                "^KQ11",
+                start=load_start.strftime("%Y-%m-%d"),
+                end=load_end.strftime("%Y-%m-%d"),
+                auto_adjust=True,
+                progress=False,
+            )
+            if raw.empty:
+                print("데이터 없음 (시장 조건 체크 비활성화)")
+                return
+            df = _flatten_columns(raw)
+            df["SMA_20"] = df["Close"].rolling(20).mean()
+            self._kosdaq_df = df
+            print(f"{len(df)}일치 로드 완료")
+        except Exception as e:
+            print(f"실패 ({e})")
+
+    def _is_bear_market(self, date: pd.Timestamp) -> bool:
+        if self._kosdaq_df is None:
+            return False
+        locs = self._kosdaq_df.index.get_indexer([date], method="ffill")
+        if locs[0] < 0:
+            return False
+        row   = self._kosdaq_df.iloc[locs[0]]
+        close = float(row.get("Close",  np.nan))
+        sma20 = float(row.get("SMA_20", np.nan))
+        if np.isnan(close) or np.isnan(sma20):
+            return False
+        return close < sma20
 
     # ── 일일 종목 스크리닝 ────────────────────────────────────────────────────
 
@@ -470,6 +510,7 @@ class BacktestEngine:
 
         print("\n[1] 유니버스 데이터 준비")
         ticker_data = self._load_data()
+        self._load_kosdaq_index()
         if not ticker_data:
             print("❌ 유효한 데이터 없음. 종료.")
             return
@@ -500,6 +541,12 @@ class BacktestEngine:
             if date.year != prev_year:
                 print(f"\n  ── {date.year}년 ──────────────────────────────────")
                 prev_year = date.year
+
+            # KOSDAQ 시장 상황에 따른 베팅 비중 조정
+            if self._is_bear_market(date):
+                self.position_sizing_pct = self._base_position_sizing_pct * 0.5
+            else:
+                self.position_sizing_pct = self._base_position_sizing_pct
 
             # 오늘 전 종목 시장가
             current_prices: dict[str, float] = {
