@@ -60,18 +60,22 @@ html, body, .stApp {
   color: var(--ink) !important;
 }
 
-/* 헤더 시각 요소 숨김 — collapsedControl(사이드바 재열기 버튼)은 유지 */
+/* 헤더 — 높이 0으로 레이아웃 공간 제거, fixed 포지션인 collapsedControl은 유지 */
 header[data-testid="stHeader"] {
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: visible !important;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
+  padding: 0 !important;
 }
-header[data-testid="stHeader"] > *:not([data-testid="collapsedControl"]) {
-  display: none !important;
-}
+/* 사이드바 접힘 버튼 — 명시적으로 표시 보장 */
 [data-testid="collapsedControl"] {
   display: flex !important;
   visibility: visible !important;
+  opacity: 1 !important;
+  z-index: 9999 !important;
 }
 #MainMenu, footer { visibility: hidden; }
 
