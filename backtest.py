@@ -446,7 +446,8 @@ class BacktestEngine:
             "signal_tag":  signal_tag,
         })
         icon = {"BUY": "🛒", "SELL_TP": "💵✅", "SELL_SL": "💵❌", "SELL_TS": "🎯✅"}.get(action, "↩️")
-        print(f"  {icon} {date} [{ticker}] {action:10s}  "
+        display = self._ticker_names.get(ticker, ticker)
+        print(f"  {icon} {date} [{display}] {action:10s}  "
               f"가격 {price:>10,.0f}  수량 {qty:>5}  ({reason})")
 
     # ── 메인 루프 (날짜 중심) ─────────────────────────────────────────────────
@@ -643,7 +644,8 @@ class BacktestEngine:
                 entry = pos.entry_price if pos else 0
                 value = price * qty
                 pnl   = (price - entry) / entry * 100 if entry else 0
-                print(f"    {ticker:15s} {qty:>6}주  "
+                display = self._ticker_names.get(ticker, ticker)
+                print(f"    {display:20s} {qty:>6}주  "
                       f"평단 {entry:>10,.0f}  "
                       f"현재 {price:>10,.0f}  "
                       f"평가 {value:>12,.0f}  "
