@@ -85,7 +85,7 @@ body, .stApp, .stMarkdown, p, span, div {
   border-right: 1px solid var(--hairline) !important;
 }
 [data-testid="stSidebar"] * {
-  color: var(--) !important;
+  color: var(--ink) !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input {
