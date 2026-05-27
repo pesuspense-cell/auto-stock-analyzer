@@ -302,16 +302,16 @@ class BacktestEngine:
         self,
         df: pd.DataFrame,
         idx: int,
-        is_golden_cross: bool,
     ) -> float:
         """
         차트·모멘텀 상태의 강도를 0~100점으로 환산한다.
 
         구성 요소:
-          - Base (35~50): 신선한 골든크로스면 50, 추세 추종이면 35
+          - Base (50): 신선한 골든크로스 고정
           - SMA 갭 보너스 (0~20): SMA5-SMA20 이격률 — 10%당 20pt 만점
           - SMA 기울기 보너스 (0~15): 전일 대비 SMA5 상승속도
-          - 거래량 보너스 (0~15): 당일 거래량 vs 20일 평균
+          - 거래대금 스파이크 보너스 (0~15): 20일 평균 대비 당일 거래대금 배수
+              3배→5pt / 5배→10pt / 10배 이상→15pt (선형 보간)
         """
         row  = df.iloc[idx]
         prev = df.iloc[idx - 1]
@@ -323,7 +323,7 @@ class BacktestEngine:
         if any(np.isnan(v) for v in [sma5, sma20, prev_sma5]) or sma20 <= 0 or prev_sma5 <= 0:
             return 50.0
 
-        base = 50.0 if is_golden_cross else 35.0
+        base = 50.0  # 골든크로스 전용 고정 베이스
 
         gap_pct   = (sma5 - sma20) / sma20 * 100
         gap_bonus = min(20.0, max(0.0, gap_pct * 2.0))
@@ -331,11 +331,23 @@ class BacktestEngine:
         slope_pct   = (sma5 - prev_sma5) / prev_sma5 * 100
         slope_bonus = min(15.0, max(0.0, slope_pct * 300.0))
 
-        vol_series  = df["Volume"].iloc[max(0, idx - 20):idx]
-        vol_avg     = float(vol_series.mean()) if len(vol_series) > 0 else 0.0
-        vol_current = float(row.get("Volume", 0) or 0)
-        if vol_avg > 0:
-            vol_bonus = min(15.0, max(0.0, (vol_current / vol_avg - 1.0) * 10.0))
+        # 거래대금 스파이크 강도 연동 보너스 (3×→5pt / 5×→10pt / 10×→15pt)
+        close_cur  = float(row.get("Close",  0) or 0)
+        volume_cur = float(row.get("Volume", 0) or 0)
+        turnover_cur    = close_cur * volume_cur
+        turnover_series = (df["Close"] * df["Volume"]).iloc[max(0, idx - 20):idx]
+        turnover_avg    = float(turnover_series.mean()) if len(turnover_series) > 0 else 0.0
+
+        if turnover_avg > 0:
+            spike = turnover_cur / turnover_avg
+            if spike >= 10.0:
+                vol_bonus = 15.0
+            elif spike >= 5.0:
+                vol_bonus = 10.0 + (spike - 5.0) / 5.0 * 5.0
+            elif spike >= 3.0:
+                vol_bonus = 5.0 + (spike - 3.0) / 2.0 * 5.0
+            else:
+                vol_bonus = max(0.0, (spike - 1.0) / 2.0 * 5.0)
         else:
             vol_bonus = 0.0
 
@@ -351,12 +363,14 @@ class BacktestEngine:
         """
         날짜 기준 3단계 매수 후보 선정.
 
-        1단계: 거래대금(종가×거래량) 상위 volume_top_n
-        2단계: SMA 골든크로스 + 기울기 신호 (미래 데이터 참조 없음)
-               — SMA_GOLDEN_CROSS : 이번 바에서 SMA5가 SMA20을 돌파 (신선한 교차)
-               — SMA_TREND_FOLLOW : 이미 SMA5 > SMA20, 추세 추종 진입
+        1단계: 거래대금(종가×거래량) 상위 volume_top_n  (전일 기준 — 미래 참조 없음)
+        2단계: 신선한 SMA 골든크로스만 허용
+               — prev_sma5 <= sma20 AND sma5 > sma20 (이번 바에서 최초 돌파)
+               — 단순 정배열 추세 추종(SMA_TREND_FOLLOW)은 완전 제외
+        2-1단계: 거래대금 스파이크 필터
+               — 당일 거래대금(Close×Volume) >= 20일 평균 거래대금 × 3.0
+               — 잡주 걸러내기: 강력한 세력 자금 유입 종목만 통과
         3단계: 뉴스 감성 분석 — 백테스트에서는 news_candidate_n개 그대로 통과
-               (실시간 운용 시 뉴스 API 연동 예정)
 
         Returns
         -------
@@ -381,7 +395,7 @@ class BacktestEngine:
         turnover_list.sort(key=lambda x: x[1], reverse=True)
         top_volume = [t for t, _ in turnover_list[: self.volume_top_n]]
 
-        # 2단계: 차트·모멘텀 신호 + 점수화
+        # 2단계: 신선한 골든크로스 + 거래대금 스파이크 필터
         candidates: dict[str, tuple[str, float]] = {}
         for ticker in top_volume:
             df = ticker_data[ticker]
@@ -401,11 +415,23 @@ class BacktestEngine:
                 continue
             if self.strategy.check_kill_switch(df["Close"].iloc[: idx + 1]):
                 continue
-            if self.strategy.is_entry_signal(sma5, sma20, prev_sma5):
-                is_cross = prev_sma5 <= sma20
-                tag   = "SMA_GOLDEN_CROSS" if is_cross else "SMA_TREND_FOLLOW"
-                score = self._score_entry(df, idx, is_cross)
-                candidates[ticker] = (tag, score)
+
+            # 신선한 골든크로스만 허용: 전일 SMA5 ≤ SMA20 → 당일 SMA5 > SMA20
+            if not (prev_sma5 <= sma20 and sma5 > sma20):
+                continue
+
+            # 2-1단계: 거래대금 스파이크 필터 (당일 마감 기준 — 미래 참조 없음)
+            close_today  = float(row.get("Close",  0) or 0)
+            volume_today = float(row.get("Volume", 0) or 0)
+            turnover_today  = close_today * volume_today
+            turnover_series = (df["Close"] * df["Volume"]).iloc[max(0, idx - 20):idx]
+            turnover_avg20  = float(turnover_series.mean()) if len(turnover_series) > 0 else 0.0
+
+            if turnover_avg20 <= 0 or turnover_today < turnover_avg20 * 3.0:
+                continue  # 20일 평균 거래대금의 300% 미만이면 제외
+
+            score = self._score_entry(df, idx)
+            candidates[ticker] = ("SMA_GOLDEN_CROSS", score)
 
         # 3단계: 뉴스 감성 (백테스트에서는 상위 N개 통과)
         return dict(list(candidates.items())[: self.news_candidate_n])
@@ -857,9 +883,7 @@ class BacktestEngine:
 
         TAG_LABEL = {
             "SMA_GOLDEN_CROSS":            "SMA 골든크로스 (신선한 교차)",
-            "SMA_TREND_FOLLOW":            "SMA 추세 추종 (이미 상승 중)",
             "SMA_GOLDEN_CROSS_BEAR_SHIELD": "SMA 골든크로스 + 하락장 쉴드",
-            "SMA_TREND_FOLLOW_BEAR_SHIELD": "SMA 추세 추종 + 하락장 쉴드",
         }
 
         print("\n" + "=" * 65)
