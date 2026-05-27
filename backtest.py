@@ -15,7 +15,7 @@ backtest.py — 날짜 중심(Date-Driven) 백테스팅 엔진
   START_DATE / END_DATE  — 백테스트 기간
   INITIAL_CAPITAL    — 초기 투자 원금 (원)
   DEPOSIT_SCHEDULE   — 추가 입금 일정 {"YYYY-MM-DD": 금액, ...}
-  매수 비중은 종목 점수 + 시장 상태로 자율 산정 (BacktestEngine.MIN/MAX_ALLOC_PCT)
+  매수 비중은 점수 구간별 티어(10%/25%/50%) + 하락장 쉴드(×0.3)로 산정
 """
 from __future__ import annotations
 
@@ -162,10 +162,10 @@ class PositionState:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class BacktestEngine:
-    WARMUP_DAYS       = 300   # 지표 안정화에 필요한 워밍업 일수
-    MIN_ALLOC_PCT     = 0.05  # 점수 최저(0점) 시 배정 비중
-    MAX_ALLOC_PCT     = 0.25  # 점수 최고(100점) 시 배정 비중
-    MAX_STOCK_EXPOSURE = 0.80 # 주식 노출 상한 (초과 시 신규 진입 차단)
+    WARMUP_DAYS        = 300    # 지표 안정화에 필요한 워밍업 일수
+    MIN_ALLOC_PCT      = 0.05   # 분할매수(rebuy) 폴백 비중
+    MAX_STOCK_EXPOSURE = 0.80   # 주식 노출 상한 (초과 시 신규 진입 차단)
+    MAX_POSITIONS      = 3      # 동시 보유 종목 수 상한
 
     def __init__(
         self,
@@ -187,7 +187,6 @@ class BacktestEngine:
         self.end_date         = pd.Timestamp(end_date)
         self.deposit_schedule = deposit_schedule or {}
         self._ticker_names: dict[str, str] = ticker_name_map or {}
-        self._market_factor: float = 1.0  # 하락장이면 0.5, 정상이면 1.0
 
         self.simulator    = TradingSimulator(initial_capital)
         self.strategy     = TradingStrategy()
@@ -497,19 +496,45 @@ class BacktestEngine:
         signal_tag: str = "UNKNOWN",
         score: float = 50.0,
     ) -> None:
+        # ① 최대 보유 종목 수 제한 — MAX_POSITIONS 초과 시 즉시 차단
+        if len(self.positions) >= self.MAX_POSITIONS:
+            return
+
         row   = df.iloc[idx]
         price = float(row["Close"])
         atr   = float(row.get("ATR", np.nan))
         if np.isnan(atr) or atr <= 0:
             atr = -1.0
 
-        # 확신도 기반 동적 비중: 점수(0~100) × 시장 팩터(0.5~1.0)
-        raw_alloc = self.MIN_ALLOC_PCT + (self.MAX_ALLOC_PCT - self.MIN_ALLOC_PCT) * (score / 100.0)
-        alloc_pct = raw_alloc * self._market_factor
+        # ② 가용 예수금 실시간 락 — 최소 1주 구매 불가 시 즉시 컷
+        if self.simulator.cash < price:
+            return
+
+        # ③ 확신도 기반 동적 비중 — 점수 구간별 티어
+        if score >= 85:
+            alloc_pct = 0.50      # 역대급 기회: 총자산의 50%
+        elif score >= 70:
+            alloc_pct = 0.25      # 우수한 조건: 총자산의 25%
+        elif score >= 55:
+            alloc_pct = 0.10      # 보통 조건: 총자산의 10%
+        else:
+            return                # 55점 미만: 매수 금지
+
+        # ④ 하락장 디펜스 쉴드 — 베팅 비중 30% 수준으로 대폭 축소
+        if self._is_bear_market(pd.Timestamp(date_str)):
+            alloc_pct  *= 0.3
+            signal_tag  = signal_tag + "_BEAR_SHIELD"
 
         total_asset = self.simulator.get_total_asset(current_prices)
         alloc_cash  = total_asset * alloc_pct
-        qty = max(1, int(alloc_cash / price))
+
+        # ② 가용 예수금 하드 캡 — 남은 현금의 90% 초과 금지
+        if alloc_cash > self.simulator.cash:
+            alloc_cash = self.simulator.cash * 0.9
+
+        qty = int(alloc_cash / price)
+        if qty <= 0:
+            return
 
         if not self.simulator.execute_buy(ticker, price, qty):
             return
@@ -530,7 +555,7 @@ class BacktestEngine:
 
         self._log_trade(
             date_str, ticker, "BUY", price, qty,
-            f"점수 {score:.0f}pt → 배정 {alloc_pct:.0%} ({alloc_cash:,.0f}원) / 총자산 {total_asset:,.0f}",
+            f"점수 {score:.0f}pt → 배정 {alloc_pct:.1%} ({alloc_cash:,.0f}원) / 총자산 {total_asset:,.0f}",
             signal_tag=signal_tag,
         )
 
@@ -567,9 +592,9 @@ class BacktestEngine:
         print(f"  유니버스 : 마켓별 {self.universe_n}개 후보")
         print(f"  거래대금 필터 : 일별 상위 {self.volume_top_n}개")
         print(f"  뉴스 분석 대상: 상위 {self.news_candidate_n}개 (백테스트 통과)")
-        print(f"  포지션   : 점수 기반 자율 배분  "
-              f"({self.MIN_ALLOC_PCT:.0%}–{self.MAX_ALLOC_PCT:.0%}, "
-              f"노출 상한 {self.MAX_STOCK_EXPOSURE:.0%})")
+        print(f"  포지션   : 점수 구간별 티어 배분 (55-69pt→10% / 70-84pt→25% / 85+pt→50%)")
+        print(f"             최대 {self.MAX_POSITIONS}종목 동시 보유 / 노출 상한 {self.MAX_STOCK_EXPOSURE:.0%}")
+        print(f"             하락장 쉴드 ×0.3 + _BEAR_SHIELD 태깅")
         print(f"  익절 ATR : ×{self.strategy.tp_multiplier:.1f}  "
               f"손절 ATR : ×{self.strategy.sl_multiplier:.1f}  "
               f"트레일링 : ×{self.strategy.trailing_multiplier:.1f}")
@@ -609,9 +634,6 @@ class BacktestEngine:
                 print(f"\n  ── {date.year}년 ──────────────────────────────────")
                 prev_year = date.year
 
-            # KOSDAQ 시장 상황에 따른 배분 팩터 갱신
-            self._market_factor = 0.5 if self._is_bear_market(date) else 1.0
-
             # 오늘 전 종목 시장가
             current_prices: dict[str, float] = {
                 ticker: float(df.loc[date, "Close"])
@@ -640,6 +662,9 @@ class BacktestEngine:
             for buy_ticker, (signal_tag, score) in candidates.items():
                 if buy_ticker in self.positions:
                     continue  # 이미 보유 중
+                # 최대 보유 종목 수 도달 시 루프 전체 중단
+                if len(self.positions) >= self.MAX_POSITIONS:
+                    break
                 if self.simulator.cash <= 0:
                     break
                 # 동시 몰빵 방지: 주식 노출이 상한을 넘으면 이후 진입 전체 차단
@@ -831,8 +856,10 @@ class BacktestEngine:
         )
 
         TAG_LABEL = {
-            "SMA_GOLDEN_CROSS": "SMA 골든크로스 (신선한 교차)",
-            "SMA_TREND_FOLLOW": "SMA 추세 추종 (이미 상승 중)",
+            "SMA_GOLDEN_CROSS":            "SMA 골든크로스 (신선한 교차)",
+            "SMA_TREND_FOLLOW":            "SMA 추세 추종 (이미 상승 중)",
+            "SMA_GOLDEN_CROSS_BEAR_SHIELD": "SMA 골든크로스 + 하락장 쉴드",
+            "SMA_TREND_FOLLOW_BEAR_SHIELD": "SMA 추세 추종 + 하락장 쉴드",
         }
 
         print("\n" + "=" * 65)
