@@ -282,12 +282,7 @@ class BacktestEngine:
     # ── 장세 판별 ─────────────────────────────────────────────────────────────
 
     def _is_bear_market(self, date: pd.Timestamp) -> bool:
-        """모든 벤치마크 지수가 60일선 아래일 때만 하락장(True) 반환.
-
-        - 기존 SMA_20 → SMA_60: 단기 조정에 과민 반응하는 민감도 완화
-        - OR → AND 조건: KOSPI·KOSDAQ 중 하나라도 60일선 위이면 상승장으로 판단
-          (한 시장 눌림으로 전체 매수 금지되는 Cash Drag 원천 차단)
-        """
+        """KOSPI, KOSDAQ 중 '하나라도' 60일선 위에 있으면 상승장(False)으로 적극 판정"""
         if not self._market_index_dfs:
             return False
 
@@ -307,8 +302,10 @@ class BacktestEngine:
             if close < sma60:
                 bear_count += 1
 
-        # 모든 유효 시장이 60일선 아래여야 하락장
-        return valid_count > 0 and bear_count == valid_count
+        # 모든 시장이 전멸한 게 아니라면(하나라도 60일선 위면) 무조건 상승장 야수 모드 기동
+        if valid_count > 0 and bear_count < valid_count:
+            return False  # 하락장이 아니다 = 상승장이다
+        return True
 
     def _get_max_positions(self, date: pd.Timestamp) -> int:
         """장세별 동적 최대 보유 종목 수: 상승장 8 / 하락장 3"""
@@ -467,8 +464,7 @@ class BacktestEngine:
     def _screen_golden_cross(
         self, date: pd.Timestamp, ticker_data: dict[str, pd.DataFrame]
     ) -> dict[str, tuple[str, float]]:
-        """[야수 모드] SMA_GOLDEN_CROSS 거래대금 폭발 + 5일선/20일선 돌파 스크리닝"""
-        # 오늘 거래대금 기준으로 필터 — 돌파 당일 폭발 포착
+        """[야수 모드 변경] 당일 골든크로스 타점 제한 해제 -> '정배열 주도주 신고가 돌파' 포착"""
         top_volume = self._build_turnover_top(date, ticker_data, use_today=True)
         candidates: dict[str, tuple[str, float]] = {}
 
@@ -487,19 +483,16 @@ class BacktestEngine:
             vol        = float(row["Volume"])
             sma5       = float(row.get("SMA_5",  np.nan))
             sma20      = float(row.get("SMA_20", np.nan))
-            prev_sma5  = float(prev_row.get("SMA_5",  np.nan))
-            prev_sma20 = float(prev_row.get("SMA_20", np.nan))
             prev_close = float(prev_row["Close"])
 
-            if any(np.isnan(v) for v in [sma5, sma20, prev_sma5, prev_sma20]):
+            if any(np.isnan(v) for v in [sma5, sma20]):
                 continue
 
-            # 조건 1: 5일선이 20일선을 오늘 상향 돌파 (골든크로스 발생일)
-            golden_cross = (sma5 > sma20) and (prev_sma5 <= prev_sma20)
-            if not golden_cross:
+            # 변경 조건 1: 오늘 딱 교차가 아니더라도, 이미 5일선 > 20일선 '정배열 우상향' 상태 유지 확인
+            if sma5 <= sma20:
                 continue
 
-            # 조건 2: 오늘 거래대금이 최근 20일 평균 대비 3배 이상 폭발
+            # 변경 조건 2: 당일 거래대금이 최근 20일 평균 대비 2.5배 이상 강력 폭발
             today_turnover  = close * vol
             avg_turnover_20 = (
                 df["Volume"].iloc[max(0, idx - 19): idx + 1]
@@ -508,17 +501,16 @@ class BacktestEngine:
             if avg_turnover_20 <= 0:
                 continue
             vol_ratio = today_turnover / avg_turnover_20
-            if vol_ratio < 3.0:
+            if vol_ratio < 2.5:
                 continue
 
-            # 조건 3: 당일 종가가 전일 종가 이상 (하락 마감 추격 방지)
-            if close < prev_close:
+            # 변경 조건 3: 주가가 전일 종가 및 5일 이동평균선보다 위에 있는 강력한 돌파 흐름
+            if close < prev_close or close < sma5:
                 continue
 
             score = self._score_entry_golden(df, idx, vol_ratio)
             candidates[ticker] = ("SMA_GOLDEN_CROSS", score)
 
-        # 상승장에서는 최대 MAX_POS_BULL * 2개 후보 확보 (8종목 채우기용)
         sorted_c = sorted(candidates.items(), key=lambda x: x[1][1], reverse=True)
         return dict(sorted_c[: max(self.news_candidate_n, self.MAX_POS_BULL * 2)])
 
@@ -652,6 +644,11 @@ class BacktestEngine:
 
         tp = self.strategy.get_exit_price(price, atr, is_profit=True)  if atr > 0 else -1.0
         sl = self.strategy.get_exit_price(price, atr, is_profit=False) if atr > 0 else -1.0
+
+        # ─── 야수 모드 추격 매매 시 타이트한 강세장용 익절/손절 버퍼 강제 지정 ───
+        if signal_tag == "SMA_GOLDEN_CROSS":
+            tp = price * 1.25  # 강세장 주도주 진입 시 무조건 목표 수익률 +25% 지정 익절 락
+            sl = price * 0.93  # 손절선은 -7%로 칼같이 제한 (달리는 말에서 떨어지면 즉시 대피)
 
         pos                = PositionState()
         pos.in_position    = True
