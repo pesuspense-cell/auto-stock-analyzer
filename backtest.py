@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -794,26 +795,146 @@ class StockScreener:
     MARKET_CFG: dict[str, tuple[str, float]] = {
         "KOSPI":   ("get_top_kospi_stocks",  50_000),
         "KOSDAQ":  ("get_top_kosdaq_stocks", 30_000),
+        "S&P500":  ("get_top_us_stocks",     200_000),
+        "NASDAQ":  ("get_top_nasdaq_stocks", 100_000),
     }
 
     def __init__(self, universe_per_market: int = 200):
         self.universe_per_market = universe_per_market
 
     def build_universe(self, markets: list[str]) -> list[tuple[str, str]]:
-        from stock_ai import get_top_kospi_stocks, get_top_kosdaq_stocks
-        loaders = {"KOSPI": get_top_kospi_stocks, "KOSDAQ": get_top_kosdaq_stocks}
+        from stock_ai import (
+            get_top_kospi_stocks, get_top_kosdaq_stocks,
+            get_top_us_stocks,   get_top_nasdaq_stocks,
+        )
+        loaders = {
+            "KOSPI":   get_top_kospi_stocks,
+            "KOSDAQ":  get_top_kosdaq_stocks,
+            "S&P500":  get_top_us_stocks,
+            "NASDAQ":  get_top_nasdaq_stocks,
+        }
         seen: set[str] = set()
         result: list[tuple[str, str]] = []
         for market in markets:
             fn = loaders.get(market)
             if fn is None:
                 continue
-            stocks = fn(self.universe_per_market)
+            stocks: dict[str, str] = fn(self.universe_per_market)
             for name, ticker in stocks.items():
                 if ticker not in seen:
                     seen.add(ticker)
                     result.append((ticker, name))
         return result
+
+    def _score_chunk(
+        self,
+        chunk: list[tuple[str, str]],
+        lookback: str,
+        min_volume: float,
+    ) -> list[dict]:
+        tickers  = [t for t, _ in chunk]
+        name_map = {t: n for t, n in chunk}
+        scored: list[dict] = []
+
+        try:
+            raw = yf.download(
+                tickers if len(tickers) > 1 else tickers[0],
+                period=lookback,
+                auto_adjust=True,
+                progress=False,
+            )
+            if raw.empty:
+                return scored
+
+            for ticker in tickers:
+                try:
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        close  = raw["Close"][ticker].dropna()
+                        volume = raw["Volume"][ticker].dropna()
+                    else:
+                        close  = raw["Close"].dropna()
+                        volume = raw["Volume"].dropna()
+
+                    if len(close) < 20:
+                        continue
+
+                    avg_vol = float(volume.mean())
+                    if avg_vol < min_volume:
+                        continue
+
+                    sma20   = float(close.rolling(20).mean().iloc[-1])
+                    current = float(close.iloc[-1])
+                    if current <= sma20:
+                        continue
+
+                    momentum   = (current / float(close.iloc[0]) - 1) * 100
+                    volatility = float(close.pct_change().std()) * 100 or 0.001
+                    vol_score  = math.log10(max(avg_vol, 1))
+
+                    score = (
+                        momentum   * 0.5
+                        + (1 / volatility) * 10 * 0.3
+                        + vol_score        * 0.2
+                    )
+                    scored.append({
+                        "ticker":     ticker,
+                        "name":       name_map.get(ticker, ticker),
+                        "score":      round(score, 4),
+                        "momentum":   round(momentum, 2),
+                        "volatility": round(volatility, 4),
+                        "avg_volume": round(avg_vol),
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return scored
+
+    def screen(
+        self,
+        markets: list[str],
+        top_n: int = 20,
+        lookback: str = "3mo",
+        progress_cb: Optional[Callable[[float, str], None]] = None,
+    ) -> list[dict]:
+        if progress_cb:
+            progress_cb(0.0, "종목 유니버스 로딩 중...")
+
+        universe = self.build_universe(markets)
+        if not universe:
+            return []
+
+        min_vol_map = {t: self.MARKET_CFG.get(m, ("", 50_000))[1]
+                       for m in markets
+                       for t, _ in self.build_universe([m])}
+        default_min_vol = min(v for _, v in self.MARKET_CFG.values())
+
+        CHUNK = 50
+        all_scored: list[dict] = []
+        total = len(universe)
+
+        if progress_cb:
+            progress_cb(2.0, f"{total}개 후보 종목 배치 다운로드 시작...")
+
+        for i in range(0, total, CHUNK):
+            chunk = universe[i: i + CHUNK]
+            chunk_min_vol = min(
+                min_vol_map.get(t, default_min_vol) for t, _ in chunk
+            )
+            all_scored.extend(self._score_chunk(chunk, lookback, chunk_min_vol))
+
+            if progress_cb:
+                pct = 5.0 + (i + len(chunk)) / total * 90.0
+                progress_cb(pct, f"스크리닝 {i + len(chunk)}/{total}개 완료...")
+
+        all_scored.sort(key=lambda x: x["score"], reverse=True)
+        selected = all_scored[:top_n]
+
+        if progress_cb:
+            progress_cb(100.0,
+                        f"스크리닝 완료 — {len(all_scored)}개 통과 → 상위 {len(selected)}개 선정")
+        return selected
 
 
 if __name__ == "__main__":
