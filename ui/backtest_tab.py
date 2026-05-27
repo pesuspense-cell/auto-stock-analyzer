@@ -377,14 +377,12 @@ def _display_results(
     # 선정 종목 요약
     if selected_stocks:
         with st.expander(f"📋 선정 종목 ({len(selected_stocks)}개)", expanded=False):
-            df_sel = pd.DataFrame(selected_stocks)[
-                ["ticker", "name", "momentum", "volatility", "avg_volume"]
-            ]
+            df_sel = pd.DataFrame(selected_stocks)[["ticker", "name", "score", "close", "volume"]]
             df_sel.index = range(1, len(df_sel) + 1)
-            df_sel.columns = ["티커", "종목명", "3개월 수익률(%)", "변동성(%)", "일평균 거래량"]
-            df_sel["3개월 수익률(%)"] = df_sel["3개월 수익률(%)"].apply(lambda x: f"{x:+.1f}%")
-            df_sel["변동성(%)"]       = df_sel["변동성(%)"].apply(lambda x: f"{x:.2f}%")
-            df_sel["일평균 거래량"]   = df_sel["일평균 거래량"].apply(lambda x: f"{x:,.0f}")
+            df_sel.columns = ["티커", "종목명", "확신도 점수", "현재가(원)", "거래량"]
+            df_sel["확신도 점수"] = df_sel["확신도 점수"].apply(lambda x: f"{x:.1f}pt")
+            df_sel["현재가(원)"]  = df_sel["현재가(원)"].apply(lambda x: f"{x:,.0f}")
+            df_sel["거래량"]      = df_sel["거래량"].apply(lambda x: f"{x:,.0f}")
             st.dataframe(df_sel, use_container_width=True)
 
     # 거래 내역
