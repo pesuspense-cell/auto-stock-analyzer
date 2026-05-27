@@ -323,14 +323,19 @@ class BacktestEngine:
 
         return min(100.0, round(base + gap_bonus + slope_bonus + vol_bonus, 1))
 
-    # ── [수정] 일일 종목 스크리닝: 추세추종 제거 및 거래대금 스파이크 장착 ───────────
+    # ── [수정] 일일 종목 스크리닝: 거래량 급감 20일선 눌림목 + 하락장 전면 금지 ───────────
 
     def _screen_daily(
         self,
         date: pd.Timestamp,
         ticker_data: dict[str, pd.DataFrame],
     ) -> dict[str, tuple[str, float]]:
-        # 1단계: 전일 거래대금 상위 N
+
+        # 1. 대세 하락장 시 매수 전면 금지 (현금 100% 보존 쉴드)
+        if self._is_bear_market(date):
+            return {}
+
+        # 시가총액/거래대금 상위 유니버스 필터링
         turnover_list: list[tuple[str, float]] = []
         for ticker, df in ticker_data.items():
             if date not in df.index:
@@ -339,54 +344,59 @@ class BacktestEngine:
             if idx_t < 1:
                 continue
             prev_row = df.iloc[idx_t - 1]
-            close    = float(prev_row.get("Close",  0) or 0)
-            volume   = float(prev_row.get("Volume", 0) or 0)
-            turnover_list.append((ticker, close * volume))
+            turnover_list.append((ticker, float(prev_row.get("Close", 0)) * float(prev_row.get("Volume", 0))))
 
         turnover_list.sort(key=lambda x: x[1], reverse=True)
         top_volume = [t for t, _ in turnover_list[: self.volume_top_n]]
 
-        # 2단계: 골든크로스 + 거래대금 스파이크 필터링
         candidates: dict[str, tuple[str, float]] = {}
         for ticker in top_volume:
             df = ticker_data[ticker]
             if date not in df.index:
                 continue
             idx = df.index.get_loc(date)
-            if idx < self.strategy.kill_window + 60:
+            if idx < 30:
                 continue
 
-            row       = df.iloc[idx]
-            prev      = df.iloc[idx - 1]
-            sma5      = float(row.get("SMA_5",  np.nan))
-            sma20     = float(row.get("SMA_20", np.nan))
-            prev_sma5 = float(prev.get("SMA_5", np.nan))
+            row   = df.iloc[idx]
+            close = float(row["Close"])
+            vol   = float(row["Volume"])
+            sma20 = float(row.get("SMA_20", np.nan))
 
-            if any(np.isnan(v) for v in [sma5, sma20, prev_sma5]):
-                continue
-            if self.strategy.check_kill_switch(df["Close"].iloc[: idx + 1]):
+            if np.isnan(sma20) or sma20 <= 0:
                 continue
 
-            # ★ 오직 신선한 골든크로스만 인정 (SMA_TREND_FOLLOW 제거)
-            if self.strategy.is_entry_signal(sma5, sma20, prev_sma5) and (prev_sma5 <= sma20):
+            # ─── [필승 필터] 세력 등에 올라타는 찐 눌림목 3단 필터 ───
 
-                # ★ [핵심 필터] 당일 거래대금 스파이크(최근 20일 평균 대금의 3배 이상) 연산
-                current_turnover = float(row.get("Close", 0)) * float(row.get("Volume", 0))
+            # ① 조건 1 (주도주 흔적): 최근 10일 이내에 거래대금이 20일 평균 대비 5배 이상 폭발한 적이 있는가?
+            has_past_spike = False
+            max_spike_ratio = 1.0
 
-                # 최근 20일간의 평균 거래대금 계산 (당일 포함 직전 20일)
-                vol_series = df["Volume"].iloc[max(0, idx - 19):idx + 1]
-                cls_series = df["Close"].iloc[max(0, idx - 19):idx + 1]
-                avg_turnover = (vol_series * cls_series).mean()
+            for lookback_idx in range(max(0, idx - 10), idx):
+                p_row = df.iloc[lookback_idx]
+                p_turnover = float(p_row["Close"]) * float(p_row["Volume"])
+                p_avg_turnover = (
+                    df["Volume"].iloc[max(0, lookback_idx - 19):lookback_idx + 1]
+                    * df["Close"].iloc[max(0, lookback_idx - 19):lookback_idx + 1]
+                ).mean()
 
-                spike_ratio = current_turnover / avg_turnover if avg_turnover > 0 else 0.0
+                p_spike_ratio = p_turnover / p_avg_turnover if p_avg_turnover > 0 else 0.0
+                if p_spike_ratio >= 5.0:
+                    has_past_spike = True
+                    if p_spike_ratio > max_spike_ratio:
+                        max_spike_ratio = p_spike_ratio
 
-                # 거래대금이 300%(3배) 이상 폭발한 종목만 통과
-                if spike_ratio >= 3.0:
-                    tag   = "SMA_GOLDEN_CROSS"
-                    score = self._score_entry(df, idx, spike_ratio)
-                    candidates[ticker] = (tag, score)
+            if has_past_spike:
+                # ② 조건 2 (눌림 확인): 오늘 주가가 20일선까지 조정받아 왔는가? (-1% ~ +2%)
+                if (sma20 * 0.99) <= close <= (sma20 * 1.02):
 
-        # 3단계: 뉴스 후보 상위 슬라이싱
+                    # ③ 조건 3 (거래량 숨고르기): 오늘 거래량이 20일 평균의 70% 이하로 말라붙었는가?
+                    avg_vol_20 = df["Volume"].iloc[max(0, idx - 19):idx + 1].mean()
+                    if vol <= avg_vol_20 * 0.7:
+                        tag   = "DRY_VOLUME_NULIM"
+                        score = self._score_entry(df, idx, max_spike_ratio)
+                        candidates[ticker] = (tag, score)
+
         sorted_candidates = sorted(candidates.items(), key=lambda x: x[1][1], reverse=True)
         return dict(sorted_candidates[: self.news_candidate_n])
 
