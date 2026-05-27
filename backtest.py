@@ -15,7 +15,7 @@ backtest.py — 날짜 중심(Date-Driven) 백테스팅 엔진
   START_DATE / END_DATE  — 백테스트 기간
   INITIAL_CAPITAL    — 초기 투자 원금 (원)
   DEPOSIT_SCHEDULE   — 추가 입금 일정 {"YYYY-MM-DD": 금액, ...}
-  POSITION_SIZING_PCT— 총자산 대비 1회 매수 비중 (0.0 ~ 1.0)
+  매수 비중은 종목 점수 + 시장 상태로 자율 산정 (BacktestEngine.MIN/MAX_ALLOC_PCT)
 """
 from __future__ import annotations
 
@@ -64,8 +64,7 @@ NEWS_CANDIDATE_N  = 15                    # 3단계 필터: 뉴스 분석 대상
 START_DATE = "2020-01-01"
 END_DATE   = "2024-12-31"
 
-INITIAL_CAPITAL    = 10_000_000   # 1,000만 원
-POSITION_SIZING_PCT = 0.20        # 총자산의 20%씩 매수
+INITIAL_CAPITAL = 10_000_000   # 1,000만 원
 
 # 인위적 추가 입금 스케줄 (날짜 → 금액)
 DEPOSIT_SCHEDULE: dict[str, int] = {
@@ -138,22 +137,24 @@ class TradingSimulator:
 
 @dataclass
 class PositionState:
-    in_position: bool  = False
-    entry_price: float = 0.0
-    rebuy_count: int   = 0
-    take_profit: float = -1.0
-    stop_loss:   float = -1.0
-    peak_price:  float = 0.0   # 진입 후 최고 종가 (트레일링 스톱 기준)
-    signal_tag:  str   = ""    # 매수 진입을 발생시킨 신호 태그
+    in_position:   bool  = False
+    entry_price:   float = 0.0
+    rebuy_count:   int   = 0
+    take_profit:   float = -1.0
+    stop_loss:     float = -1.0
+    peak_price:    float = 0.0   # 진입 후 최고 종가 (트레일링 스톱 기준)
+    signal_tag:    str   = ""    # 매수 진입을 발생시킨 신호 태그
+    allocated_pct: float = 0.0   # 진입 시 총자산 대비 배정 비중 (재매수·회수 기준)
 
     def reset(self) -> None:
-        self.in_position = False
-        self.entry_price = 0.0
-        self.rebuy_count = 0
-        self.take_profit = -1.0
-        self.stop_loss   = -1.0
-        self.peak_price  = 0.0
-        self.signal_tag  = ""
+        self.in_position   = False
+        self.entry_price   = 0.0
+        self.rebuy_count   = 0
+        self.take_profit   = -1.0
+        self.stop_loss     = -1.0
+        self.peak_price    = 0.0
+        self.signal_tag    = ""
+        self.allocated_pct = 0.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -161,7 +162,10 @@ class PositionState:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class BacktestEngine:
-    WARMUP_DAYS = 300   # 지표 안정화에 필요한 워밍업 일수
+    WARMUP_DAYS       = 300   # 지표 안정화에 필요한 워밍업 일수
+    MIN_ALLOC_PCT     = 0.05  # 점수 최저(0점) 시 배정 비중
+    MAX_ALLOC_PCT     = 0.25  # 점수 최고(100점) 시 배정 비중
+    MAX_STOCK_EXPOSURE = 0.80 # 주식 노출 상한 (초과 시 신규 진입 차단)
 
     def __init__(
         self,
@@ -173,20 +177,17 @@ class BacktestEngine:
         volume_top_n: int = 100,
         news_candidate_n: int = 15,
         deposit_schedule: dict[str, float] | None = None,
-        position_sizing_pct: float = 0.20,
         ticker_name_map: dict[str, str] | None = None,
     ):
-        self.markets           = markets or ["KOSPI", "KOSDAQ"]
-        self.universe_n        = universe_n
-        self.volume_top_n      = volume_top_n
-        self.news_candidate_n  = news_candidate_n
-        self.start_date        = pd.Timestamp(start_date)
-        self.end_date          = pd.Timestamp(end_date)
-        self.deposit_schedule  = deposit_schedule or {}
-        self.position_sizing_pct = position_sizing_pct
+        self.markets          = markets or ["KOSPI", "KOSDAQ"]
+        self.universe_n       = universe_n
+        self.volume_top_n     = volume_top_n
+        self.news_candidate_n = news_candidate_n
+        self.start_date       = pd.Timestamp(start_date)
+        self.end_date         = pd.Timestamp(end_date)
+        self.deposit_schedule = deposit_schedule or {}
         self._ticker_names: dict[str, str] = ticker_name_map or {}
-
-        self._base_position_sizing_pct = position_sizing_pct
+        self._market_factor: float = 1.0  # 하락장이면 0.5, 정상이면 1.0
 
         self.simulator    = TradingSimulator(initial_capital)
         self.strategy     = TradingStrategy()
@@ -210,6 +211,11 @@ class BacktestEngine:
             all_tickers = [t for t, _ in universe]
             self._ticker_names = {t: n for t, n in universe}
             print(f"  유니버스 크기: {len(all_tickers)}개 종목")
+            print(
+                "  ⚠  [생존 편향 경고] 유니버스가 '현재 상장 종목' 기준입니다.\n"
+                "     백테스트 기간 중 상장폐지·합병된 종목은 포함되지 않아\n"
+                "     실제 수익률보다 과대평가될 수 있습니다."
+            )
 
         ticker_data: dict[str, pd.DataFrame] = {}
         CHUNK = 50
@@ -291,13 +297,58 @@ class BacktestEngine:
             return False
         return close < sma20
 
+    # ── 진입 점수 산정 (0~100) ────────────────────────────────────────────────
+
+    def _score_entry(
+        self,
+        df: pd.DataFrame,
+        idx: int,
+        is_golden_cross: bool,
+    ) -> float:
+        """
+        차트·모멘텀 상태의 강도를 0~100점으로 환산한다.
+
+        구성 요소:
+          - Base (35~50): 신선한 골든크로스면 50, 추세 추종이면 35
+          - SMA 갭 보너스 (0~20): SMA5-SMA20 이격률 — 10%당 20pt 만점
+          - SMA 기울기 보너스 (0~15): 전일 대비 SMA5 상승속도
+          - 거래량 보너스 (0~15): 당일 거래량 vs 20일 평균
+        """
+        row  = df.iloc[idx]
+        prev = df.iloc[idx - 1]
+
+        sma5      = float(row.get("SMA_5",  np.nan))
+        sma20     = float(row.get("SMA_20", np.nan))
+        prev_sma5 = float(prev.get("SMA_5", np.nan))
+
+        if any(np.isnan(v) for v in [sma5, sma20, prev_sma5]) or sma20 <= 0 or prev_sma5 <= 0:
+            return 50.0
+
+        base = 50.0 if is_golden_cross else 35.0
+
+        gap_pct   = (sma5 - sma20) / sma20 * 100
+        gap_bonus = min(20.0, max(0.0, gap_pct * 2.0))
+
+        slope_pct   = (sma5 - prev_sma5) / prev_sma5 * 100
+        slope_bonus = min(15.0, max(0.0, slope_pct * 300.0))
+
+        vol_series  = df["Volume"].iloc[max(0, idx - 20):idx]
+        vol_avg     = float(vol_series.mean()) if len(vol_series) > 0 else 0.0
+        vol_current = float(row.get("Volume", 0) or 0)
+        if vol_avg > 0:
+            vol_bonus = min(15.0, max(0.0, (vol_current / vol_avg - 1.0) * 10.0))
+        else:
+            vol_bonus = 0.0
+
+        return min(100.0, round(base + gap_bonus + slope_bonus + vol_bonus, 1))
+
     # ── 일일 종목 스크리닝 ────────────────────────────────────────────────────
 
     def _screen_daily(
         self,
         date: pd.Timestamp,
         ticker_data: dict[str, pd.DataFrame],
-    ) -> dict[str, str]:
+    ) -> dict[str, tuple[str, float]]:
         """
         날짜 기준 3단계 매수 후보 선정.
 
@@ -310,24 +361,29 @@ class BacktestEngine:
 
         Returns
         -------
-        dict[str, str]
-            {ticker: signal_tag}  — 매수 후보 및 진입 신호 태그
+        dict[str, tuple[str, float]]
+            {ticker: (signal_tag, score)}  — 매수 후보, 신호 태그 및 점수(0~100)
         """
         # 1단계: 거래대금 상위 N
+        # 전일(idx-1) 거래대금으로 순위를 매겨야 당일 매수 결정 시 미래 정보를
+        # 참조하지 않는다. (오늘 종가×거래량은 장 종료 후에야 확정됨)
         turnover_list: list[tuple[str, float]] = []
         for ticker, df in ticker_data.items():
             if date not in df.index:
                 continue
-            row    = df.loc[date]
-            close  = float(row.get("Close",  0) or 0)
-            volume = float(row.get("Volume", 0) or 0)
+            idx_t = df.index.get_loc(date)
+            if idx_t < 1:
+                continue
+            prev_row = df.iloc[idx_t - 1]
+            close    = float(prev_row.get("Close",  0) or 0)
+            volume   = float(prev_row.get("Volume", 0) or 0)
             turnover_list.append((ticker, close * volume))
 
         turnover_list.sort(key=lambda x: x[1], reverse=True)
         top_volume = [t for t, _ in turnover_list[: self.volume_top_n]]
 
-        # 2단계: 차트·모멘텀 신호
-        candidates: dict[str, str] = {}
+        # 2단계: 차트·모멘텀 신호 + 점수화
+        candidates: dict[str, tuple[str, float]] = {}
         for ticker in top_volume:
             df = ticker_data[ticker]
             if date not in df.index:
@@ -347,8 +403,10 @@ class BacktestEngine:
             if self.strategy.check_kill_switch(df["Close"].iloc[: idx + 1]):
                 continue
             if self.strategy.is_entry_signal(sma5, sma20, prev_sma5):
-                tag = "SMA_GOLDEN_CROSS" if prev_sma5 <= sma20 else "SMA_TREND_FOLLOW"
-                candidates[ticker] = tag
+                is_cross = prev_sma5 <= sma20
+                tag   = "SMA_GOLDEN_CROSS" if is_cross else "SMA_TREND_FOLLOW"
+                score = self._score_entry(df, idx, is_cross)
+                candidates[ticker] = (tag, score)
 
         # 3단계: 뉴스 감성 (백테스트에서는 상위 N개 통과)
         return dict(list(candidates.items())[: self.news_candidate_n])
@@ -414,8 +472,9 @@ class BacktestEngine:
 
         # 분할매수 (물타기) — 보유 중 하락 시
         if self.strategy.is_rebuy_signal(price, pos.entry_price, pos.rebuy_count):
-            total_asset = self.simulator.get_total_asset(current_prices)
-            alloc_cash  = total_asset * self.position_sizing_pct
+            total_asset  = self.simulator.get_total_asset(current_prices)
+            rebuy_pct    = pos.allocated_pct if pos.allocated_pct > 0 else self.MIN_ALLOC_PCT
+            alloc_cash   = total_asset * rebuy_pct
             qty = max(1, int(alloc_cash / price))
             if self.simulator.execute_buy(ticker, price, qty):
                 pos.rebuy_count += 1
@@ -436,6 +495,7 @@ class BacktestEngine:
         idx: int,
         current_prices: dict[str, float],
         signal_tag: str = "UNKNOWN",
+        score: float = 50.0,
     ) -> None:
         row   = df.iloc[idx]
         price = float(row["Close"])
@@ -443,8 +503,12 @@ class BacktestEngine:
         if np.isnan(atr) or atr <= 0:
             atr = -1.0
 
+        # 확신도 기반 동적 비중: 점수(0~100) × 시장 팩터(0.5~1.0)
+        raw_alloc = self.MIN_ALLOC_PCT + (self.MAX_ALLOC_PCT - self.MIN_ALLOC_PCT) * (score / 100.0)
+        alloc_pct = raw_alloc * self._market_factor
+
         total_asset = self.simulator.get_total_asset(current_prices)
-        alloc_cash  = total_asset * self.position_sizing_pct
+        alloc_cash  = total_asset * alloc_pct
         qty = max(1, int(alloc_cash / price))
 
         if not self.simulator.execute_buy(ticker, price, qty):
@@ -454,18 +518,19 @@ class BacktestEngine:
         sl = self.strategy.get_exit_price(price, atr, is_profit=False) if atr > 0 else -1.0
 
         pos = PositionState()
-        pos.in_position = True
-        pos.entry_price = price
-        pos.peak_price  = price
-        pos.rebuy_count = 0
-        pos.take_profit = tp
-        pos.stop_loss   = sl
-        pos.signal_tag  = signal_tag
+        pos.in_position   = True
+        pos.entry_price   = price
+        pos.peak_price    = price
+        pos.rebuy_count   = 0
+        pos.take_profit   = tp
+        pos.stop_loss     = sl
+        pos.signal_tag    = signal_tag
+        pos.allocated_pct = alloc_pct
         self.positions[ticker] = pos
 
         self._log_trade(
             date_str, ticker, "BUY", price, qty,
-            f"일일스크리닝 선정 [총자산 {total_asset:,.0f} → 배정 {alloc_cash:,.0f}원]",
+            f"점수 {score:.0f}pt → 배정 {alloc_pct:.0%} ({alloc_cash:,.0f}원) / 총자산 {total_asset:,.0f}",
             signal_tag=signal_tag,
         )
 
@@ -502,7 +567,9 @@ class BacktestEngine:
         print(f"  유니버스 : 마켓별 {self.universe_n}개 후보")
         print(f"  거래대금 필터 : 일별 상위 {self.volume_top_n}개")
         print(f"  뉴스 분석 대상: 상위 {self.news_candidate_n}개 (백테스트 통과)")
-        print(f"  포지션   : 총자산의 {self.position_sizing_pct:.0%}씩 동적 배분")
+        print(f"  포지션   : 점수 기반 자율 배분  "
+              f"({self.MIN_ALLOC_PCT:.0%}–{self.MAX_ALLOC_PCT:.0%}, "
+              f"노출 상한 {self.MAX_STOCK_EXPOSURE:.0%})")
         print(f"  익절 ATR : ×{self.strategy.tp_multiplier:.1f}  "
               f"손절 ATR : ×{self.strategy.sl_multiplier:.1f}  "
               f"트레일링 : ×{self.strategy.trailing_multiplier:.1f}")
@@ -542,11 +609,8 @@ class BacktestEngine:
                 print(f"\n  ── {date.year}년 ──────────────────────────────────")
                 prev_year = date.year
 
-            # KOSDAQ 시장 상황에 따른 베팅 비중 조정
-            if self._is_bear_market(date):
-                self.position_sizing_pct = self._base_position_sizing_pct * 0.5
-            else:
-                self.position_sizing_pct = self._base_position_sizing_pct
+            # KOSDAQ 시장 상황에 따른 배분 팩터 갱신
+            self._market_factor = 0.5 if self._is_bear_market(date) else 1.0
 
             # 오늘 전 종목 시장가
             current_prices: dict[str, float] = {
@@ -573,16 +637,22 @@ class BacktestEngine:
             candidates = self._screen_daily(date, ticker_data)
 
             # ── 매수 집행 ─────────────────────────────────────────────────
-            for buy_ticker, signal_tag in candidates.items():
+            for buy_ticker, (signal_tag, score) in candidates.items():
                 if buy_ticker in self.positions:
                     continue  # 이미 보유 중
                 if self.simulator.cash <= 0:
                     break
+                # 동시 몰빵 방지: 주식 노출이 상한을 넘으면 이후 진입 전체 차단
+                total_asset_chk = self.simulator.get_total_asset(current_prices)
+                if total_asset_chk > 0:
+                    exposure = (total_asset_chk - self.simulator.cash) / total_asset_chk
+                    if exposure >= self.MAX_STOCK_EXPOSURE:
+                        break
                 df = ticker_data.get(buy_ticker)
                 if df is None or date not in df.index:
                     continue
                 idx = df.index.get_loc(date)
-                self._try_buy(date_str, buy_ticker, df, idx, current_prices, signal_tag)
+                self._try_buy(date_str, buy_ticker, df, idx, current_prices, signal_tag, score)
 
             # 수익률 기록
             total_asset = self.simulator.get_total_asset(current_prices)
@@ -997,14 +1067,13 @@ class StockScreener:
 
 if __name__ == "__main__":
     engine = BacktestEngine(
-        initial_capital     = INITIAL_CAPITAL,
-        start_date          = START_DATE,
-        end_date            = END_DATE,
-        markets             = SCREEN_MARKETS,
-        universe_n          = SCREEN_UNIVERSE_N,
-        volume_top_n        = VOLUME_TOP_N,
-        news_candidate_n    = NEWS_CANDIDATE_N,
-        deposit_schedule    = DEPOSIT_SCHEDULE,
-        position_sizing_pct = POSITION_SIZING_PCT,
+        initial_capital  = INITIAL_CAPITAL,
+        start_date       = START_DATE,
+        end_date         = END_DATE,
+        markets          = SCREEN_MARKETS,
+        universe_n       = SCREEN_UNIVERSE_N,
+        volume_top_n     = VOLUME_TOP_N,
+        news_candidate_n = NEWS_CANDIDATE_N,
+        deposit_schedule = DEPOSIT_SCHEDULE,
     )
     engine.run()

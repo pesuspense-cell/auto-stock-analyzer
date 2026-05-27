@@ -79,10 +79,6 @@ def render_backtest_tab(tab) -> None:
                 )
 
             with col_r:
-                position_pct = st.slider(
-                    "1회 매수 비중 (총자산 대비 %)",
-                    min_value=5, max_value=50, value=20, step=5,
-                )
                 deposit_text = st.text_area(
                     "추가 입금 일정 (날짜,금액 — 한 줄에 하나씩)",
                     value="2021-01-04,5000000\n2022-01-03,5000000\n2023-01-02,5000000",
@@ -124,7 +120,6 @@ def render_backtest_tab(tab) -> None:
                 start_date       = str(start_date),
                 end_date         = str(end_date),
                 deposit_schedule = deposit_schedule,
-                position_pct     = position_pct / 100,
                 benchmark_ticker = _BENCHMARK_OPTIONS[benchmark_label],
                 benchmark_label  = benchmark_label,
             )
@@ -142,7 +137,7 @@ def render_backtest_tab(tab) -> None:
 def _run_and_display(
     markets, universe_n, top_n,
     initial_capital, start_date, end_date,
-    deposit_schedule, position_pct,
+    deposit_schedule,
     benchmark_ticker, benchmark_label,
 ):
     from backtest import BacktestEngine, StockScreener
@@ -193,12 +188,11 @@ def _run_and_display(
 
     log_buf = io.StringIO()
     engine  = BacktestEngine(
-        initial_capital     = initial_capital,
-        start_date          = start_date,
-        end_date            = end_date,
-        deposit_schedule    = deposit_schedule,
-        position_sizing_pct = position_pct,
-        ticker_name_map     = ticker_name_map,
+        initial_capital  = initial_capital,
+        start_date       = start_date,
+        end_date         = end_date,
+        deposit_schedule = deposit_schedule,
+        ticker_name_map  = ticker_name_map,
     )
 
     with st.spinner("백테스트 실행 중... (다운로드 포함, 최대 수 분 소요)"):

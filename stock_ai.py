@@ -462,7 +462,9 @@ def _add_indicators(data: pd.DataFrame) -> pd.DataFrame:
     data["ICHI_KIJUN"]  = (high.rolling(26).max() + low.rolling(26).min()) / 2
     data["ICHI_SPAN_A"] = ((data["ICHI_TENKAN"] + data["ICHI_KIJUN"]) / 2).shift(26)
     data["ICHI_SPAN_B"] = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
-    data["ICHI_CHIKOU"] = close.shift(-26)
+    # shift(-26) 은 미래 26봉 종가를 현재 행에 저장 → 백테스트에서 look-ahead bias.
+    # 실시간 차트 표시 전용이므로 NaN으로 채워 오용을 방지한다.
+    data["ICHI_CHIKOU"] = np.nan
 
     # ── Z-Score (20일) ────────────────────────────────────────────────────────
     _z_mean = close.rolling(20).mean()
