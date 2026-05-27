@@ -263,10 +263,10 @@ class BacktestEngine:
             return False
 
         for _, df in self._market_index_dfs.items():
-            locs = df.index.get_indexer([date], method="ffill")
-            if locs[0] < 0:
+            idx_loc = df.index.get_indexer([date], method="ffill")[0]
+            if idx_loc < 0:
                 continue
-            row = df.iloc[locs[0]]
+            row = df.iloc[idx_loc]
             close = float(row.get("Close", np.nan))
             sma20 = float(row.get("SMA_20", np.nan))
             if not np.isnan(close) and not np.isnan(sma20):
@@ -542,11 +542,13 @@ class BacktestEngine:
         ec = self.equity_curve
         last = ec[-1]
 
-        assets = [r["total_asset"] for r in ec]
-        peak = assets[0]; mdd = 0.0
-        for a in assets:
-            if a > peak: peak = a
-            mdd = max(mdd, (peak - a) / peak * 100)
+        # 추가 입금 왜곡 방지: total_asset 대신 return_pct 낙폭으로 MDD 계산
+        returns = [r["return_pct"] for r in ec]
+        max_return = returns[0]; mdd = 0.0
+        for r in returns:
+            if r > max_return: max_return = r
+            drawdown = max_return - r
+            if drawdown > mdd: mdd = drawdown
 
         n_years = ((pd.Timestamp(ec[-1]["date"]) - pd.Timestamp(ec[0]["date"])).days) / 365.25
         cagr = ((last["total_asset"] / ec[0]["invested"]) ** (1 / n_years) - 1) * 100 if n_years > 0 else 0.0
@@ -563,7 +565,7 @@ class BacktestEngine:
         print(f"  현금 잔고     : {last['cash']:>15,.0f} 원")
         print(f"  펀드 수익률   : {last['return_pct']:>+14.2f} %")
         print(f"  CAGR          : {cagr:>+14.2f} %")
-        print(f"  최대 낙폭(MDD): {-mdd:>+14.2f} %")
+        print(f"  최대 낙폭(MDD): {-mdd:>+14.2f} % (수익률 변동 기준)")
         print(f"  승률          : {win_rate:>14.1f} %  (총 청산 {len(sells)}회)")
         print("=" * 65)
         self._print_signal_report()
