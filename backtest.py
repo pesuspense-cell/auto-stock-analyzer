@@ -4,12 +4,14 @@ backtest.py — 듀얼 모드(야수 모드 + 디펜스 모드) 백테스팅 통
 [야수 모드 - 상승장]  벤치마크 지수 SMA_60 위 (KOSPI·KOSDAQ 모두)
   → SMA_GOLDEN_CROSS: 거래대금 3배+ 폭발 + 5일선 20일선 돌파 → 추격 돌파 매매
   → MAX 8종목 동시 보유, 물타기 금지, 비중 20/35/50%
+  → [Step 2] 지수 RSI_14 > 75 과열 시 비중 자동 절반으로 축소
+  → [Step 3] 진입 시 ATR 기반 동적 손절선 (2.5×ATR vs -8% 중 타이트한 쪽)
 
 [디펜스 모드 - 하락장]  벤치마크 지수 SMA_60 아래 (모든 시장 동시)
   → DRY_VOLUME_NULIM: 10일 내 5배+ 폭발 후 거래량 70% 이하 급감 눌림목
   → MAX 3종목 강한 통제, 물타기 최대 2회, 비중 20/35/50%
 
-- MDD: 추가 입금 왜곡 없는 단위 가격(좌수) 기반 수익률 MDD 계산
+- MDD: 실제 자산 가치(max_peak_asset) 기준 낙폭 비율 계산 [Step 1]
 - UI 완벽 지원: StockScreener.screen() 및 _score_chunk() 연동
 """
 from __future__ import annotations
@@ -151,6 +153,9 @@ class BacktestEngine:
     MAX_POS_BEAR    = 3    # 디펜스 모드(하락장): 최대 3종목
     MAX_REBUY_COUNT = 2    # 물타기 최대 허용 횟수 (DRY_VOLUME_NULIM 전용)
 
+    # [Step 2] 야수 모드 RSI 과열 브레이크 임계값
+    RSI_OVERHEAT_THRESHOLD = 75.0
+
     BENCHMARK_INDEXMAP = {
         "KOSPI":  "^KS11",
         "KOSDAQ": "^KQ11",
@@ -271,7 +276,9 @@ class BacktestEngine:
                     df = _flatten_columns(raw)
                     df["SMA_5"]  = df["Close"].rolling(5).mean()
                     df["SMA_20"] = df["Close"].rolling(20).mean()
-                    df["SMA_60"] = df["Close"].rolling(60).mean()   # 핵심: 60일선 추가
+                    df["SMA_60"] = df["Close"].rolling(60).mean()
+                    # [Step 2] 과열 판단용 14일 RSI 사전 계산
+                    df["RSI_14"] = self._calc_rsi(df["Close"], period=14)
                     self._market_index_dfs[mkt] = df
                     print(f"{len(df)}일치 완료")
                 else:
@@ -310,6 +317,34 @@ class BacktestEngine:
     def _get_max_positions(self, date: pd.Timestamp) -> int:
         """장세별 동적 최대 보유 종목 수: 상승장 8 / 하락장 3"""
         return self.MAX_POS_BEAR if self._is_bear_market(date) else self.MAX_POS_BULL
+
+    # ── [Step 2] RSI 계산 유틸리티 ───────────────────────────────────────────
+
+    @staticmethod
+    def _calc_rsi(close_series: pd.Series, period: int = 14) -> pd.Series:
+        """Wilder's RSI 계산 (alpha=1/period EWM 스무딩)"""
+        delta    = close_series.diff()
+        gain     = delta.where(delta > 0, 0.0)
+        loss     = -delta.where(delta < 0, 0.0)
+        avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+        avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+        rs       = avg_gain / avg_loss.replace(0.0, np.nan)
+        rsi      = 100.0 - (100.0 / (1.0 + rs))
+        return rsi.fillna(50.0)
+
+    def _get_market_rsi(self, date: pd.Timestamp) -> float:
+        """진입 시점의 시장 지수 RSI 반환 — 복수 지수 중 최댓값(가장 과열된 지수 기준)"""
+        rsi_values: list[float] = []
+        for _, df in self._market_index_dfs.items():
+            if "RSI_14" not in df.columns:
+                continue
+            idx_loc = df.index.get_indexer([date], method="ffill")[0]
+            if idx_loc < 0:
+                continue
+            val = float(df["RSI_14"].iloc[idx_loc])
+            if not np.isnan(val):
+                rsi_values.append(val)
+        return max(rsi_values) if rsi_values else 50.0
 
     # ── 확신도 점수 연산 ──────────────────────────────────────────────────────
 
@@ -464,7 +499,7 @@ class BacktestEngine:
     def _screen_golden_cross(
         self, date: pd.Timestamp, ticker_data: dict[str, pd.DataFrame]
     ) -> dict[str, tuple[str, float]]:
-        """[야수 모드 변경] 당일 골든크로스 타점 제한 해제 -> '정배열 주도주 신고가 돌파' 포착"""
+        """[야수 모드] 정배열 주도주 거래대금 폭발 + 5일선 위 돌파 흐름 포착"""
         top_volume = self._build_turnover_top(date, ticker_data, use_today=True)
         candidates: dict[str, tuple[str, float]] = {}
 
@@ -488,11 +523,11 @@ class BacktestEngine:
             if any(np.isnan(v) for v in [sma5, sma20]):
                 continue
 
-            # 변경 조건 1: 오늘 딱 교차가 아니더라도, 이미 5일선 > 20일선 '정배열 우상향' 상태 유지 확인
+            # 조건 1: 5일선 > 20일선 정배열 우상향 상태 유지
             if sma5 <= sma20:
                 continue
 
-            # 변경 조건 2: 당일 거래대금이 최근 20일 평균 대비 2.5배 이상 강력 폭발
+            # 조건 2: 당일 거래대금이 최근 20일 평균 대비 2.5배 이상 강력 폭발
             today_turnover  = close * vol
             avg_turnover_20 = (
                 df["Volume"].iloc[max(0, idx - 19): idx + 1]
@@ -504,7 +539,7 @@ class BacktestEngine:
             if vol_ratio < 2.5:
                 continue
 
-            # 변경 조건 3: 주가가 전일 종가 및 5일 이동평균선보다 위에 있는 강력한 돌파 흐름
+            # 조건 3: 주가가 전일 종가 및 5일 이동평균선보다 위에 있는 강력한 돌파 흐름
             if close < prev_close or close < sma5:
                 continue
 
@@ -618,7 +653,7 @@ class BacktestEngine:
         if self.simulator.cash < price:
             return
 
-        # 확신도 점수대별 동적 배분 스케일링 (업그레이드)
+        # 확신도 점수대별 동적 배분 스케일링
         if score >= 85:
             alloc_pct = 0.50    # 강한 주도주 → 자산의 50%
         elif score >= 70:
@@ -627,6 +662,17 @@ class BacktestEngine:
             alloc_pct = 0.20    # 기본 확신 → 20%
         else:
             return
+
+        # ── [Step 2] 야수 모드 지수 RSI 과열 브레이크 ──────────────────────────
+        # RSI_14 > 75인 극도 탐욕·과열 구간: 투자 비중을 정확히 절반으로 축소
+        market_rsi     = 50.0
+        rsi_overheated = False
+        if signal_tag == "SMA_GOLDEN_CROSS":
+            market_rsi = self._get_market_rsi(pd.Timestamp(date_str))
+            if market_rsi > self.RSI_OVERHEAT_THRESHOLD:
+                alloc_pct     *= 0.5   # 20%→10%, 35%→17.5%, 50%→25%
+                rsi_overheated = True
+        # ────────────────────────────────────────────────────────────────────────
 
         total_asset = self.simulator.get_total_asset(current_prices)
         alloc_cash  = total_asset * alloc_pct
@@ -645,10 +691,19 @@ class BacktestEngine:
         tp = self.strategy.get_exit_price(price, atr, is_profit=True)  if atr > 0 else -1.0
         sl = self.strategy.get_exit_price(price, atr, is_profit=False) if atr > 0 else -1.0
 
-        # ─── 야수 모드 추격 매매 시 타이트한 강세장용 익절/손절 버퍼 강제 지정 ───
+        # ── 야수 모드 추격 매매 전용 익절/손절 세팅 ──────────────────────────────
         if signal_tag == "SMA_GOLDEN_CROSS":
-            tp = price * 1.25  # 강세장 주도주 진입 시 무조건 목표 수익률 +25% 지정 익절 락
-            sl = price * 0.93  # 손절선은 -7%로 칼같이 제한 (달리는 말에서 떨어지면 즉시 대피)
+            tp = price * 1.25   # 목표 수익률 +25% 고정 익절
+
+            # [Step 3] 변동성(ATR) 기반 동적 손절선 — 슬리피지 과잉 손절 방어
+            # entry - 2.5×ATR 과 entry × 0.92(-8%) 중 '더 타이트한(주가에 가까운)' 값 선택
+            if atr > 0:
+                sl_atr   = price - (2.5 * atr)   # ATR 버퍼 손절 (변동성 반영)
+                sl_fixed = price * 0.92           # -8% 고정 하한 안전망
+                sl = max(sl_atr, sl_fixed)        # 더 높은 쪽 = 더 타이트한 손절
+            else:
+                sl = price * 0.93                 # ATR 미산출 시 기존 -7% 폴백
+        # ────────────────────────────────────────────────────────────────────────
 
         pos                = PositionState()
         pos.in_position    = True
@@ -662,9 +717,15 @@ class BacktestEngine:
         self.positions[ticker] = pos
 
         mode_label = "야수" if signal_tag == "SMA_GOLDEN_CROSS" else "디펜스"
+        rsi_note   = (
+            f" [RSI {market_rsi:.0f} 과열→비중 절반]" if rsi_overheated else ""
+        )
+        sl_note = (
+            f" | 손절 {sl:,.0f}" if sl > 0 else ""
+        )
         self._log_trade(
             date_str, ticker, "BUY", price, qty,
-            f"[{mode_label}] {score:.1f}pt → {alloc_pct:.1%} 배정 {alloc_cash:,.0f}원",
+            f"[{mode_label}] {score:.1f}pt → {alloc_pct:.1%} 배정 {alloc_cash:,.0f}원{rsi_note}{sl_note}",
             signal_tag=signal_tag,
         )
 
@@ -789,16 +850,21 @@ class BacktestEngine:
         ec   = self.equity_curve
         last = ec[-1]
 
-        # 추가 입금 왜곡 방지: return_pct(단위 가격 기반) 낙폭으로 MDD 계산
-        returns    = [r["return_pct"] for r in ec]
-        max_return = returns[0]
-        mdd        = 0.0
-        for r in returns:
-            if r > max_return:
-                max_return = r
-            drawdown = max_return - r
-            if drawdown > mdd:
-                mdd = drawdown
+        # ── [Step 1] MDD: 실제 자산 가치(max_peak_asset) 기준 낙폭 비율 계산 ──
+        # 공식: drawdown = (max_peak_asset - current_total_asset) / max_peak_asset * 100
+        # 누적 수익률 단순 차감 방식 완전 폐기 — 추가 입금·복리 왜곡 없음
+        max_peak_asset = float("-inf")
+        mdd            = 0.0
+
+        for r in ec:
+            asset = r["total_asset"]
+            if asset > max_peak_asset:
+                max_peak_asset = asset
+            if max_peak_asset > 0:
+                drawdown = (max_peak_asset - asset) / max_peak_asset * 100
+                if drawdown > mdd:
+                    mdd = drawdown
+        # ────────────────────────────────────────────────────────────────────────
 
         n_years = (
             (pd.Timestamp(ec[-1]["date"]) - pd.Timestamp(ec[0]["date"])).days
@@ -816,14 +882,14 @@ class BacktestEngine:
         total_days = len(ec)
 
         print("\n" + "=" * 70)
-        print("  [최종] 백테스트 성적표 — 듀얼 모드 전략")
+        print("  [최종] 백테스트 성적표 — 듀얼 모드 (MDD 보정 + RSI 브레이크 + ATR 손절)")
         print("=" * 70)
         print(f"  총 투자 원금    : {last['invested']:>15,.0f} 원")
         print(f"  최종 자산       : {last['total_asset']:>15,.0f} 원")
         print(f"  현금 잔고       : {last['cash']:>15,.0f} 원")
         print(f"  펀드 수익률     : {last['return_pct']:>+14.2f} %")
         print(f"  CAGR            : {cagr:>+14.2f} %")
-        print(f"  최대 낙폭(MDD)  : {-mdd:>+14.2f} % (수익률 변동 기준)")
+        print(f"  최대 낙폭(MDD)  : {-mdd:>+14.2f} % (실제 자산 가치 기준)")
         print(f"  승률            : {win_rate:>14.1f} %  (총 청산 {len(sells)}회)")
         print(f"  야수 모드 기간  : {bull_days:>5}일 ({bull_days / total_days * 100:.1f}%)")
         print(f"  디펜스 모드 기간: {bear_days:>5}일 ({bear_days / total_days * 100:.1f}%)")
