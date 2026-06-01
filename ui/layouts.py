@@ -822,17 +822,18 @@ def render_rec_tab(
         with col_a:
             rec_market = st.radio(
                 "분석 시장",
-                ["KOSPI", "KOSDAQ", "미국 주식 (S&P500)", "미국 주식 (나스닥)"],
+                ["KOSPI + KOSDAQ", "KOSPI", "KOSDAQ", "미국 주식 (S&P500)", "미국 주식 (나스닥)"],
                 horizontal=True,
                 key="rec_market_radio",
             )
         with col_b:
             run_btn = st.button("🔄 전수 분석 실행", type="primary", use_container_width=True)
 
+        _market_size = "최대 1,000개" if rec_market == "KOSPI + KOSDAQ" else "최대 500개"
         st.caption(
-            "💡 **전수 조사 모드** — 시장 전체 종목(최대 500개)을 L1→L2→L3 깔때기 방식으로 분석합니다.  "
+            f"💡 **전수 조사 모드** — 시장 전체 종목({_market_size})을 L1→L2→L3 깔때기 방식으로 분석합니다.  "
             "L1 차트 스크리닝으로 하위 70%를 즉시 탈락시키고, 상위 후보만 정밀 분석·뉴스 감성 처리합니다.  "
-            "약 2~5분 소요됩니다."
+            f"{'약 5~10분' if rec_market == 'KOSPI + KOSDAQ' else '약 2~5분'} 소요됩니다."
         )
 
         if run_btn:

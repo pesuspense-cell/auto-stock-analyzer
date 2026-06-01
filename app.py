@@ -317,10 +317,11 @@ def _usdkrw_history():
     return _flatten_columns(d)
 
 def _get_full_stocks(market: str) -> dict:
-    if market == "KOSPI":          return _top_kospi(500)
-    elif market == "KOSDAQ":       return _top_kosdaq(500)
+    if market == "KOSPI":              return _top_kospi(500)
+    elif market == "KOSDAQ":           return _top_kosdaq(500)
+    elif market == "KOSPI + KOSDAQ":   return {**_top_kospi(500), **_top_kosdaq(500)}
     elif market == "미국 주식 (나스닥)": return _top_nasdaq(500)
-    else:                           return _top_us(503)
+    else:                               return _top_us(503)
 
 @st.cache_data(ttl=300)
 def _index_data(sym):
