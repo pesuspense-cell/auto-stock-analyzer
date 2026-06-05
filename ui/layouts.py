@@ -438,16 +438,18 @@ def render_sidebar(
         ):
             _screener_path = pathlib.Path(__file__).parent.parent / "live_screener.py"
             try:
-                if sys.platform == "win32":
+                if os.name == "nt":  # Windows
                     subprocess.Popen(
                         [sys.executable, str(_screener_path)],
                         creationflags=subprocess.CREATE_NEW_CONSOLE,
                     )
-                else:
+                elif sys.platform == "darwin":  # macOS
                     subprocess.Popen(
                         ["open", "-a", "Terminal", sys.executable, str(_screener_path)]
-                        if sys.platform == "darwin"
-                        else ["x-terminal-emulator", "-e", sys.executable, str(_screener_path)],
+                    )
+                else:  # Linux
+                    subprocess.Popen(
+                        ["x-terminal-emulator", "-e", sys.executable, str(_screener_path)]
                     )
                 st.success("✅ ASA 추천 스크리너 실행 중 — 새 터미널 창을 확인하세요.", icon="🚀")
             except Exception as _asa_err:
