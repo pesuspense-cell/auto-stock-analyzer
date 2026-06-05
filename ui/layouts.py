@@ -6,7 +6,10 @@ ui/layouts.py — 섹션·탭별 렌더링 함수 모음
 """
 from __future__ import annotations
 
+import pathlib
 import queue
+import subprocess
+import sys
 import time
 import concurrent.futures
 import os
@@ -421,6 +424,34 @@ def render_sidebar(
                         st.session_state["watchlist"] = _wl_cur
                         save_watchlist_fn(_wl_cur)
                         st.rerun()
+
+        # ── ASA 추천 ──────────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("### 🤖 ASA 추천")
+        st.caption("오늘 장 마감 데이터 기준으로 내일의 매매 지침을 자동 산출합니다.")
+        if st.button(
+            "▶ ASA 추천 실행",
+            key="asa_run_btn",
+            use_container_width=True,
+            type="primary",
+            help="live_screener.py를 별도 터미널 창에서 실행합니다.",
+        ):
+            _screener_path = pathlib.Path(__file__).parent.parent / "live_screener.py"
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(
+                        [sys.executable, str(_screener_path)],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                else:
+                    subprocess.Popen(
+                        ["open", "-a", "Terminal", sys.executable, str(_screener_path)]
+                        if sys.platform == "darwin"
+                        else ["x-terminal-emulator", "-e", sys.executable, str(_screener_path)],
+                    )
+                st.success("✅ ASA 추천 스크리너 실행 중 — 새 터미널 창을 확인하세요.", icon="🚀")
+            except Exception as _asa_err:
+                st.error(f"실행 실패: {_asa_err}")
 
         # ── 포트폴리오 종목 추가 (로그인 시만) ──────────────────────────────
         _sb_uid = st.session_state.get("auth_user_id")
