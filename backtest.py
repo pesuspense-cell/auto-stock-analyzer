@@ -190,6 +190,8 @@ class BacktestEngine:
         self.trade_log:    list[dict] = []
         self.equity_curve: list[dict] = []
         self._market_index_dfs: dict[str, pd.DataFrame] = {}
+        # [연쇄 손절 락아웃] 최근 5일 SELL_SL 3회 이상 → 3일간 매수 정지 만료일
+        self._sl_lockout_until: pd.Timestamp | None = None
 
     # ── 데이터 로드 ──────────────────────────────────────────────────────────
 
@@ -345,6 +347,33 @@ class BacktestEngine:
             if not np.isnan(val):
                 rsi_values.append(val)
         return max(rsi_values) if rsi_values else 50.0
+
+    # ── 연쇄 손절 락아웃 ─────────────────────────────────────────────────────
+
+    def _update_sl_lockout(self, date: pd.Timestamp) -> None:
+        """최근 5일 내 SELL_SL 3회 이상이면 지수 장세와 무관하게 3일간 매수 정지.
+
+        이미 락아웃 활성 중에는 재발동·연장하지 않는다 (만료 후 재평가).
+        """
+        if self._sl_lockout_until is not None and date <= self._sl_lockout_until:
+            return  # 현재 락아웃 중 — 재검사 불필요
+
+        window_start = date - pd.Timedelta(days=5)
+        sl_count = sum(
+            1 for t in self.trade_log
+            if t["action"] == "SELL_SL"
+            and window_start <= pd.Timestamp(t["date"]) <= date
+        )
+        if sl_count >= 3:
+            self._sl_lockout_until = date + pd.Timedelta(days=3)
+            print(
+                f"  🔒 연쇄손절 락아웃 [{date.strftime('%Y-%m-%d')}] "
+                f"최근 5일 SELL_SL {sl_count}회 → "
+                f"{self._sl_lockout_until.strftime('%Y-%m-%d')}까지 매수 정지"
+            )
+
+    def _is_sl_lockout_active(self, date: pd.Timestamp) -> bool:
+        return self._sl_lockout_until is not None and date <= self._sl_lockout_until
 
     # ── 확신도 점수 연산 ──────────────────────────────────────────────────────
 
@@ -811,25 +840,31 @@ class BacktestEngine:
                         df.index.get_loc(date), current_prices,
                     )
 
-            # 스크리닝 및 매수 집행
-            candidates = self._screen_daily(date, ticker_data)
-            for buy_ticker, (signal_tag, score) in candidates.items():
-                if buy_ticker in self.positions:
-                    continue
-                if len(self.positions) >= max_pos:
-                    break
-                if self.simulator.cash <= 0:
-                    break
-                df = ticker_data.get(buy_ticker)
-                if df is not None and date in df.index:
-                    self._try_buy(
-                        date_str, buy_ticker, df,
-                        df.index.get_loc(date), current_prices,
-                        signal_tag, score, max_pos,
-                    )
+            # [연쇄 손절 락아웃] 매도 정산 후 조건 재평가 → 매수 정지 여부 결정
+            self._update_sl_lockout(date)
 
-            # 자산 곡선 기록 (mode 컬럼 추가)
-            bear = self._is_bear_market(date)
+            # 스크리닝 및 매수 집행 (락아웃 중이면 전량 스킵)
+            if not self._is_sl_lockout_active(date):
+                candidates = self._screen_daily(date, ticker_data)
+                for buy_ticker, (signal_tag, score) in candidates.items():
+                    if buy_ticker in self.positions:
+                        continue
+                    if len(self.positions) >= max_pos:
+                        break
+                    if self.simulator.cash <= 0:
+                        break
+                    df = ticker_data.get(buy_ticker)
+                    if df is not None and date in df.index:
+                        self._try_buy(
+                            date_str, buy_ticker, df,
+                            df.index.get_loc(date), current_prices,
+                            signal_tag, score, max_pos,
+                        )
+
+            # 자산 곡선 기록 (mode 컬럼 추가 — 락아웃 여부 병기)
+            bear    = self._is_bear_market(date)
+            lockout = self._is_sl_lockout_active(date)
+            base_mode = "BEAR" if bear else "BULL"
             total_asset = self.simulator.get_total_asset(current_prices)
             self.equity_curve.append({
                 "date":        date_str,
@@ -837,7 +872,7 @@ class BacktestEngine:
                 "return_pct":  round(self.simulator.get_current_return(current_prices), 4),
                 "cash":        round(self.simulator.cash),
                 "invested":    round(self.simulator.invested_capital),
-                "mode":        "BEAR" if bear else "BULL",
+                "mode":        f"{base_mode}_LOCKOUT" if lockout else base_mode,
             })
 
         self._report()
@@ -877,12 +912,14 @@ class BacktestEngine:
         wins     = [t for t in sells if (t["price"] - t["entry_price"]) > 0]
         win_rate = len(wins) / len(sells) * 100 if sells else 0.0
 
-        bull_days  = sum(1 for r in ec if r.get("mode") == "BULL")
-        bear_days  = sum(1 for r in ec if r.get("mode") == "BEAR")
-        total_days = len(ec)
+        bull_days    = sum(1 for r in ec if r.get("mode") == "BULL")
+        bear_days    = sum(1 for r in ec if r.get("mode") == "BEAR")
+        lockout_days = sum(1 for r in ec if "_LOCKOUT" in r.get("mode", ""))
+        total_days   = len(ec)
+        sl_count     = sum(1 for t in self.trade_log if t["action"] == "SELL_SL")
 
         print("\n" + "=" * 70)
-        print("  [최종] 백테스트 성적표 — 듀얼 모드 (MDD 보정 + RSI 브레이크 + ATR 손절)")
+        print("  [최종] 백테스트 성적표 — 듀얼 모드 (MDD 보정 + RSI 브레이크 + ATR 손절 + 연쇄손절 락아웃)")
         print("=" * 70)
         print(f"  총 투자 원금    : {last['invested']:>15,.0f} 원")
         print(f"  최종 자산       : {last['total_asset']:>15,.0f} 원")
@@ -893,6 +930,8 @@ class BacktestEngine:
         print(f"  승률            : {win_rate:>14.1f} %  (총 청산 {len(sells)}회)")
         print(f"  야수 모드 기간  : {bull_days:>5}일 ({bull_days / total_days * 100:.1f}%)")
         print(f"  디펜스 모드 기간: {bear_days:>5}일 ({bear_days / total_days * 100:.1f}%)")
+        print(f"  손절(SELL_SL)   : {sl_count:>5}회")
+        print(f"  락아웃 일수     : {lockout_days:>5}일 (연쇄손절 발동 시 매수 정지)")
         print("=" * 70)
         self._print_signal_report()
 
