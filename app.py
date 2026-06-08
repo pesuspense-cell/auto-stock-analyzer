@@ -1224,10 +1224,6 @@ render_portfolio_tab(
     delete_cookie_fn      = _delete_cookie,
 )
 
-render_asa_tab(
-    tab_asa,
-    db_get_portfolio   = _db_get_portfolio,
-    ticker_name_map_fn = _ticker_name_map,
-)
+render_asa_tab(tab_asa)
 
 render_backtest_tab(tab_backtest)

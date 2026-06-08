@@ -3839,8 +3839,12 @@ def render_portfolio_tab(
 
 
 # ─── ASA 추천 탭 ──────────────────────────────────────────────────────────────
-def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
-    """ASA 추천 탭 — 로그인 사용자 포트폴리오 기반 매매 지침 자동 산출."""
+def render_asa_tab(tab) -> None:
+    """ASA 추천 탭 — 로그인 사용자 포트폴리오 기반 매매 지침 자동 산출.
+
+    파라미터를 외부에서 주입받지 않고 session_state와 src.database를 직접 사용해
+    배포 환경의 시그니처 불일치 문제를 원천 차단한다.
+    """
     import io
     from contextlib import redirect_stdout
 
@@ -3856,9 +3860,10 @@ def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
         _uid  = st.session_state.get("auth_user_id")
         _mail = st.session_state.get("auth_email")
         _items: list[dict] = []
-        if _uid and db_get_portfolio:
+        if _uid:
             try:
-                _items = db_get_portfolio(_uid) or []
+                from src.database import get_portfolio as _asa_get_pf
+                _items = _asa_get_pf(int(_uid)) or []
             except Exception:
                 _items = []
 
@@ -3867,17 +3872,17 @@ def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
             st.caption(f"👤 로그인: **{_mail}**")
             if _items:
                 st.markdown("**📋 현재 보유 종목** (포트폴리오 탭 기준 · SL/TP는 실행 시 ATR 자동 산출)")
-                _nm = ticker_name_map_fn() if ticker_name_map_fn else {}
                 _pf_rows = []
                 _total   = 0.0
                 for _it in _items:
-                    _avg = float(_it["avg_price"])
-                    _qty = int(_it["quantity"])
+                    _avg = float(_it.get("avg_price") or 0)
+                    _qty = int(float(_it.get("quantity") or 0))
                     _inv = _avg * _qty
                     _total += _inv
+                    _tk  = str(_it.get("ticker", ""))
                     _pf_rows.append({
-                        "티커":     _it["ticker"],
-                        "종목명":   _nm.get(_it["ticker"], _it["ticker"].split(".")[0]),
+                        "티커":     _tk,
+                        "종목명":   _tk.split(".")[0],
                         "수량":     _qty,
                         "평균단가": f"{_avg:,.0f}원",
                         "투자금액": f"{_inv:,.0f}원",
@@ -3903,35 +3908,34 @@ def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
         _c1, _ = st.columns([1, 1])
         with _c1:
             _deposit = st.number_input(
-                "예치금",
+                "예치금 (원)",
                 min_value=0,
                 max_value=2_000_000_000,
-                value=st.session_state.get("asa_deposit", 1_000_000),
+                value=int(st.session_state.get("asa_deposit", 1_000_000)),
                 step=100_000,
-                format="%d",
                 label_visibility="collapsed",
             )
-        st.session_state["asa_deposit"] = int(_deposit)
-        st.caption(f"입력된 예치금: **{int(_deposit):,.0f}원**")
+        _deposit_int = int(_deposit)
+        st.session_state["asa_deposit"] = _deposit_int
+        st.caption(f"입력된 예치금: **{_deposit_int:,.0f}원**")
         st.divider()
 
         # ── 실행 버튼 ─────────────────────────────────────────────────────────
-        _btn_label = (
-            f"보유 {len(_items)}종목 포지션 점검 + 예치금 {int(_deposit):,.0f}원 기반 신규 매수 신호 분석"
+        _btn_help = (
+            f"보유 {len(_items)}종목 포지션 점검 + 예치금 {_deposit_int:,.0f}원 기반 신규 매수 신호 분석"
             if _items else "신규 매수 신호 분석 (보유 종목 없음)"
         )
         if st.button(
             "▶ ASA 추천 실행",
             key="asa_tab_run_btn",
             type="primary",
-            help=_btn_label,
+            help=_btn_help,
         ):
             # ── 포지션 dict 구성 (ATR 기반 SL/TP 자동 계산) ─────────────────
             _positions: dict = {}
-            _nm_map = ticker_name_map_fn() if ticker_name_map_fn else {}
 
             if _items:
-                _tickers = [it["ticker"] for it in _items]
+                _tickers = [str(it.get("ticker", "")) for it in _items]
                 _sl_tp: dict[str, tuple[float, float]] = {}
 
                 with st.spinner("보유 종목 ATR 기반 SL/TP 계산 중..."):
@@ -3940,7 +3944,10 @@ def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
                         _raw   = yf.download(_query, period="60d", auto_adjust=True, progress=False)
                         for _t in _tickers:
                             try:
-                                _avg = float(next(x["avg_price"] for x in _items if x["ticker"] == _t))
+                                _avg = float(next(
+                                    (x.get("avg_price") or 0) for x in _items
+                                    if str(x.get("ticker")) == _t
+                                ))
                                 if isinstance(_raw.columns, pd.MultiIndex):
                                     _tdf = _raw.xs(_t, axis=1, level=1).dropna(how="all")
                                 else:
@@ -3961,28 +3968,31 @@ def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
                                 _sl_tp[_t] = (round(_sl), round(_avg * 1.25))
                             except Exception:
                                 _avg_f = float(next(
-                                    (x["avg_price"] for x in _items if x["ticker"] == _t), 0
+                                    ((x.get("avg_price") or 0) for x in _items
+                                     if str(x.get("ticker")) == _t), 0
                                 ))
                                 _sl_tp[_t] = (round(_avg_f * 0.92), round(_avg_f * 1.25))
                     except Exception:
                         for _it in _items:
-                            _avg_f = float(_it["avg_price"])
-                            _sl_tp[_it["ticker"]] = (round(_avg_f * 0.92), round(_avg_f * 1.25))
+                            _avg_f = float(_it.get("avg_price") or 0)
+                            _sl_tp[str(_it.get("ticker", ""))] = (
+                                round(_avg_f * 0.92), round(_avg_f * 1.25)
+                            )
 
                 for _it in _items:
-                    _t   = _it["ticker"]
-                    _avg = float(_it["avg_price"])
-                    _qty = int(_it["quantity"])
+                    _t   = str(_it.get("ticker", ""))
+                    _avg = float(_it.get("avg_price") or 0)
+                    _qty = int(float(_it.get("quantity") or 0))
                     _sl, _tp = _sl_tp.get(_t, (round(_avg * 0.92), round(_avg * 1.25)))
                     _positions[_t] = {
-                        "name":        _nm_map.get(_t, _t.split(".")[0]),
+                        "name":        _t.split(".")[0],
                         "entry_price": _avg,
                         "quantity":    _qty,
                         "sl":          float(_sl),
                         "tp":          float(_tp),
                     }
 
-            _balance = {"cash": float(_deposit), "positions": _positions}
+            _balance = {"cash": float(_deposit_int), "positions": _positions}
 
             # ── live_screener 인프로세스 실행 (MY_CURRENT_BALANCE 교체) ─────────
             _out_box = st.empty()
@@ -3991,7 +4001,6 @@ def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
                 if _root not in sys.path:
                     sys.path.insert(0, _root)
 
-                import importlib
                 import live_screener as _ls
 
                 _ls.MY_CURRENT_BALANCE = _balance
