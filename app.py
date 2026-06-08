@@ -208,7 +208,7 @@ if not st.session_state.get("app_authenticated"):
             pw_input  = st.text_input("비밀번호", type="password",
                                       placeholder="비밀번호를 입력하세요",
                                       label_visibility="collapsed")
-            submitted = st.form_submit_button("입장하기", width="stretch", type="primary")
+            submitted = st.form_submit_button("입장하기", use_container_width=True, type="primary")
         if submitted:
             if pw_input == _APP_PASSWORD:
                 st.session_state["app_authenticated"] = True

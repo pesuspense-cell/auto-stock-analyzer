@@ -120,7 +120,7 @@ def chart_dialog(fig: go.Figure, ticker_sym: str) -> None:
     """차트를 모달 창에서 렌더링한다."""
     st.plotly_chart(
         fig,
-        width="stretch",
+        use_container_width=True,
         config={
             "scrollZoom": False,
             "displayModeBar": True,
@@ -355,7 +355,7 @@ def render_sidebar(
         )
 
         st.divider()
-        if st.button("🔍 종목 분석 시작", type="primary", width="stretch"):
+        if st.button("🔍 종목 분석 시작", type="primary", use_container_width=True):
             st.session_state.pop("analyzed_ticker", None)
             st.session_state["_pending_ticker"] = ticker
             st.session_state["_pending_sname"]  = sname
@@ -462,7 +462,7 @@ def render_sidebar(
                         "수량", min_value=0.01, value=1.0, step=1.0,
                         format="%.2f", key="sb_add_qty",
                     )
-                    if st.button("포트폴리오에 추가", width="stretch",
+                    if st.button("포트폴리오에 추가", use_container_width=True,
                                  type="primary", key="sb_add_btn"):
                         _sb_r = db_upsert_portfolio(_sb_uid, _sb_ticker_val, _sb_price, _sb_qty)
                         if _sb_r.get("merged"):
@@ -586,7 +586,7 @@ def render_sidebar(
                     type="password",
                     help=f"현재: {_key_hint(_cur_krx_pw)}" if _cur_krx_pw else "미설정",
                 )
-                if st.form_submit_button("💾 저장", width="stretch", type="primary"):
+                if st.form_submit_button("💾 저장", use_container_width=True, type="primary"):
                     _to_save = {**load_settings_fn()}
                     _to_save["gemini_api_key"] = _new_gemini or _cur_gemini
                     _to_save["groq_api_key"]   = _new_groq   or _cur_groq
@@ -787,7 +787,7 @@ def render_market_tab(
                         margin=dict(t=10, b=70), xaxis_tickangle=-40,
                         yaxis_title="등락률 (%)",
                     )
-                    st.plotly_chart(fig_bar, width="stretch")
+                    st.plotly_chart(fig_bar, use_container_width=True)
 
                 with st.expander(f"📋 전체 {len(movers)}개 종목 등락률 표"):
                     st.dataframe(
@@ -796,7 +796,7 @@ def render_market_tab(
                         .map(lambda v: "color:#ff3b30" if isinstance(v, float) and v > 0
                              else ("color:#0066cc" if isinstance(v, float) and v < 0 else ""),
                              subset=["등락률(%)"]),
-                        width="stretch", hide_index=True,
+                        use_container_width=True, hide_index=True,
                     )
 
 
@@ -830,7 +830,7 @@ def render_rec_tab(
                 key="rec_market_radio",
             )
         with col_b:
-            run_btn = st.button("🔄 전수 분석 실행", type="primary", width="stretch")
+            run_btn = st.button("🔄 전수 분석 실행", type="primary", use_container_width=True)
 
         _market_size = "최대 1,000개" if rec_market == "KOSPI + KOSDAQ" else "최대 500개"
         st.caption(
@@ -1187,7 +1187,7 @@ def render_news_tab(
                         unsafe_allow_html=True,
                     )
                 with _ai_btn_col:
-                    if st.button("AI 요약", key=f"ai_{ticker}_{_ni}", width="stretch"):
+                    if st.button("AI 요약", key=f"ai_{ticker}_{_ni}", use_container_width=True):
                         article_dialog(title, link, ticker, gemini_key, groq_key)
 
         with sent_col:
@@ -1319,12 +1319,12 @@ def render_chart_tab(
             )
         with _wl_col:
             if is_in_wl:
-                if st.button("★ 관심 해제", width="stretch"):
+                if st.button("★ 관심 해제", use_container_width=True):
                     st.session_state["watchlist"] = [w for w in _wl if w["ticker"] != ticker]
                     save_watchlist_fn(st.session_state["watchlist"])
                     st.rerun()
             else:
-                if st.button("☆ 관심 추가", width="stretch", type="primary"):
+                if st.button("☆ 관심 추가", use_container_width=True, type="primary"):
                     _wl.append({"name": sname, "ticker": ticker})
                     st.session_state["watchlist"] = _wl
                     save_watchlist_fn(_wl)
@@ -1410,7 +1410,7 @@ def render_chart_tab(
         with _chart_col:
             st.plotly_chart(
                 fig_mini,
-                width="stretch",
+                use_container_width=True,
                 config={"scrollZoom": False, "displayModeBar": False},
                 key="sdt_compact_chart",
             )
@@ -1419,7 +1419,7 @@ def render_chart_tab(
                 if st.button(
                     "📊 전체 차트 (6패널)", key="show_chart_btn",
                     help="캔들·EMA·BB·RSI·MACD·ADX·KOSPI 6패널 풀뷰",
-                    width="stretch",
+                    use_container_width=True,
                 ):
                     chart_dialog(fig, ticker)
             with _btn_diag_col:
@@ -2168,7 +2168,7 @@ def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn
         if insider_df is not None and not insider_df.empty:
             st.dataframe(
                 insider_df,
-                width="stretch",
+                use_container_width=True,
                 hide_index=True,
                 column_config={"링크": st.column_config.LinkColumn("SEC 공시 링크", display_text="바로가기")},
             )
@@ -2362,7 +2362,7 @@ def render_fund_tab(
                     }
                     for h in _holdings[:10]
                 ]
-                st.dataframe(pd.DataFrame(_h_rows), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(_h_rows), use_container_width=True, hide_index=True)
                 st.caption("상위 구성종목이 해당 섹터의 시장 흐름을 직접 반영합니다.")
             else:
                 st.info("구성종목 데이터를 불러올 수 없습니다.")
@@ -2508,7 +2508,7 @@ def render_fund_tab(
                 _sh = fund_score_data.get("shareholder_yield")
                 if _sh is not None:
                     mkt_rows.append({"지표": "주주환원율", "값": f"{_sh:.1f}%", "참고 법칙": "배당+자사주 / 시총 (≥3% 양호)"})
-                st.dataframe(pd.DataFrame(mkt_rows), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(mkt_rows), use_container_width=True, hide_index=True)
 
                 st.markdown("### 💰 재무 핵심 지표")
                 _is_krx_f = ticker.endswith(".KS") or ticker.endswith(".KQ")
@@ -2536,7 +2536,7 @@ def render_fund_tab(
                     {"지표": "당기순이익",       "값": _fin_val("net_income",       "net_income")},
                     {"지표": "잉여현금흐름(FCF)", "값": _fmt_money(fcf) if fcf else "N/A"},
                 ]
-                st.dataframe(pd.DataFrame(fin_rows), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(fin_rows), use_container_width=True, hide_index=True)
                 _src = fund_info.get("source", "yfinance")
                 st.caption(f"시장 지표: **{_src}** | 재무 지표: **{fin_src}**")
 
@@ -2701,7 +2701,7 @@ def render_fund_tab(
                 if insider_df is not None and not insider_df.empty:
                     st.dataframe(
                         insider_df,
-                        width="stretch",
+                        use_container_width=True,
                         hide_index=True,
                         column_config={"링크": st.column_config.LinkColumn("SEC 공시 링크", display_text="바로가기")},
                     )
@@ -2774,7 +2774,7 @@ def _render_pf_body(
     _hdr_col, _out_col = st.columns([5, 1])
     _hdr_col.markdown(f"**💼 내 포트폴리오** — `{_mail}`")
     with _out_col:
-        if st.button("로그아웃", width="stretch", key="pf_logout"):
+        if st.button("로그아웃", use_container_width=True, key="pf_logout"):
             db_logout(_tok)
             st.session_state["auth_token"]   = None
             st.session_state["auth_user_id"] = None
@@ -2954,7 +2954,7 @@ def _render_pf_body(
         _ew_h.markdown("#### 🎯 Event Watch")
         _pf_news_result: dict = st.session_state.get("pf_news_result", {})
         _pf_news_rt_ts: str   = st.session_state.get("pf_news_rt_ts", "")
-        if _ew_btn_col.button("뉴스 분석", key="pf_run_news", type="primary", width="stretch"):
+        if _ew_btn_col.button("뉴스 분석", key="pf_run_news", type="primary", use_container_width=True):
             _rt_prices_news: dict[str, float] = {}
             _rt_pct_news:    dict[str, float] = {}
             with st.spinner("실시간 현재가 조회 중..."):
@@ -3149,7 +3149,7 @@ def _render_pf_body(
             )
             _exit_result: dict = st.session_state.get("pf_exit_result", {})
             _exit_rt_ts: str   = st.session_state.get("pf_exit_rt_ts", "")
-            if _eg_btn.button("매도 가이드 분석", key="pf_exit_calc", type="primary", width="stretch"):
+            if _eg_btn.button("매도 가이드 분석", key="pf_exit_calc", type="primary", use_container_width=True):
                 _exit_result = {}
                 _exit_now    = now_kst_fn().strftime("%H:%M:%S")
                 with st.spinner("실시간 현재가 조회 및 ATR 변동성 분석 중..."):
@@ -3337,7 +3337,7 @@ def _render_pf_body(
                     key=f"pf_sell_qty_{_it['id']}", label_visibility="collapsed",
                     help=f"최대 {_it['quantity']:g}주",
                 )
-                if _dc4.button("매도", key=f"pf_sell_{_it['id']}", type="primary", width="stretch"):
+                if _dc4.button("매도", key=f"pf_sell_{_it['id']}", type="primary", use_container_width=True):
                     _sell_r = db_sell_item(_uid, _it["id"], _sell_px_input, _sell_qty_input)
                     if _sell_r["ok"]:
                         _pnl_msg = (f"₩{_sell_r['net_profit']:+,.0f}" if _is_krw_del else f"${_sell_r['net_profit']:+,.2f}")
@@ -3345,7 +3345,7 @@ def _render_pf_body(
                         st.rerun(scope="fragment")
                     else:
                         st.error(_sell_r.get("error", "매도 실패"))
-                if _dc5.button("삭제", key=f"pf_del_{_it['id']}", width="stretch"):
+                if _dc5.button("삭제", key=f"pf_del_{_it['id']}", use_container_width=True):
                     _r3 = db_delete_portfolio(_it["id"], _uid)
                     if _r3["ok"]:
                         st.rerun(scope="fragment")
@@ -3362,7 +3362,7 @@ def _render_pf_body(
         if _opt_result and "momentum_data" not in _opt_result:
             _opt_result = {}
             st.session_state.pop("pf_opt_result", None)
-        if _ai_btn.button("섹터 분석", key="pf_opt_run", type="primary", width="stretch"):
+        if _ai_btn.button("섹터 분석", key="pf_opt_run", type="primary", use_container_width=True):
             from src.portfolio_optimizer import classify_sectors, scan_market_momentum, build_rebalancing_guide
             with st.spinner("섹터 분석 및 시장 모멘텀 스캔 중..."):
                 _sd  = classify_sectors(_items, _pf_prices)
@@ -3555,7 +3555,7 @@ def _render_pf_body(
             _rec_c1.caption(f"₩ {int(_inv_amt):,}")
         _risk_profile = _rec_c2.selectbox("투자 성향", ["중립형", "보수형", "공격형"], key="rec_risk_profile")
         _rec_c3.write("")
-        _rec_run = _rec_c3.button("모멘텀 추천 실행", type="primary", key="rec_run", width="stretch")
+        _rec_run = _rec_c3.button("모멘텀 추천 실행", type="primary", key="rec_run", use_container_width=True)
 
         if _rec_run:
             from src.recommendation_engine import run_recommendation, recommendation_to_dict
@@ -3730,15 +3730,15 @@ def _render_pf_body(
                 if st.session_state.get("_th_confirm_clear"):
                     st.warning("매도 이력을 전부 삭제합니다. 누적 매도금·실현 손익이 0으로 초기화됩니다.")
                     _cf_ok, _cf_no = st.columns(2)
-                    if _cf_ok.button("삭제 확인", key="th_clear_confirm", type="primary", width="stretch"):
+                    if _cf_ok.button("삭제 확인", key="th_clear_confirm", type="primary", use_container_width=True):
                         db_clear_trade_history(_uid)
                         st.session_state.pop("_th_confirm_clear", None)
                         st.toast("매도 이력이 초기화됐습니다.")
                         st.rerun(scope="fragment")
-                    if _cf_no.button("취소", key="th_clear_cancel", width="stretch"):
+                    if _cf_no.button("취소", key="th_clear_cancel", use_container_width=True):
                         st.session_state.pop("_th_confirm_clear", None)
                         st.rerun(scope="fragment")
-                st.dataframe(_th_rows_data, width="stretch", hide_index=True)
+                st.dataframe(_th_rows_data, use_container_width=True, hide_index=True)
 
 
 # ─── 포트폴리오 탭 진입점 ─────────────────────────────────────────────────────
@@ -3778,7 +3778,7 @@ def render_portfolio_tab(
             with st.form("pf_auth_form"):
                 _pf_email  = st.text_input("이메일", placeholder="you@example.com")
                 _pf_pw     = st.text_input("비밀번호", type="password", placeholder="6자 이상")
-                _pf_submit = st.form_submit_button(_auth_mode, width="stretch", type="primary")
+                _pf_submit = st.form_submit_button(_auth_mode, use_container_width=True, type="primary")
 
             if _pf_submit:
                 if _auth_mode == "회원가입":

@@ -88,7 +88,7 @@ def render_backtest_tab(tab) -> None:
 
             submitted = st.form_submit_button(
                 "▶ 스크리닝 후 백테스트 실행",
-                width="stretch",
+                use_container_width=True,
                 type="primary",
             )
 
@@ -177,7 +177,7 @@ def _run_and_display(
     df_sel["확신도 점수"] = df_sel["확신도 점수"].apply(lambda x: f"{x:.1f}pt")
     df_sel["현재가(원)"]  = df_sel["현재가(원)"].apply(lambda x: f"{x:,.0f}")
     df_sel["거래량"]      = df_sel["거래량"].apply(lambda x: f"{x:,.0f}")
-    st.dataframe(df_sel, width="stretch")
+    st.dataframe(df_sel, use_container_width=True)
 
     ticker_name_map = {s["ticker"]: s["name"] for s in selected}
 
@@ -346,7 +346,7 @@ def _display_results(
         legend=dict(font=dict(color="#C9D1D9"), bgcolor="rgba(0,0,0,0)"),
         hovermode="x unified",
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
     # 총자산 추이
     with st.expander("📈 총 자산 규모 추이", expanded=False):
@@ -372,7 +372,7 @@ def _display_results(
             legend=dict(font=dict(color="#C9D1D9"), bgcolor="rgba(0,0,0,0)"),
             hovermode="x unified",
         )
-        st.plotly_chart(fig2, width="stretch")
+        st.plotly_chart(fig2, use_container_width=True)
 
     # 선정 종목 요약
     if selected_stocks:
@@ -383,7 +383,7 @@ def _display_results(
             df_sel["확신도 점수"] = df_sel["확신도 점수"].apply(lambda x: f"{x:.1f}pt")
             df_sel["현재가(원)"]  = df_sel["현재가(원)"].apply(lambda x: f"{x:,.0f}")
             df_sel["거래량"]      = df_sel["거래량"].apply(lambda x: f"{x:,.0f}")
-            st.dataframe(df_sel, width="stretch")
+            st.dataframe(df_sel, use_container_width=True)
 
     # 거래 내역
     with st.expander(f"📋 거래 내역 ({len(trade_log)}건)", expanded=False):
@@ -414,7 +414,7 @@ def _display_results(
                     "reason":     "사유",
                 })
             )
-            st.dataframe(df_display, width="stretch", hide_index=True)
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
         else:
             st.info("거래 내역이 없습니다.")
 
