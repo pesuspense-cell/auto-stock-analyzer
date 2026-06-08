@@ -3839,8 +3839,11 @@ def render_portfolio_tab(
 
 
 # ─── ASA 추천 탭 ──────────────────────────────────────────────────────────────
-def render_asa_tab(tab) -> None:
-    """ASA 추천 탭 — live_screener.py 를 실행하고 결과를 스트리밍으로 표시한다."""
+def render_asa_tab(tab, db_get_portfolio=None, ticker_name_map_fn=None) -> None:
+    """ASA 추천 탭 — 로그인 사용자 포트폴리오 기반 매매 지침 자동 산출."""
+    import io
+    from contextlib import redirect_stdout
+
     with tab:
         st.markdown("## 🤖 ASA 추천")
         st.caption(
@@ -3849,32 +3852,170 @@ def render_asa_tab(tab) -> None:
         )
         st.divider()
 
+        # ── 사용자 인증 & 포트폴리오 로드 ────────────────────────────────────
+        _uid  = st.session_state.get("auth_user_id")
+        _mail = st.session_state.get("auth_email")
+        _items: list[dict] = []
+        if _uid and db_get_portfolio:
+            try:
+                _items = db_get_portfolio(_uid) or []
+            except Exception:
+                _items = []
+
+        # ── 상단: 사용자 정보 & 포트폴리오 표 ───────────────────────────────
+        if _uid:
+            st.caption(f"👤 로그인: **{_mail}**")
+            if _items:
+                st.markdown("**📋 현재 보유 종목** (포트폴리오 탭 기준 · SL/TP는 실행 시 ATR 자동 산출)")
+                _nm = ticker_name_map_fn() if ticker_name_map_fn else {}
+                _pf_rows = []
+                _total   = 0.0
+                for _it in _items:
+                    _avg = float(_it["avg_price"])
+                    _qty = int(_it["quantity"])
+                    _inv = _avg * _qty
+                    _total += _inv
+                    _pf_rows.append({
+                        "티커":     _it["ticker"],
+                        "종목명":   _nm.get(_it["ticker"], _it["ticker"].split(".")[0]),
+                        "수량":     _qty,
+                        "평균단가": f"{_avg:,.0f}원",
+                        "투자금액": f"{_inv:,.0f}원",
+                    })
+                st.dataframe(pd.DataFrame(_pf_rows), use_container_width=True, hide_index=True)
+                st.caption(f"총 투자금액: **{_total:,.0f}원** | {len(_items)}종목")
+            else:
+                st.info(
+                    "보유 종목이 없습니다. "
+                    "**내 포트폴리오** 탭에서 종목을 추가하면 분석에 반영됩니다."
+                )
+        else:
+            st.info(
+                "💡 **내 포트폴리오** 탭에서 로그인하면 보유 종목이 자동으로 분석에 반영됩니다.\n\n"
+                "로그인 없이 실행하면 신규 매수 신호만 분석됩니다."
+            )
+
+        st.divider()
+
+        # ── 예치금 입력 ───────────────────────────────────────────────────────
+        st.markdown("**💰 예치금 (가용 현금) 입력**")
+        st.caption("현재 MTS에서 투자 가능한 예수금을 입력하세요. 신규 매수 계획에 반영됩니다.")
+        _c1, _ = st.columns([1, 1])
+        with _c1:
+            _deposit = st.number_input(
+                "예치금",
+                min_value=0,
+                max_value=2_000_000_000,
+                value=st.session_state.get("asa_deposit", 1_000_000),
+                step=100_000,
+                format="%d",
+                label_visibility="collapsed",
+            )
+        st.session_state["asa_deposit"] = int(_deposit)
+        st.caption(f"입력된 예치금: **{int(_deposit):,.0f}원**")
+        st.divider()
+
+        # ── 실행 버튼 ─────────────────────────────────────────────────────────
+        _btn_label = (
+            f"보유 {len(_items)}종목 포지션 점검 + 예치금 {int(_deposit):,.0f}원 기반 신규 매수 신호 분석"
+            if _items else "신규 매수 신호 분석 (보유 종목 없음)"
+        )
         if st.button(
             "▶ ASA 추천 실행",
             key="asa_tab_run_btn",
             type="primary",
-            help="live_screener.py를 실행하고 결과를 이 화면에 표시합니다.",
+            help=_btn_label,
         ):
-            _screener_path = pathlib.Path(__file__).parent.parent / "live_screener.py"
+            # ── 포지션 dict 구성 (ATR 기반 SL/TP 자동 계산) ─────────────────
+            _positions: dict = {}
+            _nm_map = ticker_name_map_fn() if ticker_name_map_fn else {}
+
+            if _items:
+                _tickers = [it["ticker"] for it in _items]
+                _sl_tp: dict[str, tuple[float, float]] = {}
+
+                with st.spinner("보유 종목 ATR 기반 SL/TP 계산 중..."):
+                    try:
+                        _query = _tickers if len(_tickers) > 1 else _tickers[0]
+                        _raw   = yf.download(_query, period="60d", auto_adjust=True, progress=False)
+                        for _t in _tickers:
+                            try:
+                                _avg = float(next(x["avg_price"] for x in _items if x["ticker"] == _t))
+                                if isinstance(_raw.columns, pd.MultiIndex):
+                                    _tdf = _raw.xs(_t, axis=1, level=1).dropna(how="all")
+                                else:
+                                    _tdf = _raw.dropna(how="all")
+                                if len(_tdf) >= 14 and "High" in _tdf.columns:
+                                    _tr = pd.concat([
+                                        _tdf["High"] - _tdf["Low"],
+                                        (_tdf["High"] - _tdf["Close"].shift(1)).abs(),
+                                        (_tdf["Low"]  - _tdf["Close"].shift(1)).abs(),
+                                    ], axis=1).max(axis=1)
+                                    _atr_v = float(
+                                        _tr.ewm(alpha=1.0 / 14, adjust=False, min_periods=14)
+                                           .mean().iloc[-1]
+                                    )
+                                    _sl = max(_avg - 2.5 * _atr_v, _avg * 0.92)
+                                else:
+                                    _sl = _avg * 0.92
+                                _sl_tp[_t] = (round(_sl), round(_avg * 1.25))
+                            except Exception:
+                                _avg_f = float(next(
+                                    (x["avg_price"] for x in _items if x["ticker"] == _t), 0
+                                ))
+                                _sl_tp[_t] = (round(_avg_f * 0.92), round(_avg_f * 1.25))
+                    except Exception:
+                        for _it in _items:
+                            _avg_f = float(_it["avg_price"])
+                            _sl_tp[_it["ticker"]] = (round(_avg_f * 0.92), round(_avg_f * 1.25))
+
+                for _it in _items:
+                    _t   = _it["ticker"]
+                    _avg = float(_it["avg_price"])
+                    _qty = int(_it["quantity"])
+                    _sl, _tp = _sl_tp.get(_t, (round(_avg * 0.92), round(_avg * 1.25)))
+                    _positions[_t] = {
+                        "name":        _nm_map.get(_t, _t.split(".")[0]),
+                        "entry_price": _avg,
+                        "quantity":    _qty,
+                        "sl":          float(_sl),
+                        "tp":          float(_tp),
+                    }
+
+            _balance = {"cash": float(_deposit), "positions": _positions}
+
+            # ── live_screener 인프로세스 실행 (MY_CURRENT_BALANCE 교체) ─────────
             _out_box = st.empty()
-            _lines: list[str] = []
             try:
-                with st.spinner("📊 분석 실행 중 — 수 분 소요될 수 있습니다..."):
-                    _proc = subprocess.Popen(
-                        [sys.executable, "-u", str(_screener_path)],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
-                    for _ln in _proc.stdout:
-                        _lines.append(_ln)
-                        _out_box.code("".join(_lines), language="text")
-                    _proc.wait()
-                if _proc.returncode == 0:
+                _root = str(pathlib.Path(__file__).parent.parent)
+                if _root not in sys.path:
+                    sys.path.insert(0, _root)
+
+                import importlib
+                import live_screener as _ls
+
+                _ls.MY_CURRENT_BALANCE = _balance
+
+                class _NoopThread:
+                    def join(self): pass
+
+                _ls.show_popup_after_close = lambda: _NoopThread()
+
+                _buf = io.StringIO()
+                with st.spinner("📊 ASA 분석 실행 중 — 수 분 소요될 수 있습니다..."):
+                    try:
+                        with redirect_stdout(_buf):
+                            _ls.main()
+                    except SystemExit:
+                        pass
+
+                _output = _buf.getvalue()
+                if _output.strip():
+                    _out_box.code(_output, language="text")
                     st.success("✅ ASA 추천 분석 완료", icon="🚀")
                 else:
-                    st.warning(f"종료 코드 {_proc.returncode} — 위 출력을 확인하세요.")
+                    st.warning("출력이 없습니다. 오류를 확인하세요.")
             except Exception as _asa_err:
+                import traceback as _tb
                 st.error(f"실행 실패: {_asa_err}")
+                st.code(_tb.format_exc(), language="text")

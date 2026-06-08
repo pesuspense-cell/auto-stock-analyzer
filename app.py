@@ -110,7 +110,7 @@ except Exception as _db_err:
 
 # ─── 페이지 설정 ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AI 주식 분석 터미널",
+    page_title="ASA Service",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1224,6 +1224,10 @@ render_portfolio_tab(
     delete_cookie_fn      = _delete_cookie,
 )
 
-render_asa_tab(tab_asa)
+render_asa_tab(
+    tab_asa,
+    db_get_portfolio   = _db_get_portfolio,
+    ticker_name_map_fn = _ticker_name_map,
+)
 
 render_backtest_tab(tab_backtest)
