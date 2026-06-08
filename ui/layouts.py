@@ -3883,28 +3883,44 @@ def render_asa_tab(tab) -> None:
             _nm   = _name_map.get(tk, "")
             return f"{_nm} ({_code})" if _nm else _code
 
+        def _is_us(tk: str) -> bool:
+            return not (tk.endswith(".KS") or tk.endswith(".KQ"))
+
         # ── 상단: 사용자 정보 & 포트폴리오 표 ───────────────────────────────
         if _uid:
             st.caption(f"👤 로그인: **{_mail}**")
             if _items:
                 st.markdown("**📋 현재 보유 종목** (포트폴리오 탭 기준 · SL/TP는 실행 시 ATR 자동 산출)")
                 _pf_rows = []
-                _total   = 0.0
+                _total_krw = 0.0
+                _total_usd = 0.0
                 for _it in _items:
                     _avg = float(_it.get("avg_price") or 0)
                     _qty = int(float(_it.get("quantity") or 0))
                     _inv = _avg * _qty
-                    _total += _inv
                     _tk  = str(_it.get("ticker", ""))
+                    if _is_us(_tk):
+                        _total_usd += _inv
+                        _avg_str = f"${_avg:,.2f}"
+                        _inv_str = f"${_inv:,.2f}"
+                    else:
+                        _total_krw += _inv
+                        _avg_str = f"{_avg:,.0f}원"
+                        _inv_str = f"{_inv:,.0f}원"
                     _pf_rows.append({
                         "티커":     _tk,
                         "종목명":   _name_map.get(_tk, _tk.split(".")[0]),
                         "수량":     _qty,
-                        "평균단가": f"{_avg:,.0f}원",
-                        "투자금액": f"{_inv:,.0f}원",
+                        "평균단가": _avg_str,
+                        "투자금액": _inv_str,
                     })
                 st.dataframe(pd.DataFrame(_pf_rows), use_container_width=True, hide_index=True)
-                st.caption(f"총 투자금액: **{_total:,.0f}원** | {len(_items)}종목")
+                _total_parts = []
+                if _total_krw:
+                    _total_parts.append(f"KRW **{_total_krw:,.0f}원**")
+                if _total_usd:
+                    _total_parts.append(f"USD **${_total_usd:,.2f}**")
+                st.caption(f"총 투자금액: {' + '.join(_total_parts)} | {len(_items)}종목")
             else:
                 st.info(
                     "보유 종목이 없습니다. "
@@ -4000,8 +4016,9 @@ def render_asa_tab(tab) -> None:
                     _avg = float(_it.get("avg_price") or 0)
                     _qty = int(float(_it.get("quantity") or 0))
                     _sl, _tp = _sl_tp.get(_t, (round(_avg * 0.92), round(_avg * 1.25)))
+                    _base_name = _name_map.get(_t, _t.split(".")[0])
                     _positions[_t] = {
-                        "name":        _name_map.get(_t, _t.split(".")[0]),
+                        "name":        f"{_base_name} (USD)" if _is_us(_t) else _base_name,
                         "entry_price": _avg,
                         "quantity":    _qty,
                         "sl":          float(_sl),
