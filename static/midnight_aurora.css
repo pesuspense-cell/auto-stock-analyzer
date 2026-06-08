@@ -1524,3 +1524,37 @@ button[data-testid^="baseButton"] span,
 button[data-testid^="baseButton"] div {
   color: inherit !important;
 }
+
+/* ─── Primary 버튼 텍스트 흰색 최종 강제 ──────────────────────────── */
+button[data-testid="baseButton-primary"],
+button[data-testid="baseButton-primary"] p,
+button[data-testid="baseButton-primary"] span,
+button[data-testid="baseButton-primary"] div,
+button[data-testid="baseButton-primary"] * {
+  color: #fff !important;
+}
+button[data-testid="baseButton-primaryFormSubmit"],
+button[data-testid="baseButton-primaryFormSubmit"] p,
+button[data-testid="baseButton-primaryFormSubmit"] span,
+button[data-testid="baseButton-primaryFormSubmit"] div,
+button[data-testid="baseButton-primaryFormSubmit"] * {
+  color: #fff !important;
+}
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"],
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"] p,
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"] span,
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"] div,
+[data-testid="stSidebar"] button[data-testid="baseButton-primary"] * {
+  color: #fff !important;
+}
+
+/* ─── 멀티셀렉트 선택 태그 (chip) — 대상 마켓 등 ─────────────────── */
+[data-baseweb="tag"] {
+  background: var(--action-blue) !important;
+  color: #fff !important;
+}
+[data-baseweb="tag"] span,
+[data-baseweb="tag"] div,
+[data-baseweb="tag"] * {
+  color: #fff !important;
+}
