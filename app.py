@@ -60,6 +60,20 @@ try:
         is_etf_ticker,
         _flatten_columns,
     )
+    # ui 렌더링 모듈 — src.* 의존성을 공유하므로 같은 try 블록에 배치
+    from ui.styles import inject_css
+    from ui.layouts import (
+        render_sidebar,
+        render_header,
+        render_asa_tab,
+        render_market_tab,
+        render_rec_tab,
+        render_news_tab,
+        render_fund_tab,
+        render_chart_tab,
+        render_portfolio_tab,
+    )
+    from ui.backtest_tab import render_backtest_tab
 except Exception as _import_err:
     import traceback as _tb
     st.error(
@@ -93,20 +107,6 @@ except Exception as _db_err:
     st.error(f"Supabase 연결 실패: {_db_err}", icon="🚨")
     st.stop()
 
-# ─── ui/ 렌더링 모듈 ──────────────────────────────────────────────────────────
-from ui.styles import inject_css
-from ui.layouts import (
-    render_sidebar,
-    render_header,
-    render_asa_tab,
-    render_market_tab,
-    render_rec_tab,
-    render_news_tab,
-    render_fund_tab,
-    render_chart_tab,
-    render_portfolio_tab,
-)
-from ui.backtest_tab import render_backtest_tab
 
 # ─── 페이지 설정 ──────────────────────────────────────────────────────────────
 st.set_page_config(
