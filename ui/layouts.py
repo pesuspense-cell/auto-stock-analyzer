@@ -3867,6 +3867,22 @@ def render_asa_tab(tab) -> None:
             except Exception:
                 _items = []
 
+        # ── 티커→종목명 매핑 (KRX 캐시 활용) ────────────────────────────────
+        _name_map: dict[str, str] = {}
+        if _items:
+            try:
+                from stock_ai import get_krx_stock_list as _asa_get_krx
+                for _disp, _tk in (_asa_get_krx() or {}).items():
+                    _name_map[_tk] = _disp.split(" (")[0].strip()
+            except Exception:
+                pass
+
+        def _ticker_label(tk: str) -> str:
+            """티커 코드로 '종목명 (코드)' 형식 문자열 반환."""
+            _code = tk.split(".")[0]
+            _nm   = _name_map.get(tk, "")
+            return f"{_nm} ({_code})" if _nm else _code
+
         # ── 상단: 사용자 정보 & 포트폴리오 표 ───────────────────────────────
         if _uid:
             st.caption(f"👤 로그인: **{_mail}**")
@@ -3882,7 +3898,7 @@ def render_asa_tab(tab) -> None:
                     _tk  = str(_it.get("ticker", ""))
                     _pf_rows.append({
                         "티커":     _tk,
-                        "종목명":   _tk.split(".")[0],
+                        "종목명":   _name_map.get(_tk, _tk.split(".")[0]),
                         "수량":     _qty,
                         "평균단가": f"{_avg:,.0f}원",
                         "투자금액": f"{_inv:,.0f}원",
@@ -3985,7 +4001,7 @@ def render_asa_tab(tab) -> None:
                     _qty = int(float(_it.get("quantity") or 0))
                     _sl, _tp = _sl_tp.get(_t, (round(_avg * 0.92), round(_avg * 1.25)))
                     _positions[_t] = {
-                        "name":        _t.split(".")[0],
+                        "name":        _name_map.get(_t, _t.split(".")[0]),
                         "entry_price": _avg,
                         "quantity":    _qty,
                         "sl":          float(_sl),
