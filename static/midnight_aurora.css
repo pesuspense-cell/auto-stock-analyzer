@@ -1404,6 +1404,9 @@ div[data-testid="stProgress"] > div > div {
    커스텀 패치
 ═══════════════════════════════════════════════════════════════════ */
 
+/* 인트로/로그인 화면 — :r0: 컨테이너 내부 제목 줄바꿈 방지 */
+#\:r0\: h2, #\:r0\: h3, #\:r0\: p { white-space: nowrap !important; }
+
 /* 1. 내부 캐시 클래스 배경 흰색 */
 .st-emotion-cache-qyg6jx {
   background: #ffffff !important;

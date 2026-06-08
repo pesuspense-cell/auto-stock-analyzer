@@ -202,7 +202,11 @@ if not st.session_state.get("app_authenticated"):
     st.markdown("<br>" * 4, unsafe_allow_html=True)
     _, col, _ = st.columns([1.5, 1, 1.5])
     with col:
-        st.markdown("## 📈 AI 주식 분석 터미널")
+        st.markdown(
+            '<h2 style="white-space:nowrap;font-size:1.4rem;font-weight:600;'
+            'color:#1d1d1f;letter-spacing:-0.374px;margin:0 0 8px;">📈 AI 주식 분석 터미널</h2>',
+            unsafe_allow_html=True,
+        )
         st.markdown("---")
         with st.form("login_form"):
             pw_input  = st.text_input("비밀번호", type="password",

@@ -3,6 +3,7 @@ ui/backtest_tab.py — 백테스트 탭 렌더링
 """
 from __future__ import annotations
 
+import calendar as _cal
 import contextlib
 import io
 from datetime import date
@@ -16,6 +17,12 @@ import yfinance as yf
 _MARKETS = ["KOSPI", "KOSDAQ", "S&P500", "NASDAQ"]
 
 _BT_SCHEMA_VERSION = "v3"  # trade_log 스키마 변경 시 올려서 캐시 무효화
+
+_MONTH_NAMES = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"]
+
+def _clamp_date(year: int, month: int, day: int) -> date:
+    max_d = _cal.monthrange(year, month)[1]
+    return date(year, month, min(day, max_d))
 
 _BENCHMARK_OPTIONS = {
     "^KS11 (KOSPI)":   "^KS11",
@@ -70,8 +77,18 @@ def render_backtest_tab(tab) -> None:
 
             with col_l:
                 c1, c2 = st.columns(2)
-                start_date = c1.date_input("시작일", value=date(2020, 1, 1))
-                end_date   = c2.date_input("종료일", value=date(2024, 12, 31))
+                with c1:
+                    st.caption("📅 시작일")
+                    _sy, _sm, _sd = st.columns([2, 1.8, 1])
+                    _start_year  = _sy.number_input("연도", 2000, 2035, 2020, 1, key="bt_sy", label_visibility="collapsed")
+                    _start_mo_s  = _sm.selectbox("월", _MONTH_NAMES, index=0, key="bt_sm", label_visibility="collapsed")
+                    _start_day   = _sd.number_input("일", 1, 31, 1, 1, key="bt_sd", label_visibility="collapsed")
+                with c2:
+                    st.caption("📅 종료일")
+                    _ey, _em, _ed = st.columns([2, 1.8, 1])
+                    _end_year    = _ey.number_input("연도", 2000, 2035, 2024, 1, key="bt_ey", label_visibility="collapsed")
+                    _end_mo_s    = _em.selectbox("월", _MONTH_NAMES, index=11, key="bt_em", label_visibility="collapsed")
+                    _end_day     = _ed.number_input("일", 1, 31, 31, 1, key="bt_ed", label_visibility="collapsed")
                 initial_capital = st.number_input(
                     "초기 자본금 (원)",
                     min_value=1_000_000, max_value=10_000_000_000,
@@ -94,6 +111,9 @@ def render_backtest_tab(tab) -> None:
 
         # ── 실행 ──────────────────────────────────────────────────────────
         if submitted:
+            start_date = _clamp_date(int(_start_year), _MONTH_NAMES.index(_start_mo_s) + 1, int(_start_day))
+            end_date   = _clamp_date(int(_end_year),   _MONTH_NAMES.index(_end_mo_s)   + 1, int(_end_day))
+
             if not selected_markets:
                 st.error("마켓을 하나 이상 선택하세요.")
                 return
