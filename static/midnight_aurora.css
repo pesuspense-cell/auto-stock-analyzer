@@ -114,7 +114,7 @@ body, .stApp, .stMarkdown, p, span, div {
   border-right: 1px solid var(--hairline) !important;
   min-width: 260px !important;
 }
-[data-testid="stSidebar"] *:not(button):not(input):not(select):not(textarea):not([class*="progress"]) {
+[data-testid="stSidebar"] *:not(button):not(input):not(select):not(textarea):not([class*="progress"]):not(button *) {
   color: var(--ink) !important;
 }
 [data-testid="stSidebar"] label,
