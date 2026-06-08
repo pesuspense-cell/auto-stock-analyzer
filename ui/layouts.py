@@ -3867,12 +3867,18 @@ def render_asa_tab(tab) -> None:
             except Exception:
                 _items = []
 
-        # ── 티커→종목명 매핑 (KRX + US 캐시 활용) ──────────────────────────
+        # ── 티커→종목명 매핑 (KRX 주식 + ETF + US 캐시 활용) ───────────────
         _name_map: dict[str, str] = {}
         if _items:
             try:
                 from stock_ai import get_krx_stock_list as _asa_get_krx
                 for _disp, _tk in (_asa_get_krx() or {}).items():
+                    _name_map[_tk] = _disp.split(" (")[0].strip()
+            except Exception:
+                pass
+            try:
+                from stock_ai import get_krx_etf_list as _asa_get_etf
+                for _disp, _tk in (_asa_get_etf() or {}).items():
                     _name_map[_tk] = _disp.split(" (")[0].strip()
             except Exception:
                 pass
