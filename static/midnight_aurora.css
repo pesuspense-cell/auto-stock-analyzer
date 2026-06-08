@@ -1540,11 +1540,11 @@ button[data-testid="baseButton-primaryFormSubmit"] div,
 button[data-testid="baseButton-primaryFormSubmit"] * {
   color: #fff !important;
 }
-[data-testid="stSidebar"] button[data-testid="baseButton-primary"],
-[data-testid="stSidebar"] button[data-testid="baseButton-primary"] p,
-[data-testid="stSidebar"] button[data-testid="baseButton-primary"] span,
-[data-testid="stSidebar"] button[data-testid="baseButton-primary"] div,
-[data-testid="stSidebar"] button[data-testid="baseButton-primary"] * {
+[data-testid="stSidebar"] .stButton button[data-testid="baseButton-primary"],
+[data-testid="stSidebar"] .stButton button[data-testid="baseButton-primary"] p,
+[data-testid="stSidebar"] .stButton button[data-testid="baseButton-primary"] span,
+[data-testid="stSidebar"] .stButton button[data-testid="baseButton-primary"] div,
+[data-testid="stSidebar"] .stButton button[data-testid="baseButton-primary"] * {
   color: #fff !important;
 }
 
