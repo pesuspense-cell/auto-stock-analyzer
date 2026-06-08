@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import sys
 import threading
-import tkinter as tk
 from datetime import datetime
 
 import numpy as np
@@ -592,11 +591,24 @@ def show_popup_after_close() -> threading.Thread:
 
     메인 스레드를 차단하지 않도록 별도 데몬 스레드에서 실행하고,
     프로그램 종료 시 강제 닫힘을 방지하기 위해 join()으로 대기한다.
+    헤드리스 서버(디스플레이 없음)에서는 조용히 스킵된다.
     """
+    try:
+        import tkinter as tk
+    except Exception:
+        print("  [팝업 생략] 디스플레이 없음 — 헤드리스 서버 환경")
+        t = threading.Thread(target=lambda: None, daemon=True)
+        t.start()
+        return t
+
     popup_closed = threading.Event()
 
     def _run() -> None:
-        root = tk.Tk()
+        try:
+            root = tk.Tk()
+        except Exception:
+            print("  [팝업 생략] 디스플레이 없음 — 헤드리스 서버 환경")
+            return
         root.title("📊 실전 스크리너 알림")
 
         sw = root.winfo_screenwidth()

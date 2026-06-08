@@ -434,54 +434,29 @@ def render_sidebar(
             key="asa_run_btn",
             width="stretch",
             type="primary",
-            help="live_screener.py를 별도 터미널 창에서 실행합니다.",
+            help="live_screener.py를 실행하고 결과를 화면에 표시합니다.",
         ):
             _screener_path = pathlib.Path(__file__).parent.parent / "live_screener.py"
+            _out_box = st.empty()
+            _lines: list[str] = []
             try:
-                if hasattr(subprocess, "CREATE_NEW_CONSOLE"):
-                    # 네이티브 Windows Python — 새 콘솔 창으로 실행
-                    subprocess.Popen(
-                        [sys.executable, str(_screener_path)],
-                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                with st.spinner("📊 분석 실행 중 — 수 분 소요될 수 있습니다..."):
+                    _proc = subprocess.Popen(
+                        [sys.executable, "-u", str(_screener_path)],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
                     )
-                elif sys.platform == "darwin":
-                    subprocess.Popen(
-                        ["open", "-a", "Terminal", sys.executable, str(_screener_path)]
-                    )
+                    for _ln in _proc.stdout:
+                        _lines.append(_ln)
+                        _out_box.code("".join(_lines), language="text")
+                    _proc.wait()
+                if _proc.returncode == 0:
+                    st.success("✅ ASA 추천 분석 완료", icon="🚀")
                 else:
-                    # WSL / Cygwin / 순수 Linux
-                    # wslpath / cygpath 로 Windows 경로 변환 시도
-                    _win_path = None
-                    for _conv in [["wslpath", "-w"], ["cygpath", "-w"]]:
-                        try:
-                            _win_path = subprocess.check_output(
-                                _conv + [str(_screener_path)],
-                                stderr=subprocess.DEVNULL,
-                            ).decode().strip()
-                            break
-                        except (FileNotFoundError, subprocess.CalledProcessError):
-                            continue
-
-                    if _win_path:
-                        # WSL/Cygwin → Windows 터미널로 실행
-                        _launched = False
-                        for _wcmd in [
-                            ["powershell.exe", "-NoProfile", "-Command",
-                             f"Start-Process python -ArgumentList '\"{_win_path}\"'"],
-                            ["cmd.exe", "/c", "start", "python", _win_path],
-                        ]:
-                            try:
-                                subprocess.Popen(_wcmd)
-                                _launched = True
-                                break
-                            except FileNotFoundError:
-                                continue
-                        if not _launched:
-                            subprocess.Popen([sys.executable, str(_screener_path)])
-                    else:
-                        # 순수 Linux — 백그라운드 실행
-                        subprocess.Popen([sys.executable, str(_screener_path)])
-                st.success("✅ ASA 추천 스크리너 실행 중 — 터미널을 확인하세요.", icon="🚀")
+                    st.warning(f"종료 코드 {_proc.returncode} — 위 출력을 확인하세요.")
             except Exception as _asa_err:
                 st.error(f"실행 실패: {_asa_err}")
 
