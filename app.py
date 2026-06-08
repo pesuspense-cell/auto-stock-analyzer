@@ -98,6 +98,7 @@ from ui.styles import inject_css
 from ui.layouts import (
     render_sidebar,
     render_header,
+    render_asa_tab,
     render_market_tab,
     render_rec_tab,
     render_news_tab,
@@ -858,13 +859,14 @@ _loading_ph = st.empty()
 # ═════════════════════════════════════════════════════════════════════════════
 # 탭 정의
 # ═════════════════════════════════════════════════════════════════════════════
-tab_market, tab_chart, tab_rec, tab_news, tab_fund, tab_portfolio, tab_backtest = st.tabs([
+tab_market, tab_chart, tab_rec, tab_news, tab_fund, tab_portfolio, tab_asa, tab_backtest = st.tabs([
     "🌐 시장 현황",
     "📊 차트 분석",
     "⭐ 추천 종목",
     "📰 뉴스 & 관련 종목",
     "🏛️ 펀더멘털 & 기관",
     "💼 내 포트폴리오",
+    "🤖 ASA 추천",
     "🔬 백테스트",
 ])
 
@@ -1217,5 +1219,7 @@ render_portfolio_tab(
     set_cookie_fn         = _set_cookie,
     delete_cookie_fn      = _delete_cookie,
 )
+
+render_asa_tab(tab_asa)
 
 render_backtest_tab(tab_backtest)

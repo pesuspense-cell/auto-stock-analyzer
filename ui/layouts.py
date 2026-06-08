@@ -425,41 +425,6 @@ def render_sidebar(
                         save_watchlist_fn(_wl_cur)
                         st.rerun()
 
-        # ── ASA 추천 ──────────────────────────────────────────────────────────
-        st.divider()
-        st.markdown("### 🤖 ASA 추천")
-        st.caption("오늘 장 마감 데이터 기준으로 내일의 매매 지침을 자동 산출합니다.")
-        if st.button(
-            "▶ ASA 추천 실행",
-            key="asa_run_btn",
-            width="stretch",
-            type="primary",
-            help="live_screener.py를 실행하고 결과를 화면에 표시합니다.",
-        ):
-            _screener_path = pathlib.Path(__file__).parent.parent / "live_screener.py"
-            _out_box = st.empty()
-            _lines: list[str] = []
-            try:
-                with st.spinner("📊 분석 실행 중 — 수 분 소요될 수 있습니다..."):
-                    _proc = subprocess.Popen(
-                        [sys.executable, "-u", str(_screener_path)],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
-                    for _ln in _proc.stdout:
-                        _lines.append(_ln)
-                        _out_box.code("".join(_lines), language="text")
-                    _proc.wait()
-                if _proc.returncode == 0:
-                    st.success("✅ ASA 추천 분석 완료", icon="🚀")
-                else:
-                    st.warning(f"종료 코드 {_proc.returncode} — 위 출력을 확인하세요.")
-            except Exception as _asa_err:
-                st.error(f"실행 실패: {_asa_err}")
-
         # ── 포트폴리오 종목 추가 (로그인 시만) ──────────────────────────────
         _sb_uid = st.session_state.get("auth_user_id")
         _sb_tok = st.session_state.get("auth_token")
@@ -3871,3 +3836,45 @@ def render_portfolio_tab(
             set_cookie_fn=set_cookie_fn,
             delete_cookie_fn=delete_cookie_fn,
         )
+
+
+# ─── ASA 추천 탭 ──────────────────────────────────────────────────────────────
+def render_asa_tab(tab) -> None:
+    """ASA 추천 탭 — live_screener.py 를 실행하고 결과를 스트리밍으로 표시한다."""
+    with tab:
+        st.markdown("## 🤖 ASA 추천")
+        st.caption(
+            "오늘 장 마감 데이터 기준으로 내일의 매매 지침을 자동 산출합니다. "
+            "실행 후 수 분이 소요될 수 있습니다."
+        )
+        st.divider()
+
+        if st.button(
+            "▶ ASA 추천 실행",
+            key="asa_tab_run_btn",
+            type="primary",
+            help="live_screener.py를 실행하고 결과를 이 화면에 표시합니다.",
+        ):
+            _screener_path = pathlib.Path(__file__).parent.parent / "live_screener.py"
+            _out_box = st.empty()
+            _lines: list[str] = []
+            try:
+                with st.spinner("📊 분석 실행 중 — 수 분 소요될 수 있습니다..."):
+                    _proc = subprocess.Popen(
+                        [sys.executable, "-u", str(_screener_path)],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                    for _ln in _proc.stdout:
+                        _lines.append(_ln)
+                        _out_box.code("".join(_lines), language="text")
+                    _proc.wait()
+                if _proc.returncode == 0:
+                    st.success("✅ ASA 추천 분석 완료", icon="🚀")
+                else:
+                    st.warning(f"종료 코드 {_proc.returncode} — 위 출력을 확인하세요.")
+            except Exception as _asa_err:
+                st.error(f"실행 실패: {_asa_err}")
