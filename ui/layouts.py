@@ -3884,14 +3884,23 @@ def render_asa_tab(tab) -> None:
             except Exception:
                 pass
 
+        def _get_name(tk: str) -> str:
+            """_name_map에서 종목명 조회. 접미사 없는 한국 코드도 .KS/.KQ 변형 시도."""
+            if tk in _name_map:
+                return _name_map[tk]
+            _code = tk.split(".")[0]
+            return _name_map.get(f"{_code}.KS") or _name_map.get(f"{_code}.KQ") or ""
+
         def _ticker_label(tk: str) -> str:
             """티커 코드로 '종목명 (코드)' 형식 문자열 반환."""
             _code = tk.split(".")[0]
-            _nm   = _name_map.get(tk, "")
+            _nm   = _get_name(tk)
             return f"{_nm} ({_code})" if _nm else _code
 
         def _is_us(tk: str) -> bool:
-            return not (tk.endswith(".KS") or tk.endswith(".KQ"))
+            """한국 티커(6자리·숫자시작)와 미국 티커(알파벳) 구분."""
+            _code = tk.split(".")[0]
+            return not (len(_code) == 6 and _code[0].isdigit())
 
         # ── 상단: 사용자 정보 & 포트폴리오 표 ───────────────────────────────
         if _uid:
@@ -3916,7 +3925,7 @@ def render_asa_tab(tab) -> None:
                         _inv_str = f"{_inv:,.0f}원"
                     _pf_rows.append({
                         "티커":     _tk,
-                        "종목명":   _name_map.get(_tk, _tk.split(".")[0]),
+                        "종목명":   _get_name(_tk) or _tk.split(".")[0],
                         "수량":     _qty,
                         "평균단가": _avg_str,
                         "투자금액": _inv_str,
@@ -4023,7 +4032,7 @@ def render_asa_tab(tab) -> None:
                     _avg = float(_it.get("avg_price") or 0)
                     _qty = int(float(_it.get("quantity") or 0))
                     _sl, _tp = _sl_tp.get(_t, (round(_avg * 0.92), round(_avg * 1.25)))
-                    _base_name = _name_map.get(_t, _t.split(".")[0])
+                    _base_name = _get_name(_t) or _t.split(".")[0]
                     _positions[_t] = {
                         "name":        f"{_base_name} (USD)" if _is_us(_t) else _base_name,
                         "entry_price": _avg,
