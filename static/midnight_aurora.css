@@ -1622,3 +1622,59 @@ button[data-testid="baseButton-primaryFormSubmit"] * {
     width: auto !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Primary 버튼 텍스트 흰색 — Streamlit ≥1.36 신형 testid (stBaseButton-*)
+   기존 규칙은 구형 testid(baseButton-*)만 타겟해 1.56에서 매칭 실패.
+   파일 끝 배치로 동일 특이도 !important 경합에서도 우선 적용.
+═══════════════════════════════════════════════════════════════════ */
+button[data-testid="stBaseButton-primary"],
+button[data-testid="stBaseButton-primaryFormSubmit"],
+.stButton > button[kind="primary"],
+.stForm button[kind="primaryFormSubmit"] {
+  background: var(--action-blue) !important;
+  border: none !important;
+  border-radius: var(--radius-pill) !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+button[data-testid="stBaseButton-primary"]:hover,
+button[data-testid="stBaseButton-primaryFormSubmit"]:hover,
+.stButton > button[kind="primary"]:hover {
+  background: #0055aa !important;
+  color: #fff !important;
+}
+
+/* 내부 텍스트 전체 — 전역 p/span/div 및 stMarkdownContainer 규칙 무력화 */
+button[data-testid="stBaseButton-primary"] *,
+button[data-testid="stBaseButton-primary"] p,
+button[data-testid="stBaseButton-primary"] span,
+button[data-testid="stBaseButton-primary"] div,
+button[data-testid="stBaseButton-primary"] [data-testid="stMarkdownContainer"] p,
+button[data-testid="stBaseButton-primaryFormSubmit"] *,
+button[data-testid="stBaseButton-primaryFormSubmit"] p,
+button[data-testid="stBaseButton-primaryFormSubmit"] span,
+button[data-testid="stBaseButton-primaryFormSubmit"] div,
+button[data-testid="stBaseButton-primaryFormSubmit"] [data-testid="stMarkdownContainer"] p,
+.stButton > button[kind="primary"] *,
+.stButton > button[kind="primary"] p {
+  color: #fff !important;
+}
+
+/* 사이드바 — [stSidebar] [stMarkdownContainer] p (0,3,1) 보다 높은 특이도 (0,4,2) */
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] [data-testid="stMarkdownContainer"] div,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] *,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primaryFormSubmit"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primaryFormSubmit"] * {
+  color: #fff !important;
+}
+
+/* 탭 본문 (ASA 추천 실행 등) — 전역 stMarkdownContainer 규칙 대비 우선 */
+.stTabs button[data-testid="stBaseButton-primary"] [data-testid="stMarkdownContainer"] p,
+.stTabs button[data-testid="stBaseButton-primary"] *,
+.main button[data-testid="stBaseButton-primary"] [data-testid="stMarkdownContainer"] p {
+  color: #fff !important;
+}
