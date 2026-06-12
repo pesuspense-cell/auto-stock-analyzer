@@ -588,30 +588,34 @@ def _get_wl_alerts() -> list:
     cached    = st.session_state.get(cache_key)
     if cached and (datetime.now() - cached["ts"]).seconds < 300:
         return cached["data"]
-    alerts = []
-    for item in wl:
+    def _check_one(item: dict):
         try:
             data  = _stock_data(item["ticker"], "3mo")
             if data.empty or len(data) < 2 or "Close" not in data.columns:
-                continue
+                return None
             sig   = generate_signals(data)
             score = sig.get("score", 0)
-            if abs(score) >= 3:
-                price = float(data["Close"].iloc[-1])
-                prev  = float(data["Close"].iloc[-2])
-                if prev == 0:
-                    continue
-                alerts.append({
-                    "name":   item["name"],
-                    "ticker": item["ticker"],
-                    "score":  score,
-                    "label":  sig.get("label", ""),
-                    "badge":  sig.get("badge", ""),
-                    "price":  price,
-                    "chg":    (price - prev) / prev * 100,
-                })
+            if abs(score) < 3:
+                return None
+            price = float(data["Close"].iloc[-1])
+            prev  = float(data["Close"].iloc[-2])
+            if prev == 0:
+                return None
+            return {
+                "name":   item["name"],
+                "ticker": item["ticker"],
+                "score":  score,
+                "label":  sig.get("label", ""),
+                "badge":  sig.get("badge", ""),
+                "price":  price,
+                "chg":    (price - prev) / prev * 100,
+            }
         except Exception:
-            continue
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(wl))) as _wl_pool:
+        results = list(_wl_pool.map(_check_one, wl))
+    alerts = [r for r in results if r]
     st.session_state[cache_key] = {"data": alerts, "ts": datetime.now()}
     return alerts
 
@@ -922,7 +926,49 @@ if _pending and not _aticker:
     st.session_state["_switch_to_chart"] = True
     st.rerun()
 
-if _data_ready:
+# 분석 결과 세션 캐시 — 동일 종목·기간·시간버킷이면 재계산 생략.
+# 버튼 클릭 등 무관한 rerun 시 무거운 파이프라인(신호·뉴스·하이브리드)이
+# 다시 돌지 않도록 분리한다.
+_analysis_key = (
+    f"{_aticker}|{_aperiod}|{_market_bucket()}|{int(bool(use_llm))}"
+    if _data_ready else ""
+)
+_analysis_cached = st.session_state.get("_analysis_cache")
+_cache_hit = bool(
+    _data_ready
+    and _analysis_cached
+    and _analysis_cached.get("key") == _analysis_key
+)
+
+if _cache_hit:
+    ticker = _aticker
+    sname  = _asname
+    st.caption(f"업데이트: {_now_kst().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
+    _c = _analysis_cached
+    data            = _c["data"]
+    close           = _c["close"]
+    vol_anomaly     = _c["vol_anomaly"]
+    signals         = _c["signals"]
+    advanced        = _c["advanced"]
+    expected        = _c["expected"]
+    fund_info       = _c["fund_info"]
+    fund_score_data = _c["fund_score_data"]
+    dead_time       = _c["dead_time"]
+    breakout        = _c["breakout"]
+    risk_adj        = _c["risk_adj"]
+    hybrid          = _c["hybrid"]
+    news_result     = _c["news_result"]
+    tech_score      = _c["tech_score"]
+    news_score      = _c["news_score"]
+
+    _rt           = _realtime_price_1m(_aticker)
+    _rt_price     = _rt["price"]
+    _rt_ts        = _rt["ts"]
+    _rt_realtime  = _rt["is_realtime"]
+    _rt_stale     = _rt.get("stale", False)
+    _rt_stale_msg = _rt.get("stale_msg", "")
+
+elif _data_ready:
     ticker = _aticker
     sname  = _asname
     st.caption(f"업데이트: {_now_kst().strftime('%Y-%m-%d %H:%M:%S')}  |  분석 종목: **{_asname}** (`{_aticker}`)")
@@ -1047,6 +1093,27 @@ if _data_ready:
                 hybrid["badge"] = "🟡"
 
     risk_adj = adjust_risk_conservative(expected) if expected else {}
+
+    # 분석 결과 세션 캐시 저장 — 다음 rerun부터 재계산 없이 즉시 복원
+    st.session_state["_analysis_cache"] = {
+        "key":             _analysis_key,
+        "data":            data,
+        "close":           close,
+        "vol_anomaly":     vol_anomaly,
+        "signals":         signals,
+        "advanced":        advanced,
+        "expected":        expected,
+        "fund_info":       fund_info,
+        "fund_score_data": fund_score_data,
+        "dead_time":       dead_time,
+        "breakout":        breakout,
+        "risk_adj":        risk_adj,
+        "hybrid":          hybrid,
+        "news_result":     news_result,
+        "tech_score":      tech_score,
+        "news_score":      news_score,
+    }
+
     _total_elapsed = int(time.time() - _load_start)
     _loading_ph.markdown(
         f'<div style="background:#161B22;border:1px solid #26a69a55;border-radius:12px;'

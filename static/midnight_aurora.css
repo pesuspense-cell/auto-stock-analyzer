@@ -1558,3 +1558,67 @@ button[data-testid="baseButton-primaryFormSubmit"] * {
 [data-baseweb="tag"] * {
   color: #fff !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Mobile Responsive v2 — 태블릿·모바일 레이아웃 보강
+═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* 본문 여백 축소 — 좁은 화면에서 콘텐츠 폭 확보 */
+  .block-container {
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
+
+  /* 탭 바 — 8개 탭 가로 스크롤 (줄바꿈/잘림 방지) */
+  .stTabs [data-baseweb="tab-list"] {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+  .stTabs [data-baseweb="tab"] {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+  }
+
+  /* 마크다운 내 표 — 가로 스크롤 허용 (ETF·포트폴리오 테이블 등) */
+  div[data-testid="stMarkdownContainer"]:has(table) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  div[data-testid="stMarkdownContainer"] table { min-width: 480px; }
+
+  /* Plotly 차트 — 컨테이너 폭 초과 방지 */
+  .stPlotlyChart, .js-plotly-plot { max-width: 100% !important; }
+
+  /* 제목·메트릭 크기 조정 */
+  h1 { font-size: 1.45rem !important; }
+  h2 { font-size: 1.2rem !important; }
+  h3 { font-size: 1.05rem !important; }
+  [data-testid="stMetricValue"] { font-size: 1.25rem !important; }
+
+  /* 사이드바 — 화면 대부분을 덮는 오버레이 폭 */
+  [data-testid="stSidebar"] {
+    width: 86vw !important;
+    min-width: 86vw !important;
+  }
+}
+
+/* 좁은 모바일 — Streamlit 기본 스택 임계(640px) 보강: 컬럼 완전 세로 스택 */
+@media (max-width: 640px) {
+  div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    width: 100% !important;
+    flex: 1 1 100% !important;
+    min-width: 100% !important;
+  }
+  /* 버튼·메트릭 등 작은 쌍 컬럼은 2열 유지 */
+  div[data-testid="stHorizontalBlock"]:has(.stButton):not(:has(.stPlotlyChart))
+    > div[data-testid="stColumn"]:has(.stButton) {
+    flex: 1 1 calc(50% - 0.5rem) !important;
+    min-width: calc(50% - 0.5rem) !important;
+    width: auto !important;
+  }
+}

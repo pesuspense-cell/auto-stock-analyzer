@@ -4292,7 +4292,7 @@ def analyze_news_sentiment_llm(
                 from langchain_google_genai import ChatGoogleGenerativeAI
                 from langchain_core.messages import HumanMessage
                 llm = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.5-flash",
                     google_api_key=api_key,
                     temperature=0.0,
                 )
@@ -4538,7 +4538,7 @@ def analyze_news_quant_llm(
                 from langchain_google_genai import ChatGoogleGenerativeAI
                 from langchain_core.messages import HumanMessage
                 llm = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.5-flash",
                     google_api_key=api_key,
                     temperature=0.0,
                 )
@@ -4755,7 +4755,7 @@ def summarize_article_llm(
             from langchain_google_genai import ChatGoogleGenerativeAI
             from langchain_core.messages import HumanMessage
             llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 google_api_key=api_key,
                 temperature=0.1,
             )

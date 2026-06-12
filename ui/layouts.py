@@ -2210,6 +2210,80 @@ def _render_chart_bottom_sections(*, state: dict, inv_data_fn, insider_trades_fn
 # 펀더멘털 탭
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _render_ai_report_section(*, state: dict, api_keys: dict, inv_data_fn) -> None:
+    """AI 심층 재무분석 리포트 섹션.
+
+    @st.fragment로 격리 — 리포트 생성/재생성 버튼 클릭이 앱 전체 rerun을
+    유발하지 않고 이 섹션만 다시 실행된다.
+    """
+    ticker      = state["ticker"]
+    sname       = state.get("asname") or state.get("sname") or ticker
+    _cache_key  = f"_ai_report|{ticker}"
+
+    @st.fragment
+    def _ai_report_fragment():
+        with st.expander("🧠 AI 심층 재무분석 리포트", expanded=bool(st.session_state.get(_cache_key))):
+            st.caption(
+                "앱이 수집한 펀더멘털·기술 신호·뉴스 감성·수급 데이터를 재무분석 전문가 프롬프트로 "
+                "종합 분석합니다. 제공된 데이터에 없는 수치는 생성하지 않으며, 부족한 항목은 명시됩니다."
+            )
+            _cached = st.session_state.get(_cache_key)
+
+            _c1, _c2 = st.columns([1, 1])
+            with _c1:
+                _gen = st.button(
+                    "📝 리포트 재생성" if _cached else "📝 리포트 생성",
+                    key=f"ai_report_btn_{ticker}",
+                    type="primary",
+                    use_container_width=True,
+                )
+            with _c2:
+                if _cached and _cached.get("report"):
+                    st.download_button(
+                        "⬇️ 마크다운 다운로드",
+                        data=_cached["report"],
+                        file_name=f"AI_재무분석_{sname}_{datetime.now().strftime('%Y%m%d')}.md",
+                        mime="text/markdown",
+                        key=f"ai_report_dl_{ticker}",
+                        use_container_width=True,
+                    )
+
+            if _gen:
+                from src.ai_report import generate_financial_report
+                _inv = None
+                if ticker.endswith((".KS", ".KQ")):
+                    try:
+                        _inv = inv_data_fn(ticker)
+                    except Exception:
+                        _inv = None
+                with st.spinner("AI 재무분석 리포트 생성 중... (10~30초)"):
+                    _res = generate_financial_report(
+                        ticker=ticker,
+                        company_name=sname,
+                        current_price=state.get("rt_price") or None,
+                        fund_info=state.get("fund_info", {}),
+                        fund_score_data=state.get("fund_score_data", {}),
+                        signals=state.get("signals", {}),
+                        hybrid=state.get("hybrid", {}),
+                        news_result=state.get("news_result", {}),
+                        inv_data=_inv,
+                        gemini_api_key=api_keys.get("gemini", ""),
+                        groq_api_key=api_keys.get("groq", ""),
+                    )
+                if _res["ok"]:
+                    st.session_state[_cache_key] = _res
+                    st.rerun(scope="fragment")
+                else:
+                    st.error(f"리포트 생성 실패: {_res['error']}")
+
+            _cached = st.session_state.get(_cache_key)
+            if _cached and _cached.get("report"):
+                st.caption(f"분석 엔진: {_cached.get('provider', '')}")
+                st.markdown(_cached["report"])
+
+    _ai_report_fragment()
+
+
 def render_fund_tab(
     tab,
     *,
@@ -2384,6 +2458,14 @@ def render_fund_tab(
                     st.caption(f"• {_reason}")
 
         if not _is_etf:
+            # ── AI 심층 재무분석 리포트 (fragment — 앱 전체 rerun 없이 독립 실행) ──
+            if data_ready:
+                _render_ai_report_section(
+                    state=state,
+                    api_keys=api_keys,
+                    inv_data_fn=inv_data_fn,
+                )
+
             _is_krx = ticker.endswith(".KS") or ticker.endswith(".KQ")
             if _is_krx:
                 _fund_db_ok = False

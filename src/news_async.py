@@ -294,7 +294,7 @@ async def _summarize_transcript(
             from langchain_core.messages import HumanMessage           # type: ignore
 
             llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 google_api_key=api_key,
                 temperature=0.1,
             )
@@ -315,7 +315,7 @@ async def _summarize_transcript(
             response = await loop.run_in_executor(
                 None,
                 lambda: client.chat.completions.create(
-                    model="llama3-8b-8192",
+                    model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=300,
                 ),
