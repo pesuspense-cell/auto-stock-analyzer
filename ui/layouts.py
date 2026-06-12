@@ -34,6 +34,7 @@ from ui.components import (
     stock_dashboard_header_html,
     signal_card_compact_html,
     sub_data_grid_html,
+    ai_assessment_banner_html,
     SVG_WALLET, SVG_BAR_CHART, SVG_TREND,
 )
 from ui.styles import COLORS, RADIUS
@@ -51,6 +52,7 @@ from src.fundamental import (
     get_investment_recommendation,
     calculate_etf_score,
 )
+from src.ai_report import compute_quick_assessment
 from src.news_logic import (
     analyze_news_sentiment_keywords,
     analyze_news_sentiment_llm,
@@ -146,8 +148,13 @@ def generate_signal(
     news_result: dict,
     expected,
     signals: dict,
+    assessment: dict | None = None,
 ) -> tuple[str, str, list]:
-    """신호등 3단 판정: BUY / WAIT / SELL + 액션 메시지 + 근거 리스트 반환."""
+    """신호등 3단 판정: BUY / WAIT / SELL + 액션 메시지 + 근거 리스트 반환.
+
+    assessment: compute_quick_assessment() 결과 — AI 심층 재무분석 리포트의
+    '결론 요약' 판정(투자 점수 N/10, 매수/중립/매도)을 매수·매도 가중치에 반영.
+    """
     if data.empty or len(data) < 2:
         return "WAIT", "데이터가 부족합니다. 관망을 권장합니다.", ["데이터 부족"]
 
@@ -189,9 +196,15 @@ def generate_signal(
         if _vma > 0 and pd.notna(_vma):
             vol_ratio = float(data["Volume"].iloc[-1]) / _vma
 
+    deep         = assessment or {}
+    deep_verdict = deep.get("verdict", "")
+    deep_score10 = float(deep.get("score10") or 5.0)
+
     reasons = []
 
     # ── SELL 조건 ─────────────────────────────────────────────────────────
+    if deep_verdict == "매도":
+        reasons.append(f"AI 심층 재무분석 매도 판정 (투자 점수 {deep_score10:.1f}/10)")
     if stop_loss_breached:
         reasons.append("현재가가 손절 기준선(매수가 -8%) 아래 — 즉시 손절 원칙")
     if h_score <= -2.5:
@@ -209,10 +222,13 @@ def generate_signal(
         + (1 if news_score <= -2.0 else 0)
         + (1 if trend_score <= 35 else 0)
         + (1 if ema_downtrend else 0)
+        + (1 if deep_verdict == "매도" else 0)
     )
 
     # ── BUY 조건 ──────────────────────────────────────────────────────────
     buy_reasons = []
+    if deep_verdict == "매수":
+        buy_reasons.append(f"AI 심층 재무분석 매수 판정 (투자 점수 {deep_score10:.1f}/10)")
     if h_score >= 2.0:
         buy_reasons.append(f"하이브리드 매수 신호 강함 ({h_score:+.1f}점)")
     if news_score >= 1.5:
@@ -1345,6 +1361,26 @@ def render_chart_tab(
                 unsafe_allow_html=True,
             )
 
+        # ── AI 재무분석 요약평 (심층 리포트 '결론 요약' 로직 — LLM 없이 즉시 산출) ──
+        _deep_assess: dict = {}
+        if data_ready:
+            _deep_assess = compute_quick_assessment(
+                fund_info=fund_info,
+                fund_score_data=fund_score_data,
+                hybrid=hybrid,
+                news_result=news_result,
+            )
+            st.markdown(
+                ai_assessment_banner_html(
+                    score10=_deep_assess["score10"],
+                    verdict=_deep_assess["verdict"],
+                    summary=_deep_assess["summary"],
+                    reasons=_deep_assess["reasons"],
+                    has_fund=_deep_assess["has_fund"],
+                ),
+                unsafe_allow_html=True,
+            )
+
         # ── 차트 빌드 ─────────────────────────────────────────────────
         try:
             _kospi_raw = yf.download("^KS11", period=aperiod, auto_adjust=True, progress=False)
@@ -1362,6 +1398,7 @@ def render_chart_tab(
             _rpt_signal, _rpt_action, _rpt_reasons = generate_signal(
                 data=data, advanced=advanced, hybrid=hybrid,
                 news_result=news_result, expected=expected, signals=signals,
+                assessment=_deep_assess,
             )
         else:
             _rpt_signal, _rpt_action, _rpt_reasons = "WAIT", "", []

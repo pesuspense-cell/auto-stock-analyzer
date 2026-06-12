@@ -407,6 +407,67 @@ def stock_dashboard_header_html(
     )
 
 
+# ─── SDT: AI 재무분석 요약평 배너 (종목명 헤더 ↔ 차트 사이) ───────────────────
+def ai_assessment_banner_html(
+    score10: float,
+    verdict: str,          # "매수" / "중립" / "매도"
+    summary: str,
+    reasons: list[str],
+    has_fund: bool,
+) -> str:
+    """AI 심층 재무분석 '결론 요약' 로직 기반 요약평 배너 HTML."""
+    if verdict == "매수":
+        vc, v_bg, v_br = _C["gain"], "rgba(52,199,89,0.10)", "rgba(52,199,89,0.3)"
+    elif verdict == "매도":
+        vc, v_bg, v_br = _C["loss"], "rgba(255,59,48,0.10)", "rgba(255,59,48,0.3)"
+    else:
+        vc, v_bg, v_br = "#e07000", "rgba(255,149,0,0.10)", "rgba(255,149,0,0.3)"
+
+    chips = "".join(
+        f'<span style="display:inline-block;background:rgba(0,0,0,0.04);'
+        f'border:1px solid {_C["border"]};border-radius:9999px;'
+        f'padding:2px 10px;margin:2px 4px 2px 0;font-size:0.74rem;'
+        f'color:{_C["text_2"]};font-family:{_FONT_TEXT};">{r}</span>'
+        for r in reasons[:3]
+    )
+
+    limited_html = (
+        f'<span style="font-size:0.68rem;color:{_C["text_3"]};margin-left:8px;'
+        f'font-family:{_FONT_TEXT};">⚠️ 재무 데이터 없음 — 분석 제한</span>'
+        if not has_fund else ""
+    )
+
+    return f"""
+<div style="background:{_C['surface']};border:1px solid {v_br};
+            border-left:4px solid {vc};border-radius:{RADIUS};
+            padding:14px 18px;margin:4px 0 14px;
+            box-shadow:0 1px 2px rgba(0,0,0,0.06);
+            display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
+  <div style="text-align:center;flex-shrink:0;min-width:84px;">
+    <div style="font-size:1.55rem;font-weight:600;color:{vc};line-height:1.1;
+                font-family:{_FONT_DISPLAY};font-variant-numeric:tabular-nums;">
+      {score10:.1f}<span style="font-size:0.78rem;color:{_C['text_2']};font-weight:500;"> /10</span>
+    </div>
+    <span style="display:inline-block;background:{v_bg};color:{vc};
+                 border:1px solid {v_br};border-radius:9999px;padding:2px 14px;
+                 font-size:0.82rem;font-weight:600;margin-top:4px;
+                 font-family:{_FONT_TEXT};">{verdict}</span>
+  </div>
+  <div style="flex:1;min-width:230px;">
+    <div style="font-size:0.65rem;color:{_C['text_2']};margin-bottom:5px;
+                font-family:{_FONT_TEXT};display:flex;align-items:center;gap:6px;">
+      <span style="width:6px;height:6px;border-radius:50%;background:{vc};
+                   display:inline-block;flex-shrink:0;"></span>
+      AI 재무분석 요약평 · 그레이엄·버핏·린치 벤치마크 + 기술·뉴스 종합{limited_html}
+    </div>
+    <div style="font-size:0.84rem;color:{_C['text']};line-height:1.55;
+                margin-bottom:6px;word-break:keep-all;
+                font-family:{_FONT_TEXT};">{summary}</div>
+    <div>{chips}</div>
+  </div>
+</div>"""
+
+
 # ─── SDT: AI Signal Card (우측 패널) ──────────────────────────────────────────
 def signal_card_compact_html(
     signal: str,

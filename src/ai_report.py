@@ -151,6 +151,118 @@ def _build_data_block(
     return "\n".join(lines)
 
 
+# ─── 규칙 기반 퀵 평가 (리포트 '결론 요약' 로직의 LLM-free 재현) ──────────────
+
+def compute_quick_assessment(
+    *,
+    fund_info: dict | None = None,
+    fund_score_data: dict | None = None,
+    hybrid: dict | None = None,
+    news_result: dict | None = None,
+) -> dict:
+    """
+    AI 심층 재무분석 리포트의 '## 1. 결론 요약' 판정 로직을 LLM 호출 없이 재현한다.
+
+    리포트와 동일한 분석 틀을 사용한다:
+      - 핵심 재무 분석 (그레이엄·버핏·린치 벤치마크 기반 장투 점수 ±8) → 50%
+      - 기술적 신호 (하이브리드 종합 ±10, 단기 관점)                  → 30%
+      - 뉴스 감성 (±5)                                               → 20%
+    재무 데이터가 없으면 기술 60% / 뉴스 40%로 재가중하고 분석 제한을 명시한다.
+
+    Returns:
+        {
+            "score10":  float,   # 투자 점수 0~10
+            "verdict":  str,     # "매수" | "중립" | "매도"
+            "reasons":  list,    # 핵심 근거 (최대 3개)
+            "summary":  str,     # 한 줄 요약평
+            "has_fund": bool,    # 재무 데이터 기반 여부
+        }
+    """
+    fsd = fund_score_data or {}
+    hyb = hybrid or {}
+    nr  = news_result if isinstance(news_result, dict) else {}
+
+    def _clamp(v: float) -> float:
+        return max(-1.0, min(1.0, v))
+
+    fund_score = fsd.get("fund_score")
+    has_fund   = isinstance(fund_score, (int, float)) and bool(
+        fsd.get("fund_reasons") or fsd.get("master_verdicts")
+    )
+
+    h_score    = float(hyb.get("hybrid_score", 0.0) or 0.0)
+    news_score = float(nr.get("score", 0.0) or 0.0)
+    tech_norm  = _clamp(h_score / 10.0)
+    news_norm  = _clamp(news_score / 5.0)
+
+    if has_fund:
+        fund_norm = _clamp(float(fund_score) / 8.0)
+        composite = fund_norm * 0.5 + tech_norm * 0.3 + news_norm * 0.2
+    else:
+        composite = tech_norm * 0.6 + news_norm * 0.4
+
+    score10 = round(max(0.0, min(10.0, 5.0 + composite * 5.0)), 1)
+    verdict = "매수" if score10 >= 6.5 else ("매도" if score10 <= 3.5 else "중립")
+
+    # ── 핵심 근거 수집 (리포트의 '핵심 근거 3줄' 대응) ───────────────────────
+    cand_pos: list[str] = []
+    cand_neg: list[str] = []
+
+    mv = fsd.get("master_verdicts") or {}
+    for name in ("버핏", "그레이엄", "린치", "오닐"):
+        v = mv.get(name)
+        if not isinstance(v, dict):
+            continue
+        icon = v.get("icon", "")
+        txt  = f"{name} 기준 {v.get('판정', '')}"
+        if icon in ("✅", "🚀", "🔥"):
+            cand_pos.append(txt)
+        elif icon in ("🚫", "⚠️"):
+            cand_neg.append(txt)
+
+    if h_score >= 2.0:
+        cand_pos.append(f"기술 신호 강세 ({h_score:+.1f}점)")
+    elif h_score <= -2.0:
+        cand_neg.append(f"기술 신호 약세 ({h_score:+.1f}점)")
+
+    if news_score >= 1.5:
+        cand_pos.append(f"뉴스 감성 긍정 ({news_score:+.1f}점)")
+    elif news_score <= -1.5:
+        cand_neg.append(f"뉴스 감성 부정 ({news_score:+.1f}점)")
+
+    if verdict == "매수":
+        reasons = (cand_pos + cand_neg)[:3]
+    elif verdict == "매도":
+        reasons = (cand_neg + cand_pos)[:3]
+    else:
+        reasons = [r for pair in zip(cand_pos, cand_neg) for r in pair]
+        reasons = (reasons or cand_pos or cand_neg)[:3]
+    if not reasons:
+        reasons = ["지표 중립 — 뚜렷한 우위 신호 없음"]
+
+    # ── 한 줄 요약평 ─────────────────────────────────────────────────────────
+    if has_fund:
+        fund_label = fsd.get("fund_label", "펀더멘털 보통")
+        summary = (
+            f"그레이엄·버핏·린치 벤치마크 기준 {fund_label}({float(fund_score):+.1f}점), "
+            f"기술 신호 {hyb.get('label', '중립')}({h_score:+.1f}점), "
+            f"뉴스 감성 {nr.get('sentiment', '중립')}({news_score:+.1f}점)을 종합한 판정입니다."
+        )
+    else:
+        summary = (
+            f"재무 데이터 없음 — 기술 신호 {hyb.get('label', '중립')}({h_score:+.1f}점)과 "
+            f"뉴스 감성({news_score:+.1f}점)만으로 판정했습니다 (분석 제한)."
+        )
+
+    return {
+        "score10":  score10,
+        "verdict":  verdict,
+        "reasons":  reasons,
+        "summary":  summary,
+        "has_fund": has_fund,
+    }
+
+
 # ─── 프롬프트 ─────────────────────────────────────────────────────────────────
 
 def _build_prompt(data_block: str, company_name: str, as_of: str) -> str:
