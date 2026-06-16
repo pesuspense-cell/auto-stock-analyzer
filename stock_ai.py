@@ -2365,7 +2365,15 @@ def get_us_stock_list() -> dict:
         combined: dict = {}
         seen_symbols: set = set()  # 중복 제거
 
-        for market_tag, listing_key in [("S&P500", "S&P500"), ("NASDAQ", "NASDAQ")]:
+        # S&P500을 먼저 로드해 대형주에 [S&P500] 태그를 부여한 뒤,
+        # NYSE·NASDAQ·AMEX 전체 상장 종목을 편입한다. FDR StockListing은
+        # 현재 상장 상태를 반영하므로 신규 상장(IPO) 종목이 자동 포함된다.
+        for market_tag, listing_key in [
+            ("S&P500", "S&P500"),
+            ("NYSE",   "NYSE"),
+            ("NASDAQ", "NASDAQ"),
+            ("AMEX",   "AMEX"),
+        ]:
             try:
                 df = fdr.StockListing(listing_key).dropna(subset=["Name", "Symbol"])
                 df["Symbol"] = df["Symbol"].astype(str).str.strip()
