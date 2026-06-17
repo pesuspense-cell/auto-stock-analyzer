@@ -3,7 +3,7 @@
 # requirements.txt 를 함께 설치해야 한다 (stock_ai.py / src/* 재사용).
 fastapi>=0.115
 uvicorn[standard]>=0.32
-pydantic>=2.9
+pydantic[email]>=2.9        # EmailStr(app/schemas/auth.py) → email-validator 필요
 pydantic-settings>=2.6
 cachetools>=5.5
 python-multipart>=0.0.12
