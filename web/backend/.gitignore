@@ -1,0 +1,11 @@
+# ── Python ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ── 환경변수 (SUPABASE_DB_URL 등 비밀 절대 커밋 금지) ────────────
+.env
+.env.local

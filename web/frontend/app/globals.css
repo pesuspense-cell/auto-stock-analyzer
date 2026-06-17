@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-canvas text-ink font-sans antialiased;
+}
+
+/* 숫자 정렬 — 기존 인라인 font-variant-numeric:tabular-nums 대체 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 로딩 바 (app.py _LOADING_BASE 애니메이션 이식) */
+@keyframes loadingbar {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+.loading-bar-fill {
+  animation: loadingbar 1.2s ease-in-out infinite;
+}

@@ -1,0 +1,70 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  Render Blueprint — ASA 백엔드 (FastAPI web + jobs 워커)
+#
+#  한 청사진에서 2개 서비스를 띄운다. 둘 다 web/backend 코드이지만, 레포 루트의
+#  src/* 와 live_screener.py 를 sys.path(app/bootstrap.py)로 재사용하므로 전체 레포가
+#  체크아웃돼 있어야 한다(rootDir 는 실행 위치일 뿐, 루트 파일은 ../../ 로 접근 가능).
+#
+#  배포:
+#    1) Render 대시보드 → New → Blueprint → 이 레포 연결 → render.yaml 자동 감지
+#    2) 두 서비스(asa-api, asa-worker)에 SUPABASE_DB_URL 등 환경변수 입력(아래 sync:false)
+#    3) Vercel 의 BACKEND_URL 을 asa-api 의 https URL 로 지정 → next.config.mjs 폴백 동작
+#
+#  ⚠️ 워커(type: worker)는 Render 유료 플랜이 필요(상시 프로세스). web(free)은 15분
+#     무요청 시 슬립 → 첫 요청 콜드스타트. 운영 트래픽이 생기면 web 도 유료 권장.
+# ════════════════════════════════════════════════════════════════════════════
+services:
+  # ── FastAPI: analysis · news · fundamental (경로 A 폴백 대상) ────────────────
+  - type: web
+    name: asa-api
+    runtime: python
+    plan: free                      # 운영 시 starter 이상 권장(콜드스타트 제거)
+    rootDir: web/backend
+    buildCommand: pip install -r requirements.txt -r ../../requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SUPABASE_DB_URL        # 풀러 URL (aws-1-ap-northeast-1.pooler...)
+        sync: false
+      - key: CORS_ORIGINS           # 예: https://<your-app>.vercel.app
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DART_API_KEY
+        sync: false
+      - key: KRX_ID
+        sync: false
+      - key: KRX_PW
+        sync: false
+
+  # ── jobs 워커: ASA · 백테스트 (서버리스 불가 → 상시 프로세스) ────────────────
+  - type: worker
+    name: asa-worker
+    runtime: python
+    plan: starter                   # worker 는 free 불가 — 상시 실행 유료 플랜
+    rootDir: web/backend
+    buildCommand: pip install -r requirements.txt -r ../../requirements.txt
+    startCommand: python -m worker.jobs_worker
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SUPABASE_DB_URL        # asa-api 와 동일 풀러 URL
+        sync: false
+      - key: JOBS_POLL_INTERVAL
+        value: "3"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DART_API_KEY
+        sync: false
+      - key: KRX_ID
+        sync: false
+      - key: KRX_PW
+        sync: false

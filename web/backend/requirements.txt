@@ -1,0 +1,13 @@
+# FastAPI 백엔드 전용 의존성.
+# 데이터 로직(yfinance, pandas, FinanceDataReader 등)은 레포 루트의
+# requirements.txt 를 함께 설치해야 한다 (stock_ai.py / src/* 재사용).
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.6
+cachetools>=5.5
+python-multipart>=0.0.12
+sse-starlette>=2.1
+# DB/인증 (src/database.py 가 이미 사용)
+psycopg2-binary>=2.9
+Werkzeug>=3.0
