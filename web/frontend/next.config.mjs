@@ -19,7 +19,17 @@ const FASTAPI_FALLBACK_PATHS = [
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
-    const backend = process.env.BACKEND_URL || "http://localhost:8000";
+    // BACKEND_URL 이 비었거나 스킴(http/https) 없는 값이면 rewrites 가 무효가 되어
+    // 빌드가 "Invalid rewrites found" 로 실패한다. → 유효한 절대 URL 일 때만 폴백을 켠다.
+    const raw = (process.env.BACKEND_URL || "http://localhost:8000").trim();
+    const backend = /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, "") : "";
+    if (!backend) {
+      console.warn(
+        "[next.config] BACKEND_URL 미설정/형식오류 → FastAPI 폴백 비활성. " +
+          "Render 배포 후 https://<asa-api> 형태로 지정하세요.",
+      );
+      return [];
+    }
     return FASTAPI_FALLBACK_PATHS.map((source) => ({
       source,
       destination: `${backend}${source}`,
