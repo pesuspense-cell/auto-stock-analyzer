@@ -3,14 +3,16 @@
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
 import { fmtNum, fmtPct, signClass, priceLabel } from "@/lib/format";
-import type { MarketOverview, ExchangeRate, MoverItem } from "@/lib/types";
+import type { MarketOverview, MoverItem } from "@/lib/types";
+import type { RatesResponse, RateItem } from "@/lib/api-types";
 
 /** 시장 현황 탭 — 5분 간격 자동 부분 갱신 (Streamlit 전체 rerun 제거). */
 export function MarketTab() {
   const { data: overview } = useSWR<MarketOverview>("/market/overview", fetcher, {
     refreshInterval: 300_000,
   });
-  const { data: rates } = useSWR<ExchangeRate[]>("/market/rates", fetcher, {
+  // /market/rates 는 { rates: RateItem[] } 객체를 반환한다 (배열 아님).
+  const { data: ratesResp } = useSWR<RatesResponse>("/market/rates", fetcher, {
     refreshInterval: 300_000,
   });
 
@@ -18,7 +20,7 @@ export function MarketTab() {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <MoverCard title="🔺 상승 상위" items={overview?.gainers} />
       <MoverCard title="🔻 하락 상위" items={overview?.losers} />
-      <RatesCard rates={rates} />
+      <RatesCard rates={ratesResp?.rates} />
     </div>
   );
 }
@@ -27,7 +29,7 @@ function MoverCard({ title, items }: { title: string; items?: MoverItem[] }) {
   return (
     <section className="rounded-card border border-hairline bg-surface p-5 shadow-card">
       <h3 className="mb-3 text-sm font-semibold text-ink">{title}</h3>
-      {!items ? (
+      {!Array.isArray(items) ? (
         <SkeletonRows />
       ) : (
         <ul className="divide-y divide-hairline">
@@ -50,11 +52,11 @@ function MoverCard({ title, items }: { title: string; items?: MoverItem[] }) {
   );
 }
 
-function RatesCard({ rates }: { rates?: ExchangeRate[] }) {
+function RatesCard({ rates }: { rates?: RateItem[] }) {
   return (
     <section className="rounded-card border border-hairline bg-surface p-5 shadow-card">
       <h3 className="mb-3 text-sm font-semibold text-ink">💱 환율</h3>
-      {!rates ? (
+      {!Array.isArray(rates) ? (
         <SkeletonRows />
       ) : (
         <ul className="divide-y divide-hairline">
@@ -63,9 +65,9 @@ function RatesCard({ rates }: { rates?: ExchangeRate[] }) {
               <span className="text-[0.85rem] text-ink-2">{r.pair}</span>
               <span className="flex items-baseline gap-2">
                 <span className="tnum text-[0.85rem] font-semibold text-ink">{fmtNum(r.rate, 2)}</span>
-                {r.change_pct != null && (
-                  <span className={`tnum text-[0.72rem] ${signClass(r.change_pct)}`}>
-                    {fmtPct(r.change_pct)}
+                {r.changePct != null && (
+                  <span className={`tnum text-[0.72rem] ${signClass(r.changePct)}`}>
+                    {fmtPct(r.changePct)}
                   </span>
                 )}
               </span>
