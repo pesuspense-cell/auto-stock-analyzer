@@ -503,9 +503,38 @@ def _flatten_columns(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
+def _fdr_ohlc(ticker: str, period: str) -> pd.DataFrame:
+    """FinanceDataReader 폴백 OHLC.
+
+    클라우드(Render 등) IP 에서 Yahoo/yfinance 가 빈 데이터를 반환할 때 사용한다.
+    FDR 은 KRX/Naver/Stooq 등을 사용해 데이터센터 IP 에서도 동작한다.
+    """
+    try:
+        import FinanceDataReader as fdr
+        from datetime import datetime, timedelta
+
+        cal_days = {
+            "1mo": 31, "3mo": 93, "6mo": 186, "1y": 366, "2y": 731,
+            "5y": 1827, "10y": 3653, "ytd": 366, "max": 3653,
+        }.get(period, 200)
+        # 주말·공휴일 감안해 여유분 확보(거래일은 달력일의 ~70%)
+        start = (datetime.now() - timedelta(days=int(cal_days * 1.6))).strftime("%Y-%m-%d")
+        code = ticker.split(".")[0] if ticker.endswith((".KS", ".KQ")) else ticker
+        df = fdr.DataReader(code, start)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+        return df[cols].dropna(how="all")
+    except Exception:
+        return pd.DataFrame()
+
+
 def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     """주식 데이터 로드 및 기술적 지표 계산. 지표 계산은 _add_indicators()에 위임."""
     data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+    if data.empty or len(data) < 20:
+        # yfinance 차단/빈 데이터(클라우드 IP 등) → FinanceDataReader 폴백
+        data = _fdr_ohlc(ticker, period)
     if data.empty or len(data) < 20:
         return data
     data = _flatten_columns(data)
