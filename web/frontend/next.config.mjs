@@ -27,9 +27,11 @@ const FASTAPI_FALLBACK_PATHS = [
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
-    // BACKEND_URL 이 비었거나 스킴(http/https) 없는 값이면 rewrites 가 무효가 되어
-    // 빌드가 "Invalid rewrites found" 로 실패한다. → 유효한 절대 URL 일 때만 폴백을 켠다.
-    const raw = (process.env.BACKEND_URL || "http://localhost:8000").trim();
+    // 기본값 = 프로덕션 asa-api. Vercel 의 BACKEND_URL 값이 비어도(빈 문자열=falsy)
+    // 이 기본값으로 폴백해 rewrites 가 동작한다. 로컬 개발은 .env.local 의
+    // BACKEND_URL=http://localhost:8000 이 우선(override)한다.
+    // 스킴(http/https) 없는 값이면 rewrites 가 무효라 빌드 실패하므로 유효 URL 만 켠다.
+    const raw = (process.env.BACKEND_URL || "https://asa-api-2wh0.onrender.com").trim();
     const backend = /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, "") : "";
     if (!backend) {
       console.warn(
