@@ -6,9 +6,17 @@
 //   /api/v1/portfolio/[id] 등)가 프록시에 가려진다(shadowed).
 //   → 해결: FastAPI(경로 A)로 폴백할 "미구현 경로"만 명시적으로 나열한다.
 //      로컬(경로 B)로 이전 완료된 경로는 이 목록에서 제거하면 자동으로 로컬이 처리한다.
+// ⚠️ trailing-slash 주의:
+//   `:path*` 는 베이스 경로 매칭 시 끝에 슬래시를 붙여(/analysis → /analysis/) 보내,
+//   슬래시 없는 FastAPI 라우트가 307 리다이렉트를 내고 그게 교차출처로 새어 CORS 가
+//   터진다. → POST 베이스 엔드포인트는 "정확 경로"를 :path* 보다 **먼저** 나열해
+//   슬래시 없이 프록시(same-origin 유지)한다.
 const FASTAPI_FALLBACK_PATHS = [
+  "/api/v1/analysis",
   "/api/v1/analysis/:path*",
+  "/api/v1/news",
   "/api/v1/news/:path*",
+  "/api/v1/fundamental",
   "/api/v1/fundamental/:path*",
   "/api/v1/market/overview",
   "/api/v1/stocks/list",
