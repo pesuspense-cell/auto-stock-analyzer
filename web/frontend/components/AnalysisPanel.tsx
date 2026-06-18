@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { AnalysisResponse } from "@/lib/types";
 import type { StockHit } from "@/lib/api-types";
@@ -15,6 +15,13 @@ export function AnalysisPanel({ picked }: { picked: StockHit | null }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [useLlm, setUseLlm] = useState(false);
+
+  // 선택 종목이 바뀌면 이전 결과를 비운다(다른 종목인데 옛 분석이 남는 것 방지).
+  // 탭 전환 시엔 picked 가 그대로라 결과가 유지된다(keep-alive).
+  useEffect(() => {
+    setResult(null);
+    setError(null);
+  }, [picked?.ticker]);
 
   async function run() {
     if (!picked) return;

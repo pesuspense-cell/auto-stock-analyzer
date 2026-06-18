@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { StockSearch } from "@/components/StockSearch";
 import { MarketTab } from "@/components/MarketTab";
 import { AnalysisPanel } from "@/components/AnalysisPanel";
@@ -28,6 +29,25 @@ type TabId = (typeof TABS)[number]["id"];
 export default function Dashboard() {
   const [tab, setTab] = useState<TabId>("market");
   const [picked, setPicked] = useState<StockHit | null>(null);
+  // 한 번이라도 연 탭만 마운트(불필요한 초기 fetch 방지)하고, 이후엔 언마운트하지 않고
+  // CSS(hidden)로만 숨겨 각 탭의 입력·결과 상태를 유지(keep-alive)한다.
+  const [opened, setOpened] = useState<Set<TabId>>(() => new Set<TabId>(["market"]));
+
+  function go(id: TabId) {
+    setTab(id);
+    setOpened((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }
+
+  const panels: Record<TabId, ReactNode> = {
+    market: <MarketTab />,
+    chart: <AnalysisPanel picked={picked} />,
+    indicators: <IndicatorsPanel picked={picked} />,
+    news: <NewsTab picked={picked} />,
+    fund: <FundamentalTab picked={picked} />,
+    portfolio: <PortfolioTab />,
+    asa: <AsaTab />,
+    backtest: <BacktestTab />,
+  };
 
   return (
     <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 p-4 md:flex-row">
@@ -38,7 +58,7 @@ export default function Dashboard() {
           <StockSearch
             onPick={(h) => {
               setPicked(h);
-              setTab("chart");
+              go("chart");
             }}
           />
         </div>
@@ -51,7 +71,7 @@ export default function Dashboard() {
           {TABS.map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => go(t.id)}
               className={clsx(
                 "px-3 py-2 text-sm font-medium transition",
                 tab === t.id
@@ -64,14 +84,14 @@ export default function Dashboard() {
           ))}
         </nav>
 
-        {tab === "market" && <MarketTab />}
-        {tab === "chart" && <AnalysisPanel picked={picked} />}
-        {tab === "indicators" && <IndicatorsPanel picked={picked} />}
-        {tab === "news" && <NewsTab picked={picked} />}
-        {tab === "fund" && <FundamentalTab picked={picked} />}
-        {tab === "portfolio" && <PortfolioTab />}
-        {tab === "asa" && <AsaTab />}
-        {tab === "backtest" && <BacktestTab />}
+        {/* keep-alive: 연 탭은 유지, 비활성 탭은 hidden 으로 숨김(상태 보존) */}
+        {TABS.map((t) =>
+          opened.has(t.id) ? (
+            <div key={t.id} hidden={tab !== t.id}>
+              {panels[t.id]}
+            </div>
+          ) : null
+        )}
       </main>
     </div>
   );
