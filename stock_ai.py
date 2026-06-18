@@ -531,12 +531,17 @@ def _fdr_ohlc(ticker: str, period: str) -> pd.DataFrame:
 
 def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     """주식 데이터 로드 및 기술적 지표 계산. 지표 계산은 _add_indicators()에 위임."""
-    data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
-    if data.empty or len(data) < 20:
-        # yfinance 차단/빈 데이터(클라우드 IP 등) → FinanceDataReader 폴백
+    try:
+        data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+    except Exception:
+        # yfinance 레이트리밋(YFRateLimitError)·차단 등은 예외를 raise 하므로
+        # 빈 DataFrame 으로 치환해 아래 FDR 폴백을 타게 한다.
+        data = pd.DataFrame()
+    if data is None or data.empty or len(data) < 20:
+        # yfinance 차단/레이트리밋/빈 데이터(클라우드 IP 등) → FinanceDataReader 폴백
         data = _fdr_ohlc(ticker, period)
-    if data.empty or len(data) < 20:
-        return data
+    if data is None or data.empty or len(data) < 20:
+        return data if data is not None else pd.DataFrame()
     data = _flatten_columns(data)
     return _add_indicators(data)
 
