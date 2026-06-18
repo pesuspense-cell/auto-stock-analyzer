@@ -22,8 +22,9 @@ services:
     rootDir: web/backend
     buildCommand: pip install -r requirements.txt -r ../../requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    # /docs 는 Swagger 렌더라 무겁다 → 초경량 /health 로(헬스체크 타임아웃 방지)
-    healthCheckPath: /health
+    # healthCheckPath 의도적으로 미설정: 무료 0.1 CPU 에서 무거운 분석이 이벤트 루프를
+    # 점유하면 HTTP 헬스체크(5s)가 타임아웃 → Render 가 바쁜 인스턴스를 죽여 분석이 502 로
+    # 끊긴다. 헬스체크를 끄면 포트만 확인 → 분석이 느려도 완료된다(Starter 면 다시 켜도 됨).
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
