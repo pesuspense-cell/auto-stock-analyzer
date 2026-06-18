@@ -509,6 +509,8 @@ def _fdr_ohlc(ticker: str, period: str) -> pd.DataFrame:
     클라우드(Render 등) IP 에서 Yahoo/yfinance 가 빈 데이터를 반환할 때 사용한다.
     FDR 은 KRX/Naver/Stooq 등을 사용해 데이터센터 IP 에서도 동작한다.
     """
+    import logging
+    _log = logging.getLogger("stock_ai")
     try:
         import FinanceDataReader as fdr
         from datetime import datetime, timedelta
@@ -520,12 +522,17 @@ def _fdr_ohlc(ticker: str, period: str) -> pd.DataFrame:
         # 주말·공휴일 감안해 여유분 확보(거래일은 달력일의 ~70%)
         start = (datetime.now() - timedelta(days=int(cal_days * 1.6))).strftime("%Y-%m-%d")
         code = ticker.split(".")[0] if ticker.endswith((".KS", ".KQ")) else ticker
+        _log.warning("[OHLC] yfinance 폴백 → FDR 시도: %s (code=%s, start=%s)", ticker, code, start)
         df = fdr.DataReader(code, start)
         if df is None or df.empty:
+            _log.warning("[OHLC] FDR 빈 데이터: %s", ticker)
             return pd.DataFrame()
         cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
-        return df[cols].dropna(how="all")
-    except Exception:
+        out = df[cols].dropna(how="all")
+        _log.warning("[OHLC] FDR 수집 성공: %s — %d행", ticker, len(out))
+        return out
+    except Exception as e:
+        _log.warning("[OHLC] FDR 폴백 실패: %s — %s", ticker, e)
         return pd.DataFrame()
 
 
