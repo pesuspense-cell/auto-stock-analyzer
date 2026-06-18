@@ -22,7 +22,8 @@ services:
     rootDir: web/backend
     buildCommand: pip install -r requirements.txt -r ../../requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /docs
+    # /docs 는 Swagger 렌더라 무겁다 → 초경량 /health 로(헬스체크 타임아웃 방지)
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
