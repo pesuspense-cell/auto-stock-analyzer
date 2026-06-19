@@ -1,20 +1,24 @@
 """jobs_worker.py — Supabase `jobs` 큐를 처리하는 Python 백그라운드 워커.
 
-아키텍처(작업 #3):
+아키텍처:
   Next.js API → jobs(status='pending') 인서트 → [이 워커] 폴링·클레임 → 연산 →
   결과를 jobs.result 에 기록하고 status='completed'(또는 'error') 로 갱신.
 
+레인(lane) 분리 — 인터랙티브 지연 방지:
+  · batch       : backtest, asa (수 분 단위 장기 작업)
+  · interactive : analysis, news, fundamental, fundamental_ai (사용자 대기 → 빠른 응답 필요)
+  배치 작업이 워커를 점유해도 인터랙티브 작업이 뒤에 줄 서지 않도록, 레인별로 독립
+  스레드(+독립 DB 커넥션)가 자기 레인의 kind 만 클레임한다. interactive 레인은 동시
+  처리량을 위해 N개 스레드를 띄운다(JOBS_INTERACTIVE_CONCURRENCY, 기본 3).
+
 핵심:
-  · 원자적 클레임: `FOR UPDATE SKIP LOCKED` 로 여러 워커가 같은 작업을 중복 처리하지 않는다.
+  · 원자적 클레임: `FOR UPDATE SKIP LOCKED` + `kind = ANY(%s)` 로 레인별 중복 없이 클레임.
   · 신규 Supabase 포트폴리오(public.portfolios, uuid)를 직접 참조 → 레거시 DB 의존 제거.
-  · ASA = live_screener, 백테스트 = StockScreener+BacktestEngine (기존 로직 재사용).
+  · 무거운 분석/뉴스/펀더멘털 연산을 API(FastAPI)에서 이 워커로 이관 → API 는 경량 유지.
 
 실행:
   cd web/backend
   SUPABASE_DB_URL=postgresql://... python -m worker.jobs_worker
-
-Realtime 구독 대안: supabase-py 의 realtime 채널로 INSERT 이벤트를 받을 수도 있으나,
-장시간(수 분) 작업 특성상 폴링 + SKIP LOCKED 가 단순하고 견고하다.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ import json
 import logging
 import os
 import signal
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -29,6 +34,13 @@ import psycopg2
 import psycopg2.extras
 
 from app import bootstrap  # noqa: F401  (sys.path: stock_ai/live_screener/backtest)
+from app.core.config import settings
+from app.services import (
+    analysis_service,
+    fundamental_service,
+    news_service,
+    stock_lists,
+)
 from app.services.asa_service import build_positions, run_asa
 from app.services.backtest_service import run_backtest
 
@@ -39,6 +51,15 @@ logging.basicConfig(
 logger = logging.getLogger("jobs_worker")
 
 POLL_INTERVAL = float(os.getenv("JOBS_POLL_INTERVAL", "3"))
+# 인터랙티브 동시 처리 스레드 수. 분석/뉴스 작업은 대부분 네트워크(yfinance·LLM) 대기라
+# 스레드 동시성이 지연을 실질적으로 줄인다. 다만 동시 pandas 연산은 메모리를 먹으므로
+# Render starter(512MB)에선 2가 안전. 메모리 여유가 있으면 환경변수로 올린다.
+INTERACTIVE_CONCURRENCY = max(1, int(os.getenv("JOBS_INTERACTIVE_CONCURRENCY", "2")))
+
+# 레인 정의 — kind → 레인. 배치는 1스레드, 인터랙티브는 N스레드.
+BATCH_KINDS = ("backtest", "asa")
+INTERACTIVE_KINDS = ("analysis", "news", "fundamental", "fundamental_ai")
+
 _running = True
 
 
@@ -83,6 +104,10 @@ def _load_portfolio(cur, user_id) -> list[dict]:
     ]
 
 
+def _sname(ticker: str) -> str:
+    return stock_lists.ticker_name_map().get(ticker, ticker)
+
+
 def _process(conn, job: dict) -> dict:
     """job 종류별 연산 수행 → result dict 반환."""
     kind = job["kind"]
@@ -94,18 +119,49 @@ def _process(conn, job: dict) -> dict:
         cash = float(params.get("cash", 1_000_000))
         logger.info("ASA 실행 — 보유 %d종목, 예치금 %s", len(items), f"{cash:,.0f}")
         positions = build_positions(items)
-        output = run_asa(cash, positions)
-        return {"output": output}
+        return {"output": run_asa(cash, positions)}
 
     if kind == "backtest":
         logger.info("백테스트 실행 — %s", {k: params.get(k) for k in ("markets", "start_date", "end_date")})
         return run_backtest(params)
 
+    if kind == "analysis":
+        ticker = params["ticker"]
+        period = params.get("period", "6mo")
+        use_llm = bool(params.get("useLlm", False))
+        logger.info("분석 실행 — %s (period=%s, llm=%s)", ticker, period, use_llm)
+        return analysis_service.analyze(
+            ticker, period, use_llm,
+            settings.gemini_api_key, settings.groq_api_key, _sname(ticker),
+        )
+
+    if kind == "news":
+        ticker = params["ticker"]
+        cname = stock_lists.ticker_name_map().get(ticker, "")
+        logger.info("뉴스 실행 — %s", ticker)
+        data = news_service.news(ticker, settings.gemini_api_key, settings.groq_api_key, cname)
+        if not data.get("etf_meta"):
+            data["etf_meta"] = None
+        return data
+
+    if kind == "fundamental":
+        ticker = params["ticker"]
+        logger.info("펀더멘털 실행 — %s", ticker)
+        return fundamental_service.fundamental(ticker)
+
+    if kind == "fundamental_ai":
+        ticker = params["ticker"]
+        use_llm = bool(params.get("useLlm", True))
+        logger.info("AI 재무리포트 실행 — %s (llm=%s)", ticker, use_llm)
+        return fundamental_service.ai_report(
+            ticker, settings.gemini_api_key, settings.groq_api_key, use_llm, _sname(ticker),
+        )
+
     raise ValueError(f"알 수 없는 작업 종류: {kind}")
 
 
-def _claim_one(conn) -> dict | None:
-    """pending 작업 1건을 원자적으로 클레임(→processing)하고 반환."""
+def _claim_one(conn, kinds: tuple[str, ...]) -> dict | None:
+    """주어진 레인(kinds)의 pending 작업 1건을 원자적으로 클레임(→processing)."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -113,13 +169,14 @@ def _claim_one(conn) -> dict | None:
                SET status = 'processing', updated_at = now()
              WHERE id = (
                  SELECT id FROM public.jobs
-                  WHERE status = 'pending'
+                  WHERE status = 'pending' AND kind = ANY(%s)
                   ORDER BY created_at
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
              )
             RETURNING id, user_id, kind, params
-            """
+            """,
+            (list(kinds),),
         )
         row = cur.fetchone()
     conn.commit()
@@ -141,28 +198,19 @@ def _finish(conn, job_id, *, result: dict | None = None, error: str | None = Non
     conn.commit()
 
 
-# ── 메인 루프 ─────────────────────────────────────────────────────────────────
+# ── 레인 워커 루프 ────────────────────────────────────────────────────────────
 
-def _stop(*_):
-    global _running
-    _running = False
-    logger.info("종료 신호 수신 — 현재 작업 완료 후 정지합니다.")
-
-
-def main() -> None:
-    signal.signal(signal.SIGINT, _stop)
-    signal.signal(signal.SIGTERM, _stop)
-
+def _lane_loop(lane: str, kinds: tuple[str, ...]) -> None:
+    """한 스레드 = 한 DB 커넥션 = 한 레인. 자기 레인 작업만 클레임·처리한다."""
     conn = psycopg2.connect(dsn=_db_url(), connect_timeout=10)
     conn.autocommit = False
-    logger.info("워커 시작 — jobs 큐 폴링 (interval=%.1fs)", POLL_INTERVAL)
-
+    logger.info("[%s] 레인 워커 시작 — kinds=%s", lane, kinds)
     try:
         while _running:
             try:
-                job = _claim_one(conn)
+                job = _claim_one(conn, kinds)
             except psycopg2.OperationalError as e:
-                logger.warning("DB 연결 오류 — 재연결: %s", e)
+                logger.warning("[%s] DB 연결 오류 — 재연결: %s", lane, e)
                 try:
                     conn.close()
                 except Exception:
@@ -177,25 +225,65 @@ def main() -> None:
                 continue
 
             jid = job["id"]
-            logger.info("작업 클레임: %s (%s)", jid, job["kind"])
+            logger.info("[%s] 작업 클레임: %s (%s)", lane, jid, job["kind"])
             t0 = time.time()
             try:
                 result = _process(conn, job)
                 _finish(conn, jid, result=result)
-                logger.info("✅ 완료: %s (%.1fs)", jid, time.time() - t0)
+                logger.info("[%s] ✅ 완료: %s (%.1fs)", lane, jid, time.time() - t0)
             except Exception as e:
                 conn.rollback()
-                logger.exception("❌ 실패: %s", jid)
+                logger.exception("[%s] ❌ 실패: %s", lane, jid)
                 try:
                     _finish(conn, jid, error=str(e))
                 except Exception:
-                    logger.exception("실패 상태 기록조차 실패: %s", jid)
+                    logger.exception("[%s] 실패 상태 기록조차 실패: %s", lane, jid)
     finally:
         try:
             conn.close()
         except Exception:
             pass
-        logger.info("워커 정지 완료.")
+        logger.info("[%s] 레인 워커 정지.", lane)
+
+
+# ── 메인 ──────────────────────────────────────────────────────────────────────
+
+def _stop(*_):
+    global _running
+    _running = False
+    logger.info("종료 신호 수신 — 현재 작업 완료 후 정지합니다.")
+
+
+def main() -> None:
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+
+    threads: list[threading.Thread] = []
+    # batch 레인 1스레드
+    threads.append(threading.Thread(target=_lane_loop, args=("batch", BATCH_KINDS), daemon=True))
+    # interactive 레인 N스레드
+    for i in range(INTERACTIVE_CONCURRENCY):
+        threads.append(
+            threading.Thread(target=_lane_loop, args=(f"interactive-{i + 1}", INTERACTIVE_KINDS), daemon=True)
+        )
+
+    logger.info(
+        "워커 시작 — batch 1 + interactive %d 스레드 (poll=%.1fs)",
+        INTERACTIVE_CONCURRENCY, POLL_INTERVAL,
+    )
+    for t in threads:
+        t.start()
+
+    # 메인 스레드는 종료 신호를 기다린다(시그널 수신 위해 살아있어야 함).
+    try:
+        while _running:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        _stop()
+
+    for t in threads:
+        t.join(timeout=30)
+    logger.info("워커 정지 완료.")
 
 
 if __name__ == "__main__":

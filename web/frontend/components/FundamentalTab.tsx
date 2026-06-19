@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import useSWR from "swr";
-import { api, fetcher, ApiError } from "@/lib/api";
+import { useEffect } from "react";
+import { useJob } from "@/hooks/useJob";
 import { fmtNum, signClass } from "@/lib/format";
 import type { StockHit } from "@/lib/api-types";
 
@@ -41,15 +40,18 @@ const METRICS: [string, string, (v: any) => string][] = [
   ["배당수익률", "dividend_yield", (v) => (v != null ? `${(Number(v) * 100).toFixed(2)}%` : "—")],
 ];
 
-/** 펀더멘털 & 기관 탭. */
+/** 펀더멘털 & 기관 탭 — POST /fundamental/run 으로 jobs 큐 적재 후 폴링(워커 interactive 레인). */
 export function FundamentalTab({ picked }: { picked: StockHit | null }) {
-  const { data, isLoading } = useSWR<FundamentalResponse>(
-    picked ? `/fundamental/${encodeURIComponent(picked.ticker)}` : null,
-    fetcher
-  );
+  const { result: data, busy, status, error, enqueue, reset } = useJob<FundamentalResponse>();
+
+  useEffect(() => {
+    if (picked) enqueue("/api/v1/fundamental/run", { ticker: picked.ticker });
+    else reset();
+  }, [picked?.ticker, enqueue, reset]);
 
   if (!picked) return <Placeholder>종목을 선택하면 펀더멘털 분석이 표시됩니다.</Placeholder>;
-  if (isLoading) return <Placeholder>🏛️ 재무·수급 데이터 수집 중…</Placeholder>;
+  if (busy) return <Placeholder>{status === "pending" ? "🏛️ 펀더멘털 작업 대기 중…" : "🏛️ 재무·수급 데이터 수집 중…"}</Placeholder>;
+  if (error) return <Placeholder>데이터를 불러오지 못했습니다. ({error})</Placeholder>;
   if (!data) return <Placeholder>데이터를 불러오지 못했습니다.</Placeholder>;
 
   const fsd = data.fund_score_data;
@@ -149,26 +151,19 @@ function InvestorCard({ investors }: { investors: Record<string, any> }) {
 }
 
 function AiReportCard({ ticker }: { ticker: string }) {
-  const [data, setData] = useState<AiReport | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { result: data, busy, error, enqueue, reset } = useJob<AiReport>();
 
-  async function run() {
-    setBusy(true);
-    try {
-      const res = await api.post<AiReport>(`/fundamental/${encodeURIComponent(ticker)}/ai-report`);
-      setData(res);
-    } catch (e) {
-      setData({
-        ok: false, report: "", provider: "",
-        error: e instanceof ApiError ? e.message : "리포트 생성 실패",
-        quick_assessment: { score10: 5, verdict: "중립", reasons: [], summary: "", has_fund: false },
-      });
-    } finally {
-      setBusy(false);
-    }
+  // 종목 변경 시 이전 리포트/폴링을 비운다.
+  useEffect(() => {
+    reset();
+  }, [ticker, reset]);
+
+  function run() {
+    enqueue("/api/v1/fundamental/ai-report", { ticker, use_llm: true });
   }
 
   const q = data?.quick_assessment;
+  const errMsg = error ?? data?.error;
   const vColor =
     q?.verdict === "매수" ? "text-gain" : q?.verdict === "매도" ? "text-loss" : "text-ink-2";
 
@@ -200,7 +195,7 @@ function AiReportCard({ ticker }: { ticker: string }) {
         {busy ? "리포트 생성 중…" : data ? "리포트 다시 생성" : "AI 리포트 생성"}
       </button>
 
-      {data?.error && <p className="mt-3 text-[0.82rem] text-loss">{data.error}</p>}
+      {errMsg && <p className="mt-3 text-[0.82rem] text-loss">{errMsg}</p>}
       {data?.report && (
         <article className="prose-sm mt-4 max-h-[60vh] overflow-auto whitespace-pre-wrap text-[0.82rem] leading-relaxed text-term-ink">
           {data.report}

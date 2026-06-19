@@ -102,8 +102,14 @@ export interface OkResponse {
   error?: string;
 }
 
-// ── 비동기 Job 큐 (ASA / 백테스트) ──────────────────────────────────
-export type JobKind = "asa" | "backtest";
+// ── 비동기 Job 큐 (ASA / 백테스트 / 분석·뉴스·펀더멘털) ──────────────
+export type JobKind =
+  | "asa"
+  | "backtest"
+  | "analysis"
+  | "news"
+  | "fundamental"
+  | "fundamental_ai";
 export type JobStatus = "pending" | "processing" | "completed" | "error";
 
 export interface JobEnqueued {

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import useSWR from "swr";
-import { api, fetcher, ApiError } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { api, ApiError } from "@/lib/api";
+import { useJob } from "@/hooks/useJob";
 import { signClass } from "@/lib/format";
 import type { StockHit } from "@/lib/api-types";
 
@@ -28,17 +28,23 @@ interface Summary {
   investment_implication: string;
 }
 
-/** 뉴스 & 관련 종목 탭 — 기존 render_news_tab 의 2컬럼 레이아웃을 Tailwind 로 재구축. */
+/** 뉴스 & 관련 종목 탭 — POST /news/run 으로 jobs 큐 적재 후 폴링(워커 interactive 레인). */
 export function NewsTab({ picked }: { picked: StockHit | null }) {
-  const { data, isLoading } = useSWR<NewsResponse>(
-    picked ? `/news/${encodeURIComponent(picked.ticker)}` : null,
-    fetcher
-  );
+  const { result: data, busy, status, error, enqueue, reset } = useJob<NewsResponse>();
+
+  // 선택 종목이 바뀌면 즉시 새 뉴스 작업을 큐에 넣는다(탭 keep-alive 하에서도 동작).
+  useEffect(() => {
+    if (picked) enqueue("/api/v1/news/run", { ticker: picked.ticker });
+    else reset();
+  }, [picked?.ticker, enqueue, reset]);
 
   if (!picked) {
     return <Placeholder>종목을 선택하면 뉴스와 감성 분석이 표시됩니다.</Placeholder>;
   }
-  if (isLoading) return <Placeholder>📡 뉴스 & 데이터 수집 중…</Placeholder>;
+  if (busy) {
+    return <Placeholder>{status === "pending" ? "📡 뉴스 작업 대기 중…" : "📡 뉴스 & 데이터 수집 중…"}</Placeholder>;
+  }
+  if (error) return <Placeholder>뉴스를 불러오지 못했습니다. ({error})</Placeholder>;
   if (!data) return <Placeholder>뉴스를 불러오지 못했습니다.</Placeholder>;
 
   return (

@@ -12,16 +12,14 @@
 //   터진다. → POST 베이스 엔드포인트는 "정확 경로"를 :path* 보다 **먼저** 나열해
 //   슬래시 없이 프록시(same-origin 유지)한다.
 const FASTAPI_FALLBACK_PATHS = [
-  "/api/v1/analysis",
-  "/api/v1/analysis/:path*",
-  "/api/v1/news",
-  "/api/v1/news/:path*",
-  "/api/v1/fundamental",
-  "/api/v1/fundamental/:path*",
+  // 경량·즉답 엔드포인트만 FastAPI(경로 A)로 폴백한다.
+  "/api/v1/news/summarize",   // 단일 기사 AI 요약(빠른 1회 호출) — 큐 미적용
   "/api/v1/market/overview",
   "/api/v1/stocks/list",
-  // 주의: /asa, /backtest, /jobs 는 jobs 큐 기반 로컬 라우트(경로 B)로 이전 완료 → 폴백 제외.
-  //       Python 워커가 jobs 테이블을 처리한다(워커는 FastAPI HTTP 가 아님).
+  // 주의: /analysis, /news(메인), /fundamental, /fundamental/ai-report 는 jobs 큐(워커
+  //       interactive 레인)로 이전 완료 → 폴백 제외. 로컬 /…/run 라우트가 큐에 적재하고
+  //       /jobs/[id] 폴링으로 결과를 받는다.
+  //       /asa, /backtest 도 동일하게 jobs 큐 기반 로컬 라우트로 처리한다.
 ];
 
 const nextConfig = {

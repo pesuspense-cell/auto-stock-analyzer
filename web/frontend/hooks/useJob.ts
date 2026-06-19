@@ -35,6 +35,11 @@ export function useJob<R = unknown>(pollMs = 2500) {
     }, pollMs);
   }, [pollMs]);
 
+  const reset = useCallback(() => {
+    stop();
+    setStatus("idle"); setResult(null); setError(null); setJobId(null);
+  }, []);
+
   const enqueue = useCallback(async (endpoint: string, body: unknown) => {
     stop();
     setStatus("pending"); setResult(null); setError(null); setJobId(null);
@@ -58,5 +63,5 @@ export function useJob<R = unknown>(pollMs = 2500) {
   }, [poll]);
 
   const busy = status === "pending" || status === "processing";
-  return { status, result, error, jobId, busy, enqueue };
+  return { status, result, error, jobId, busy, enqueue, reset };
 }
