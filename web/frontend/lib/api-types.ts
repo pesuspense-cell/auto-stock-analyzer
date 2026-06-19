@@ -21,6 +21,29 @@ export interface RatesResponse {
   rates: RateItem[];
 }
 
+// ── 섹터 ETF 등락 비교 (시장 현황) ─────────────────────────────────
+export interface EtfItem {
+  ticker: string;
+  name: string;
+  country: "KR" | "US";
+  tag: string;        // 테마 라벨 (이모지 포함)
+  price: number;
+  changePct: number;
+  isIndex: boolean;   // 지수형 ETF(정렬 우선)
+}
+export interface EtfsSummary {
+  up: number;
+  down: number;
+  avg: number;
+  krAvg: number;
+  usAvg: number;
+}
+export interface EtfsResponse {
+  etfs: EtfItem[];
+  summary: EtfsSummary;
+  asOf: string;       // ISO timestamp
+}
+
 export interface StockHit {
   ticker: string;
   name: string;
@@ -117,11 +140,33 @@ export interface BacktestJobResult {
 // ── 기술지표 (TS 포팅) ──────────────────────────────────────────────
 import type { IndicatorSnapshot, SignalResult } from "@/lib/indicators/signals";
 
+/** 가격 차트용 캔들 + 이동평균 오버레이 (최근 N봉). */
+export interface ChartCandle {
+  time: string;   // YYYY-MM-DD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+export interface ChartLinePoint {
+  time: string;
+  value: number;
+}
+export interface ChartSeries {
+  candles: ChartCandle[];
+  ema20: ChartLinePoint[];
+  ema50: ChartLinePoint[];
+  ema200: ChartLinePoint[];
+  currency: string | null;
+}
+
 export interface IndicatorsResponse {
   ticker: string;
   asOf: string;          // 최신 봉 날짜 (YYYY-MM-DD)
   indicators: IndicatorSnapshot;
   signal: SignalResult;
+  chart?: ChartSeries;   // 차트 분석 탭에서 렌더 (구버전 캐시엔 없을 수 있음)
   cached: boolean;
 }
 export type { IndicatorSnapshot, SignalResult };

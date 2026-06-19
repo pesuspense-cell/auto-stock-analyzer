@@ -45,6 +45,40 @@ export async function fetchQuote(ticker: string): Promise<RawQuote | null> {
   }
 }
 
+/**
+ * 일간 등락률 — 마지막 두 일봉 종가로 (curr-prev)/prev 계산.
+ * fetchQuote 의 changePct 는 meta.chartPreviousClose(범위 직전 종가) 기반이라
+ * range=5d 에선 "전일 대비"가 아닌 수일치 변동이 된다. ETF 등락 비교표처럼
+ * 정확한 전일 대비가 필요한 곳은 이 함수를 쓴다.
+ */
+export async function fetchDailyChange(
+  ticker: string
+): Promise<{ price: number; changePct: number; currency: string | null } | null> {
+  try {
+    const res = await fetch(`${CHART}/${encodeURIComponent(ticker)}?range=5d&interval=1d`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const result = json?.chart?.result?.[0];
+    const closeRaw: (number | null)[] = result?.indicators?.quote?.[0]?.close;
+    if (!Array.isArray(closeRaw)) return null;
+    const closes = closeRaw.filter((c): c is number => c != null && !Number.isNaN(c));
+    if (closes.length < 2) return null;
+    const prev = closes[closes.length - 2];
+    const curr = closes[closes.length - 1];
+    if (!prev) return null;
+    return {
+      price: curr,
+      changePct: Math.round(((curr - prev) / prev) * 10000) / 100,
+      currency: result?.meta?.currency ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 환율 — 동일 차트 엔드포인트 (예: "USDKRW=X"). */
 export async function fetchRate(symbol: string): Promise<{ rate: number; changePct: number | null } | null> {
   const q = await fetchQuote(symbol);

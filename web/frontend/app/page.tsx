@@ -4,8 +4,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { StockSearch } from "@/components/StockSearch";
 import { MarketTab } from "@/components/MarketTab";
-import { AnalysisPanel } from "@/components/AnalysisPanel";
-import { IndicatorsPanel } from "@/components/IndicatorsPanel";
+import { ChartAnalysisTab } from "@/components/ChartAnalysisTab";
 import { NewsTab } from "@/components/NewsTab";
 import { FundamentalTab } from "@/components/FundamentalTab";
 import { AsaTab } from "@/components/AsaTab";
@@ -17,7 +16,6 @@ import clsx from "clsx";
 const TABS = [
   { id: "market", label: "🌐 시장 현황" },
   { id: "chart", label: "📊 차트 분석" },
-  { id: "indicators", label: "📐 기술지표" },
   { id: "news", label: "📰 뉴스" },
   { id: "fund", label: "🏛️ 펀더멘털" },
   { id: "portfolio", label: "💼 포트폴리오" },
@@ -40,8 +38,7 @@ export default function Dashboard() {
 
   const panels: Record<TabId, ReactNode> = {
     market: <MarketTab />,
-    chart: <AnalysisPanel picked={picked} />,
-    indicators: <IndicatorsPanel picked={picked} />,
+    chart: <ChartAnalysisTab picked={picked} />,
     news: <NewsTab picked={picked} />,
     fund: <FundamentalTab picked={picked} />,
     portfolio: <PortfolioTab />,

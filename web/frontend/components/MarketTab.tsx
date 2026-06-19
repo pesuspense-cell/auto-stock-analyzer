@@ -5,6 +5,7 @@ import { fetcher } from "@/lib/api";
 import { fmtNum, fmtPct, signClass, priceLabel } from "@/lib/format";
 import type { MarketOverview, MoverItem } from "@/lib/types";
 import type { RatesResponse, RateItem } from "@/lib/api-types";
+import { SectorEtfTable } from "./SectorEtfTable";
 
 /** 시장 현황 탭 — 5분 간격 자동 부분 갱신 (Streamlit 전체 rerun 제거). */
 export function MarketTab() {
@@ -17,10 +18,15 @@ export function MarketTab() {
   });
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <MoverCard title="🔺 상승 상위" items={overview?.gainers} />
-      <MoverCard title="🔻 하락 상위" items={overview?.losers} />
-      <RatesCard rates={ratesResp?.rates} />
+    <div className="space-y-4">
+      {/* 한국/미국 주요 ETF 등락률 비교 */}
+      <SectorEtfTable />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <MoverCard title="🔺 상승 상위" items={overview?.gainers} />
+        <MoverCard title="🔻 하락 상위" items={overview?.losers} />
+        <RatesCard rates={ratesResp?.rates} />
+      </div>
     </div>
   );
 }
