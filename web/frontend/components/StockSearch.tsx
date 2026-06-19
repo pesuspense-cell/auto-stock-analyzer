@@ -25,20 +25,33 @@ export function StockSearch({ onPick }: { onPick: (hit: StockHit) => void }) {
       />
       {data && data.results.length > 0 && q.trim() && (
         <ul className="absolute z-10 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-hairline bg-surface shadow-elevated">
-          {data.results.map((h) => (
-            <li key={h.ticker}>
-              <button
-                onClick={() => {
-                  onPick(h);
-                  setQ("");
-                }}
-                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-elevated"
-              >
-                <span className="text-ink">{h.name}</span>
-                <span className="tnum text-xs text-ink-2">{h.ticker}</span>
-              </button>
-            </li>
-          ))}
+          {data.results.map((h) => {
+            // 한글명 우선 표시, 영문명이 다르면 보조로 함께 노출
+            const primary = h.nameKr || h.name;
+            const secondary = h.nameKr && h.name && h.name !== h.nameKr ? h.name : null;
+            return (
+              <li key={h.ticker}>
+                <button
+                  onClick={() => {
+                    onPick(h);
+                    setQ("");
+                  }}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-elevated"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-ink">{primary}</span>
+                    {secondary && <span className="truncate text-xs text-ink-3">{secondary}</span>}
+                    {h.isEtf && (
+                      <span className="shrink-0 rounded bg-accent/10 px-1 text-[0.6rem] font-semibold text-accent">
+                        ETF
+                      </span>
+                    )}
+                  </span>
+                  <span className="tnum shrink-0 text-xs text-ink-2">{h.ticker}</span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

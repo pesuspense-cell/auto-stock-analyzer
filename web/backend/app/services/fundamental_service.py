@@ -4,6 +4,7 @@ render_fund_tab 의 데이터 수집부와 src/ai_report.generate_financial_repo
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 
 import pandas as pd
@@ -53,32 +54,46 @@ def insiders(ticker: str) -> list[dict]:
 
 
 def fundamental(ticker: str) -> dict:
-    """펀더멘털 종합 — 일반주/ETF 분기."""
+    """펀더멘털 종합 — 일반주/ETF 분기.
+
+    독립적인 외부 호출(시세·재무·수급·내부자)을 ThreadPoolExecutor 로 병렬 수행해
+    첫 조회 지연을 줄인다(각 호출은 외부 I/O 대기라 GIL 영향이 작다).
+    """
     is_etf = stock_lists.is_etf(ticker)
-    last = analysis_service.realtime_price(ticker).get("price", 0.0)
+    is_kr = ticker.endswith((".KS", ".KQ"))
 
-    if is_etf:
-        etf_data = get_etf_fundamental_data(ticker) or {}
-        etf_score = calculate_etf_score(etf_data) or {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        f_price = pool.submit(lambda: analysis_service.realtime_price(ticker).get("price", 0.0))
+        f_inv = pool.submit(investors, ticker)
+        f_hist = pool.submit(investor_history, ticker)
+
+        if is_etf:
+            f_etf = pool.submit(get_etf_fundamental_data, ticker)
+            etf_data = f_etf.result() or {}
+            etf_score = calculate_etf_score(etf_data) or {}
+            return {
+                "ticker": ticker, "is_etf": True,
+                "fund_info": {}, "fund_score_data": {},
+                "etf_data": etf_data, "etf_score": etf_score,
+                "investors": f_inv.result(),
+                "investor_history": f_hist.result(),
+                "insiders": [],
+            }
+
+        f_fi = pool.submit(analysis_service.fundamental, ticker)
+        f_ins = pool.submit(insiders, ticker) if not is_kr else None
+
+        last = f_price.result()
+        fi = f_fi.result()
+        fsd = calculate_fundamental_score(fi, last) if fi else {}
         return {
-            "ticker": ticker, "is_etf": True,
-            "fund_info": {}, "fund_score_data": {},
-            "etf_data": etf_data, "etf_score": etf_score,
-            "investors": investors(ticker),
-            "investor_history": investor_history(ticker),
-            "insiders": [],
+            "ticker": ticker, "is_etf": False,
+            "fund_info": fi or {}, "fund_score_data": fsd or {},
+            "etf_data": {}, "etf_score": {},
+            "investors": f_inv.result(),
+            "investor_history": f_hist.result(),
+            "insiders": f_ins.result() if f_ins else [],
         }
-
-    fi = analysis_service.fundamental(ticker)
-    fsd = calculate_fundamental_score(fi, last) if fi else {}
-    return {
-        "ticker": ticker, "is_etf": False,
-        "fund_info": fi or {}, "fund_score_data": fsd or {},
-        "etf_data": {}, "etf_score": {},
-        "investors": investors(ticker),
-        "investor_history": investor_history(ticker),
-        "insiders": insiders(ticker) if not ticker.endswith((".KS", ".KQ")) else [],
-    }
 
 
 def ai_report(ticker: str, gemini: str, groq: str, use_llm: bool, sname: str = "") -> dict:

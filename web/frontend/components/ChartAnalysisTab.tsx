@@ -44,7 +44,7 @@ export function ChartAnalysisTab({ picked }: { picked: StockHit | null }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-bold text-ink">
-            {picked.name} <span className="tnum text-sm text-ink-2">{picked.ticker}</span>
+            {picked.nameKr || picked.name} <span className="tnum text-sm text-ink-2">{picked.ticker}</span>
           </h2>
           {data && <p className="text-xs text-ink-2">기준일 {data.asOf} · {data.cached ? "캐시" : "실시간 계산"}</p>}
         </div>

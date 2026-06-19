@@ -28,7 +28,7 @@ export function AnalysisPanel({ picked }: { picked: StockHit | null }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm text-ink-2">
-          선택: <b className="text-ink">{picked ? `${picked.name} (${picked.ticker})` : "없음"}</b>
+          선택: <b className="text-ink">{picked ? `${picked.nameKr || picked.name} (${picked.ticker})` : "없음"}</b>
         </span>
         <label className="flex items-center gap-1 text-sm text-ink-2">
           <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
