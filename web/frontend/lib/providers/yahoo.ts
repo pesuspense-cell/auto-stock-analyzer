@@ -10,38 +10,59 @@ export interface RawQuote {
   currency: string | null;
 }
 
-const CHART = "https://query1.finance.yahoo.com/v8/finance/chart";
+// query1/query2 두 호스트 + 재시도로 레이트리밋(429)·일시 차단에 견디게 한다.
+// 서버리스(Vercel/Render) IP 가 query1 에서 429/401 을 받으면 query2 로 폴백한다.
+const CHART_HOSTS = [
+  "https://query1.finance.yahoo.com/v8/finance/chart",
+  "https://query2.finance.yahoo.com/v8/finance/chart",
+];
+const CHART_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+  Accept: "application/json,text/plain,*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+};
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Yahoo chart JSON 견고 호출 — 2호스트 × 2시도. 429/5xx 는 재시도, 404 는 즉시 포기.
+ * 모든 시도 실패 시 null.
+ */
+async function chartJson(ticker: string, query: string): Promise<unknown | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const host of CHART_HOSTS) {
+      try {
+        const res = await fetch(`${host}/${encodeURIComponent(ticker)}?${query}`, {
+          headers: CHART_HEADERS,
+          cache: "no-store",
+        });
+        if (res.ok) return await res.json();
+        if (res.status === 404) return null; // 존재하지 않는 티커 — 재시도 무의미
+      } catch {
+        /* 다음 호스트/시도 */
+      }
+    }
+    if (attempt === 0) await sleep(350); // 429 백오프
+  }
+  return null;
+}
 
 /**
  * 종목 표시명 — chart meta 의 longName/shortName. (예: 069500.KS → "KODEX 200")
  * stocks 테이블·별칭사전에 없는 ETF/종목명을 동적으로 해소할 때 쓴다.
  */
 export async function fetchName(ticker: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${CHART}/${encodeURIComponent(ticker)}?range=1d&interval=1d`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const meta = (await res.json())?.chart?.result?.[0]?.meta;
-    const name = meta?.longName || meta?.shortName;
-    return typeof name === "string" && name.trim() ? name.trim() : null;
-  } catch {
-    return null;
-  }
+  const json = await chartJson(ticker, "range=1d&interval=1d");
+  const meta = (json as any)?.chart?.result?.[0]?.meta;
+  const name = meta?.longName || meta?.shortName;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
 }
 
 /** 단일 종목 시세 — meta.regularMarketPrice / chartPreviousClose 사용. */
 export async function fetchQuote(ticker: string): Promise<RawQuote | null> {
   try {
-    const res = await fetch(`${CHART}/${encodeURIComponent(ticker)}?range=5d&interval=1d`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      // Next.js 서버 fetch 캐시는 우리가 Supabase로 직접 제어하므로 비활성화
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const meta = json?.chart?.result?.[0]?.meta;
+    const json = await chartJson(ticker, "range=5d&interval=1d");
+    const meta = (json as any)?.chart?.result?.[0]?.meta;
     if (!meta) return null;
 
     const price = Number(meta.regularMarketPrice);
@@ -74,13 +95,8 @@ export async function fetchDailyChange(
   ticker: string
 ): Promise<{ price: number; changePct: number; currency: string | null } | null> {
   try {
-    const res = await fetch(`${CHART}/${encodeURIComponent(ticker)}?range=5d&interval=1d`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const result = json?.chart?.result?.[0];
+    const json = await chartJson(ticker, "range=5d&interval=1d");
+    const result = (json as any)?.chart?.result?.[0];
     const closeRaw: (number | null)[] = result?.indicators?.quote?.[0]?.close;
     if (!Array.isArray(closeRaw)) return null;
     const closes = closeRaw.filter((c): c is number => c != null && !Number.isNaN(c));
@@ -120,13 +136,8 @@ export interface RawOhlc {
  */
 export async function fetchOhlc(ticker: string, range = "2y", interval = "1d"): Promise<RawOhlc | null> {
   try {
-    const res = await fetch(`${CHART}/${encodeURIComponent(ticker)}?range=${range}&interval=${interval}`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const result = json?.chart?.result?.[0];
+    const json = await chartJson(ticker, `range=${range}&interval=${interval}`);
+    const result = (json as any)?.chart?.result?.[0];
     const ts: number[] = result?.timestamp;
     const q = result?.indicators?.quote?.[0];
     if (!ts || !q) return null;

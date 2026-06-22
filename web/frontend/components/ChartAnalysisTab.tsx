@@ -59,8 +59,8 @@ export function ChartAnalysisTab({ picked }: { picked: StockHit | null }) {
       {/* ① 가격 차트 */}
       {data?.chart && data.chart.candles.length > 0 && <PriceChart chart={data.chart} />}
 
-      {/* ② 종합 기술 신호 */}
-      {sig && <SignalGauge sig={sig} />}
+      {/* ② AI 심층 분석 — 종목 선택 시 항상 자동 가동(주가·기술·뉴스·펀더멘털 결합) */}
+      <AnalysisPanel picked={picked} />
 
       {/* ③ 핵심 지표 (매매 판단에 직접 쓰는 지표) */}
       {ind && <CoreIndicators ind={ind} />}
@@ -69,20 +69,12 @@ export function ChartAnalysisTab({ picked }: { picked: StockHit | null }) {
       {ind && <SecondaryIndicators ind={ind} />}
       {sig && sig.reasons.length > 0 && (
         <details className="rounded-card border border-hairline bg-surface p-4 shadow-card">
-          <summary className="cursor-pointer text-sm font-semibold text-ink">🔎 신호 근거 ({sig.reasons.length})</summary>
+          <summary className="cursor-pointer text-sm font-semibold text-ink">🔎 기술 신호 근거 ({sig.reasons.length})</summary>
           <ul className="mt-2 space-y-1 text-[0.82rem] text-ink-2">
             {sig.reasons.map((r, i) => <li key={i}>• {r}</li>)}
           </ul>
         </details>
       )}
-
-      {/* ⑤ AI 심층 분석 — 버튼 트리거(뉴스 감성·펀더멘털 결합) */}
-      <details className="rounded-card border border-hairline bg-surface p-4 shadow-card">
-        <summary className="cursor-pointer text-sm font-semibold text-ink">🧠 AI 심층 분석 (뉴스 감성 · 펀더멘털 결합)</summary>
-        <div className="mt-3">
-          <AnalysisPanel picked={picked} />
-        </div>
-      </details>
     </div>
   );
 }
@@ -185,37 +177,6 @@ function SecondaryIndicators({ ind }: { ind: IndicatorSnapshot }) {
 }
 
 /* ── 공용 프리미티브 ───────────────────────────────────────────────── */
-function SignalGauge({ sig }: { sig: IndicatorsResponse["signal"] }) {
-  const pct = ((sig.score + 10) / 20) * 100;
-  const pos = sig.score >= 0;
-  return (
-    <section className="rounded-card border border-term-border bg-term-1 p-5 shadow-elevated">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">{sig.badge}</span>
-          <div>
-            <div className="text-lg font-bold text-term-ink">{sig.label}</div>
-            <div className="text-xs text-term-muted">12모듈 종합 점수</div>
-          </div>
-        </div>
-        <div className={`tnum text-3xl font-bold ${pos ? "text-gain" : "text-loss"}`}>
-          {sig.score >= 0 ? "+" : ""}{sig.score.toFixed(1)}
-        </div>
-      </div>
-      <div className="relative mt-4 h-2 w-full rounded-full bg-term-border">
-        <div className="absolute left-1/2 top-[-3px] h-[14px] w-px bg-term-muted/60" />
-        <div
-          className={`absolute top-0 h-2 rounded-full ${pos ? "bg-gain" : "bg-loss"}`}
-          style={pos ? { left: "50%", width: `${pct - 50}%` } : { left: `${pct}%`, width: `${50 - pct}%` }}
-        />
-      </div>
-      <div className="mt-1 flex justify-between text-[0.62rem] text-term-muted">
-        <span>강력 매도 -10</span><span>중립 0</span><span>+10 강력 매수</span>
-      </div>
-    </section>
-  );
-}
-
 function Metric({ label, value, tone = "", sub }: { label: string; value: string; tone?: string; sub?: string }) {
   return (
     <div className="rounded-lg border border-hairline bg-surface p-3 shadow-card">
