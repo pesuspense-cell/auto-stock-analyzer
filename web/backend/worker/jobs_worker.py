@@ -40,6 +40,7 @@ from app.services import (
     analysis_service,
     fundamental_service,
     news_service,
+    portfolio_service,
     stock_lists,
 )
 from app.services.asa_service import build_positions, run_asa
@@ -59,7 +60,7 @@ INTERACTIVE_CONCURRENCY = max(1, int(os.getenv("JOBS_INTERACTIVE_CONCURRENCY", "
 
 # 레인 정의 — kind → 레인. 배치는 1스레드, 인터랙티브는 N스레드.
 BATCH_KINDS = ("backtest", "asa")
-INTERACTIVE_KINDS = ("analysis", "news", "fundamental", "fundamental_ai")
+INTERACTIVE_KINDS = ("analysis", "news", "fundamental", "fundamental_ai", "portfolio_analysis")
 
 _running = True
 
@@ -187,6 +188,17 @@ def _process(conn, job: dict) -> dict:
         return fundamental_service.ai_report(
             ticker, settings.gemini_api_key, settings.groq_api_key, use_llm, _sname(ticker),
         )
+
+    if kind == "portfolio_analysis":
+        raw_items = params.get("items", []) or []
+        items = [
+            {"ticker": i["ticker"], "avg_price": float(i["avgPrice"]), "quantity": float(i["quantity"])}
+            for i in raw_items
+        ]
+        prices = {i["ticker"]: float(i["price"]) for i in raw_items if i.get("price") is not None}
+        name_map = {i["ticker"]: (i.get("name") or i["ticker"]) for i in raw_items}
+        logger.info("포트폴리오 분석 — %d종목", len(items))
+        return portfolio_service.analyze(items, prices, name_map)
 
     raise ValueError(f"알 수 없는 작업 종류: {kind}")
 

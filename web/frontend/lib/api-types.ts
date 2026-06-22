@@ -110,7 +110,54 @@ export type JobKind =
   | "analysis"
   | "news"
   | "fundamental"
-  | "fundamental_ai";
+  | "fundamental_ai"
+  | "portfolio_analysis";
+
+// ── 포트폴리오 분석 결과 (워커 portfolio_service.analyze) ────────────
+export interface PfRecommendation {
+  type: "reduce" | "hold" | "watch" | "add";
+  icon: string;
+  sector: string;
+  weight: number;
+  tickers: string;
+  message: string;
+}
+export interface PfProfitTake {
+  ticker: string;
+  name: string;
+  pnl_pct: number;
+  reason: string;
+}
+export interface PfMissingTop {
+  sector: string;
+  name: string;
+  score: number;
+  return_5d: number;
+}
+export interface PfSectorScore {
+  sector: string;
+  name: string;
+  score: number;
+  return_5d: number;
+  return_20d: number;
+  rank: "TOP" | "NORMAL" | "BOTTOM";
+}
+export interface PortfolioAnalysis {
+  empty: boolean;
+  total_value: number;
+  market_status: string;
+  kospi_above_ma?: boolean;
+  kosdaq_above_ma?: boolean;
+  unknown_tickers?: string[];
+  guide: {
+    hhi: number;
+    is_concentrated: boolean;
+    recommendations: PfRecommendation[];
+    missing_top: PfMissingTop[];
+    profit_take: PfProfitTake[];
+    sector_scores: PfSectorScore[];
+  };
+}
 export type JobStatus = "pending" | "processing" | "completed" | "error";
 
 export interface JobEnqueued<R = unknown> {

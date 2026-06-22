@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useJob } from "@/hooks/useJob";
 import type { AnalysisResponse } from "@/lib/types";
 import type { StockHit } from "@/lib/api-types";
-import { SignalCard } from "./SignalCard";
+import { SignalCard, ExpectedReturnCard } from "./SignalCard";
 
 /**
  * AI 심층 분석 — 종목 선택 시 자동 가동(POST /analysis/run → 워커 interactive 레인 → 폴링).
@@ -63,6 +63,7 @@ export function AnalysisPanel({ picked }: { picked: StockHit | null }) {
   return (
     <div className="space-y-2">
       <SignalCard a={result} />
+      <ExpectedReturnCard a={result} />
       <div className="flex items-center justify-end gap-3 px-1">
         <label className="flex items-center gap-1 text-xs text-ink-2">
           <input
