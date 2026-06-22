@@ -54,9 +54,19 @@ export function useJob<R = unknown>(pollMs = 2500) {
         const e = await res.json().catch(() => ({}));
         setError(e?.error ?? "큐 등록 실패"); setStatus("error"); return;
       }
-      const { jobId: id } = (await res.json()) as JobEnqueued;
-      setJobId(id);
-      poll(id);
+      const data = (await res.json()) as JobEnqueued<R>;
+      // 캐시 즉시응답: 폴링 없이 결과 즉시 반영
+      if (data.status === "completed" && data.result !== undefined) {
+        setJobId(data.jobId ?? null);
+        setResult(data.result ?? null);
+        setStatus("completed");
+        return;
+      }
+      if (!data.jobId) {
+        setError("작업을 시작하지 못했습니다."); setStatus("error"); return;
+      }
+      setJobId(data.jobId);
+      poll(data.jobId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "요청 실패"); setStatus("error");
     }

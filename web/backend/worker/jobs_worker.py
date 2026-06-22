@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import signal
 import threading
@@ -71,7 +72,7 @@ def _db_url() -> str:
 
 
 def _json_default(o):
-    """numpy/pandas 타입을 JSON 직렬화 가능한 형태로 변환."""
+    """numpy/pandas 타입을 JSON 직렬화 가능한 형태로 변환(잔여 폴백)."""
     try:
         import numpy as np
         if isinstance(o, (np.integer,)):
@@ -87,8 +88,38 @@ def _json_default(o):
     return str(o)
 
 
+def _json_safe(o):
+    """JSON/Postgres 안전 변환 — numpy 타입 정규화 + NaN/Infinity → null.
+
+    PostgreSQL jsonb 는 NaN/Infinity 토큰을 거부하므로(파이썬 json 은 기본 허용),
+    payload 를 재귀적으로 훑어 비유한(非有限) float 을 None 으로 바꾼다.
+    (뉴스 sector_performance 의 avg_chg=NaN 으로 인한 작업 실패 수정)
+    """
+    try:
+        import numpy as np
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.bool_):
+            return bool(o)
+        if isinstance(o, np.floating):
+            o = float(o)
+        elif isinstance(o, np.ndarray):
+            return [_json_safe(x) for x in o.tolist()]
+    except Exception:
+        pass
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {str(k): _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    if isinstance(o, datetime):
+        return o.isoformat()
+    return o
+
+
 def _as_json(payload: dict):
-    return psycopg2.extras.Json(payload, dumps=lambda x: json.dumps(x, default=_json_default))
+    return psycopg2.extras.Json(_json_safe(payload), dumps=lambda x: json.dumps(x, default=_json_default))
 
 
 # ── 작업 처리기 ───────────────────────────────────────────────────────────────
@@ -183,6 +214,35 @@ def _claim_one(conn, kinds: tuple[str, ...]) -> dict | None:
     return dict(row) if row else None
 
 
+# 지속 캐시 대상(kind → market_cache scope 접두). 재조회 즉시응답용.
+_CACHE_SCOPE = {"news": "news", "fundamental": "fundamental"}
+
+
+def _cache_result(conn, job: dict, result: dict) -> None:
+    """news/fundamental 결과를 market_cache 에 upsert → 다음 조회는 enqueue 단계에서 즉시응답."""
+    prefix = _CACHE_SCOPE.get(job["kind"])
+    if not prefix:
+        return
+    ticker = (job.get("params") or {}).get("ticker")
+    if not ticker:
+        return
+    scope = f"{prefix}:{str(ticker).upper()}"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO public.market_cache (scope, payload, fetched_at)
+                VALUES (%s, %s, now())
+                ON CONFLICT (scope) DO UPDATE SET payload = EXCLUDED.payload, fetched_at = now()
+                """,
+                (scope, _as_json(result)),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.warning("market_cache 저장 실패: %s", scope)
+
+
 def _finish(conn, job_id, *, result: dict | None = None, error: str | None = None) -> None:
     with conn.cursor() as cur:
         if error is not None:
@@ -229,6 +289,7 @@ def _lane_loop(lane: str, kinds: tuple[str, ...]) -> None:
             t0 = time.time()
             try:
                 result = _process(conn, job)
+                _cache_result(conn, job, result)
                 _finish(conn, jid, result=result)
                 logger.info("[%s] ✅ 완료: %s (%.1fs)", lane, jid, time.time() - t0)
             except Exception as e:

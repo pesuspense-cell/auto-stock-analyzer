@@ -90,6 +90,7 @@ export interface SellResponse {
 export interface TradeItem {
   id: string;
   ticker: string;
+  name: string | null;
   buyPrice: number;
   sellPrice: number;
   quantity: number;
@@ -112,9 +113,10 @@ export type JobKind =
   | "fundamental_ai";
 export type JobStatus = "pending" | "processing" | "completed" | "error";
 
-export interface JobEnqueued {
-  jobId: string;
+export interface JobEnqueued<R = unknown> {
+  jobId: string | null;     // 캐시 즉시응답 시 null
   status: JobStatus;
+  result?: R;               // status="completed" 이면 폴링 없이 즉시 사용
 }
 
 export interface JobView<R = unknown> {

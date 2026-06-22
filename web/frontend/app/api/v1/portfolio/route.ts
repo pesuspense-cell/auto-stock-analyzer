@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { requireUser, UnauthorizedError, unauthorized } from "@/lib/auth-route";
 import { getQuote } from "@/lib/cache";
+import { resolveNames } from "@/lib/resolve-names";
 import type {
   ApiError, OkResponse, PortfolioAddRequest, PortfolioItem,
 } from "@/lib/api-types";
@@ -24,14 +25,10 @@ export async function GET(): Promise<NextResponse<PortfolioItem[] | ApiError>> {
       .order("added_at", { ascending: false });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // 종목명(stocks) + 현재가(캐시) 보강
+    // 종목명(stocks + 별칭/ETF 사전) + 현재가(캐시) 보강
     const svc = createServiceClient();
     const tickers = (rows ?? []).map((r) => r.ticker);
-    const nameMap = new Map<string, string>();
-    if (tickers.length) {
-      const { data: names } = await svc.from("stocks").select("ticker,name").in("ticker", tickers);
-      (names ?? []).forEach((n) => nameMap.set(n.ticker, n.name));
-    }
+    const nameMap = await resolveNames(svc, tickers);
 
     const items: PortfolioItem[] = await Promise.all(
       (rows ?? []).map(async (r) => {

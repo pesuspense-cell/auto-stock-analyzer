@@ -71,7 +71,7 @@ function AddForm() {
               {picked.name} <span className="tnum text-ink-2">({picked.ticker})</span> · 변경
             </button>
           ) : (
-            <StockSearch onPick={(h: StockHit) => setPicked({ ticker: h.ticker, name: h.name })} />
+            <StockSearch onPick={(h: StockHit) => setPicked({ ticker: h.ticker, name: h.nameKr || h.name })} />
           )}
         </div>
         <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="평균단가"
@@ -158,7 +158,7 @@ function Trades() {
         <tbody>
           {data.map((t) => (
             <tr key={t.id} className="border-b border-hairline-md/40">
-              <td className="py-1.5 pr-4 text-ink">{t.ticker}</td>
+              <td className="py-1.5 pr-4 text-ink">{t.name ?? t.ticker} <span className="tnum text-xs text-ink-2">{t.ticker}</span></td>
               <td className="py-1.5 pr-4 text-right tnum text-ink-2">{fmtNum(t.buyPrice, 2)} → {fmtNum(t.sellPrice, 2)}</td>
               <td className="py-1.5 pr-4 text-right tnum text-ink">{t.quantity}</td>
               <td className={`py-1.5 pr-4 text-right tnum font-semibold ${signClass(t.netProfit)}`}>{t.netProfit >= 0 ? "+" : ""}{fmtNum(t.netProfit, 0)}</td>
