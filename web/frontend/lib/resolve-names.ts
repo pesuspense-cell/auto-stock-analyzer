@@ -5,11 +5,24 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ALIAS_BY_TICKER } from "@/lib/kr-aliases";
-import { fetchName } from "@/lib/providers/yahoo";
+import { fetchName as fetchYahooName } from "@/lib/providers/yahoo";
+import { fetchNaverName } from "@/lib/providers/naver";
 
 const NAME_TTL = 30 * 24 * 3600; // 30일 — 종목명은 거의 안 바뀜
+// 캐시 키 버전 — KR 한글명 해소(v2) 도입으로 과거 영문 캐시(v1)를 무효화.
+const NAME_VER = "v2";
 const isFresh = (fetchedAt: string, ttl: number) =>
   Date.now() - new Date(fetchedAt).getTime() < ttl * 1000;
+
+/** 표시명 동적 해소 — 국내(.KS/.KQ)는 네이버 한글명 우선, 그 외/실패 시 Yahoo. */
+async function fetchDisplayName(ticker: string): Promise<string | null> {
+  if (/\.K[SQ]$/i.test(ticker)) {
+    const code = ticker.replace(/\.K[SQ]$/i, "");
+    const kr = await fetchNaverName(code);
+    if (kr) return kr;
+  }
+  return fetchYahooName(ticker);
+}
 
 /**
  * 주어진 티커들의 표시명 Map.
@@ -47,7 +60,7 @@ export async function resolveNames(
   if (yahoo) {
     const missing = uniq.filter((t) => !map.has(t));
     if (missing.length > 0) {
-      const scopeOf = (t: string) => `name:${t.toUpperCase()}`;
+      const scopeOf = (t: string) => `name:${NAME_VER}:${t.toUpperCase()}`;
       // 3-1) name 캐시 조회
       const toFetch: string[] = [];
       try {
@@ -69,7 +82,7 @@ export async function resolveNames(
       // 3-2) Yahoo 병렬 조회 → 캐시 upsert
       if (toFetch.length > 0) {
         const fetched = await Promise.all(
-          toFetch.map(async (t) => ({ t, name: await fetchName(t) }))
+          toFetch.map(async (t) => ({ t, name: await fetchDisplayName(t) }))
         );
         const now = new Date().toISOString();
         const upserts: { scope: string; payload: { name: string }; fetched_at: string }[] = [];
