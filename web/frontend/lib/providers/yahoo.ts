@@ -12,6 +12,25 @@ export interface RawQuote {
 
 const CHART = "https://query1.finance.yahoo.com/v8/finance/chart";
 
+/**
+ * 종목 표시명 — chart meta 의 longName/shortName. (예: 069500.KS → "KODEX 200")
+ * stocks 테이블·별칭사전에 없는 ETF/종목명을 동적으로 해소할 때 쓴다.
+ */
+export async function fetchName(ticker: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${CHART}/${encodeURIComponent(ticker)}?range=1d&interval=1d`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const meta = (await res.json())?.chart?.result?.[0]?.meta;
+    const name = meta?.longName || meta?.shortName;
+    return typeof name === "string" && name.trim() ? name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 단일 종목 시세 — meta.regularMarketPrice / chartPreviousClose 사용. */
 export async function fetchQuote(ticker: string): Promise<RawQuote | null> {
   try {

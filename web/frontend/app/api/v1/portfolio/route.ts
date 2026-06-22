@@ -28,7 +28,7 @@ export async function GET(): Promise<NextResponse<PortfolioItem[] | ApiError>> {
     // 종목명(stocks + 별칭/ETF 사전) + 현재가(캐시) 보강
     const svc = createServiceClient();
     const tickers = (rows ?? []).map((r) => r.ticker);
-    const nameMap = await resolveNames(svc, tickers);
+    const nameMap = await resolveNames(svc, tickers, { yahoo: true });
 
     const items: PortfolioItem[] = await Promise.all(
       (rows ?? []).map(async (r) => {

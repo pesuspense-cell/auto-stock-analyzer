@@ -22,7 +22,7 @@ export async function GET(): Promise<NextResponse<TradeItem[] | ApiError>> {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     // 종목명(stocks + 별칭/ETF 사전) 보강
-    const nameMap = await resolveNames(createServiceClient(), (rows ?? []).map((r) => r.ticker));
+    const nameMap = await resolveNames(createServiceClient(), (rows ?? []).map((r) => r.ticker), { yahoo: true });
 
     const items: TradeItem[] = (rows ?? []).map((r) => ({
       id: r.id, ticker: r.ticker, name: nameMap.get(r.ticker) ?? null,
