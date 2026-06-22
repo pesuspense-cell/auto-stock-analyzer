@@ -6,7 +6,7 @@ import useSWR, { mutate } from "swr";
 import { AuthGate, UserMenu } from "@/components/AuthGate";
 import { useJob } from "@/hooks/useJob";
 import { fmtNum, signClass } from "@/lib/format";
-import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation } from "@/lib/api-types";
+import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation, PfHolding, PfOverall, PfActionLevel } from "@/lib/api-types";
 import { StockSearch } from "@/components/StockSearch";
 
 // 쿠키 세션 기반 동일 출처 fetch (Supabase Auth 쿠키 자동 포함)
@@ -144,7 +144,15 @@ function Holdings() {
   );
 }
 
-// 권고 타입별 라벨/색
+// 액션 위험도별 색
+const LEVEL: Record<PfActionLevel, { badge: string; cls: string; chip: string }> = {
+  danger: { badge: "bg-loss/20 text-loss", cls: "border-loss/40", chip: "text-loss" },
+  warn: { badge: "bg-amber-500/20 text-amber-300", cls: "border-amber-500/40", chip: "text-amber-300" },
+  good: { badge: "bg-gain/20 text-gain", cls: "border-gain/40", chip: "text-gain" },
+  neutral: { badge: "bg-black/30 text-term-muted", cls: "border-term-border", chip: "text-term-muted" },
+};
+
+// 섹터 권고 타입별 라벨/색
 const REC_META: Record<PfRecommendation["type"], { label: string; cls: string }> = {
   reduce: { label: "비중 축소 / 매도", cls: "border-loss/40 bg-loss/10" },
   add: { label: "비중 확대 / 매수", cls: "border-gain/40 bg-gain/10" },
@@ -159,12 +167,10 @@ function PortfolioAnalysisCard() {
     enqueue("/api/v1/portfolio/analyze", {});
   }
 
-  const g = result?.guide;
-
   return (
     <section className="rounded-card border border-term-border bg-term-1 p-5 shadow-elevated">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-term-ink">🧭 포트폴리오 매매 지침 분석</h3>
+        <h3 className="text-sm font-semibold text-term-ink">🧭 포트폴리오 종합 진단</h3>
         <button
           onClick={run}
           disabled={busy}
@@ -176,96 +182,159 @@ function PortfolioAnalysisCard() {
 
       {busy && (
         <p className="text-sm text-term-muted">
-          {status === "pending" ? "분석 작업 대기 중…" : "섹터·시장 모멘텀을 진단하고 있습니다…"}
+          {status === "pending" ? "분석 작업 대기 중…" : "종목별 차트·모멘텀·손절선을 진단하고 있습니다…"}
         </p>
       )}
       {error && <p className="text-sm text-loss">분석 실패: {error}</p>}
       {!busy && !error && !result && (
-        <p className="text-sm text-term-muted">보유 종목의 섹터 집중도·시장 모멘텀을 진단해 매수/매도/유지 지침을 제시합니다.</p>
+        <p className="text-sm text-term-muted">보유 종목별 차트 신호·모멘텀·손절선을 종합해 대응 액션을 제시하고, 전체 포트폴리오를 평가합니다.</p>
       )}
 
-      {result && !busy && g && (
+      {result && !busy && !result.empty && (
         <div className="space-y-4">
-          {/* 요약 */}
-          <div className="grid grid-cols-3 gap-2">
-            <SummaryTile label="시장 상태" value={result.market_status || "—"} tone={result.market_status === "상승장" ? "text-gain" : result.market_status === "하락장" ? "text-loss" : "text-term-ink"} />
-            <SummaryTile label="섹터 집중도(HHI)" value={g.hhi ? fmtNum(g.hhi) : "—"} tone={g.is_concentrated ? "text-loss" : "text-gain"} sub={g.is_concentrated ? "과집중" : "분산 양호"} />
-            <SummaryTile label="총 평가액" value={result.total_value ? `${fmtNum(result.total_value)}` : "—"} tone="text-term-ink" />
+          <OverallCard o={result.overall} />
+
+          <div className="space-y-2">
+            <h4 className="text-[0.8rem] font-semibold text-term-ink">📋 종목별 대응 리포트</h4>
+            {result.holdings.map((h) => <HoldingReport key={h.ticker} h={h} />)}
           </div>
 
-          {/* 익절 권고 (매도) */}
-          {g.profit_take.length > 0 && (
-            <RecBlock title="💰 수익 확정 권고 (매도)">
-              {g.profit_take.map((p) => (
-                <div key={p.ticker} className="rounded-lg border border-gain/40 bg-gain/10 px-3 py-2 text-[0.82rem]">
-                  <span className="font-semibold text-term-ink">{p.name}</span>{" "}
-                  <span className={`tnum font-bold ${signClass(p.pnl_pct)}`}>{p.pnl_pct >= 0 ? "+" : ""}{p.pnl_pct}%</span>
-                  <p className="text-term-muted">{p.reason}</p>
-                </div>
-              ))}
-            </RecBlock>
-          )}
-
-          {/* 섹터 리밸런싱 권고 */}
-          {g.recommendations.length > 0 && (
-            <RecBlock title="⚖️ 섹터 리밸런싱 지침">
-              {g.recommendations.map((r, i) => {
-                const m = REC_META[r.type];
-                return (
-                  <div key={i} className={`rounded-lg border px-3 py-2 text-[0.82rem] ${m.cls}`}>
-                    <div className="flex items-center gap-2">
-                      <span>{r.icon}</span>
-                      <span className="font-semibold text-term-ink">{r.sector}</span>
-                      <span className="tnum text-term-muted">{r.weight}%</span>
-                      <span className="ml-auto rounded-full bg-black/30 px-2 py-0.5 text-[0.62rem] font-semibold text-term-ink">{m.label}</span>
-                    </div>
-                    <p className="mt-1 text-term-muted">{r.message}</p>
-                    {r.tickers && <p className="mt-0.5 text-[0.7rem] text-term-muted">{r.tickers}</p>}
-                  </div>
-                );
-              })}
-            </RecBlock>
-          )}
-
-          {/* 미보유 주도 섹터 (매수 후보) */}
-          {g.missing_top.length > 0 && (
-            <RecBlock title="✨ 미보유 주도 섹터 (매수 후보)">
-              {g.missing_top.map((m) => (
-                <div key={m.sector} className="flex items-center justify-between rounded-lg border border-gain/30 bg-gain/5 px-3 py-1.5 text-[0.82rem]">
-                  <span className="text-term-ink">{m.sector} <span className="text-term-muted">· {m.name}</span></span>
-                  <span className={`tnum font-bold ${signClass(m.return_5d)}`}>{m.return_5d >= 0 ? "+" : ""}{m.return_5d}% <span className="text-[0.66rem] text-term-muted">5일</span></span>
-                </div>
-              ))}
-            </RecBlock>
-          )}
-
-          {/* 섹터 모멘텀 랭킹 */}
-          {g.sector_scores.length > 0 && (
-            <details className="rounded-lg border border-term-border bg-black/20 p-3">
-              <summary className="cursor-pointer text-[0.8rem] font-semibold text-term-ink">📊 섹터 모멘텀 랭킹 ({g.sector_scores.length})</summary>
-              <ul className="mt-2 space-y-1">
-                {g.sector_scores.map((s) => (
-                  <li key={s.sector} className="flex items-center justify-between text-[0.78rem]">
-                    <span className="text-term-muted">
-                      <RankBadge rank={s.rank} /> {s.sector} <span className="text-term-muted/70">· {s.name}</span>
-                    </span>
-                    <span className={`tnum ${signClass(s.return_5d)}`}>{s.return_5d >= 0 ? "+" : ""}{s.return_5d}%</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-
-          {(result.unknown_tickers?.length ?? 0) > 0 && (
-            <p className="text-[0.72rem] text-term-muted">※ 섹터 미분류: {result.unknown_tickers!.join(", ")}</p>
-          )}
+          <SectorGuide guide={result.guide} />
         </div>
       )}
     </section>
   );
 }
 
-function SummaryTile({ label, value, tone, sub }: { label: string; value: string; tone: string; sub?: string }) {
+function OverallCard({ o }: { o: PfOverall }) {
+  const lv = LEVEL[o.verdict_level];
+  return (
+    <div className={`rounded-lg border ${lv.cls} bg-black/20 p-4`}>
+      <div className={`text-sm font-bold ${lv.chip}`}>{o.verdict}</div>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <Tile label="총 평가액" value={fmtNum(o.total_value)} tone="text-term-ink" />
+        <Tile label="총 수익률" value={`${o.total_pnl_pct >= 0 ? "+" : ""}${o.total_pnl_pct.toFixed(2)}%`} tone={signClass(o.total_pnl_pct)} />
+        <Tile
+          label="섹터 집중도(HHI)"
+          value={o.hhi ? fmtNum(o.hhi) : "—"}
+          tone={o.is_concentrated ? "text-loss" : "text-gain"}
+          sub={o.is_concentrated ? "과집중" : "분산 양호"}
+        />
+      </div>
+      {/* 액션 분포 */}
+      <div className="mt-2 flex flex-wrap gap-1.5 text-[0.66rem]">
+        <CountChip n={o.action_counts.danger} label="손절 점검" level="danger" />
+        <CountChip n={o.action_counts.warn} label="축소/매도" level="warn" />
+        <CountChip n={o.action_counts.good} label="강세/익절" level="good" />
+        <CountChip n={o.action_counts.neutral} label="보유/관망" level="neutral" />
+        {o.market_status && <span className="ml-auto rounded-full bg-black/30 px-2 py-0.5 text-term-muted">시장: {o.market_status}</span>}
+      </div>
+    </div>
+  );
+}
+
+function CountChip({ n, label, level }: { n: number; label: string; level: PfActionLevel }) {
+  if (!n) return null;
+  return <span className={`rounded-full px-2 py-0.5 font-semibold ${LEVEL[level].badge}`}>{label} {n}</span>;
+}
+
+function HoldingReport({ h }: { h: PfHolding }) {
+  const lv = LEVEL[h.action_level];
+  return (
+    <div className={`rounded-lg border ${lv.cls} bg-black/20 p-3`}>
+      {/* 헤더: 종목 / 수익률 / 액션 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold text-term-ink">{h.name}</span>
+        <span className="tnum text-[0.7rem] text-term-muted">{h.ticker}</span>
+        <span className={`tnum text-sm font-bold ${signClass(h.pnl_pct)}`}>{h.pnl_pct >= 0 ? "+" : ""}{h.pnl_pct.toFixed(2)}%</span>
+        <span className={`ml-auto rounded-full px-2.5 py-0.5 text-[0.7rem] font-bold ${lv.badge}`}>
+          {h.signal_badge ? `${h.signal_badge} ` : ""}{h.action}
+        </span>
+      </div>
+
+      {/* 지표 줄 */}
+      {h.ok !== false && (
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[0.74rem] sm:grid-cols-4">
+          <KV label="기술신호" value={`${h.signal_label ?? "—"}${h.tech_score != null ? ` (${h.tech_score >= 0 ? "+" : ""}${h.tech_score})` : ""}`} tone={h.tech_score != null ? signClass(h.tech_score) : ""} />
+          <KV label="예상수익" value={h.expected_return_pct != null ? `${h.expected_return_pct >= 0 ? "+" : ""}${h.expected_return_pct.toFixed(1)}%` : "—"} tone={h.expected_return_pct != null ? signClass(h.expected_return_pct) : ""} />
+          <KV label="승률" value={h.win_prob != null ? `${h.win_prob.toFixed(0)}%` : "—"} />
+          <KV label="20일 모멘텀" value={h.momentum_20d != null ? `${h.momentum_20d >= 0 ? "+" : ""}${h.momentum_20d.toFixed(1)}%` : "—"} tone={h.momentum_20d != null ? signClass(h.momentum_20d) : ""} />
+        </div>
+      )}
+
+      {/* 손절선 */}
+      {h.stop_loss_price != null && (
+        <div className="mt-2 flex items-center gap-2 text-[0.74rem]">
+          <span className="text-term-muted">손절선</span>
+          <span className="tnum font-semibold text-term-ink">{fmtNum(h.stop_loss_price, 2)}</span>
+          {h.stop_distance_pct != null && (
+            <span className={`tnum ${h.stop_breached ? "text-loss font-bold" : "text-term-muted"}`}>
+              ({h.stop_distance_pct >= 0 ? "+" : ""}{h.stop_distance_pct.toFixed(1)}%)
+            </span>
+          )}
+          {h.stop_breached && <span className="rounded bg-loss/20 px-1.5 text-[0.62rem] font-bold text-loss">손절선 이탈</span>}
+          <span className="ml-auto tnum text-[0.7rem] text-term-muted">평단 {fmtNum(h.avg_price, 2)} · 현재 {fmtNum(h.current_price, 2)}</span>
+        </div>
+      )}
+
+      {/* 사유 */}
+      {h.reasons.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 text-[0.74rem] text-term-muted">
+          {h.reasons.map((r, i) => <li key={i}>• {r}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function KV({ label, value, tone = "" }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-1 sm:block sm:text-center">
+      <span className="text-[0.62rem] text-term-muted">{label}</span>
+      <span className={`tnum font-semibold ${tone || "text-term-ink"}`}>{value}</span>
+    </div>
+  );
+}
+
+/** 섹터/시장 리밸런싱 진단 (보조 — 접힘). */
+function SectorGuide({ guide: g }: { guide: PortfolioAnalysis["guide"] }) {
+  const has = g.recommendations.length || g.missing_top.length || g.sector_scores.length;
+  if (!has) return null;
+  return (
+    <details className="rounded-lg border border-term-border bg-black/20 p-3">
+      <summary className="cursor-pointer text-[0.8rem] font-semibold text-term-ink">⚖️ 섹터·시장 리밸런싱 진단</summary>
+      <div className="mt-3 space-y-3">
+        {g.recommendations.map((r, i) => {
+          const m = REC_META[r.type];
+          return (
+            <div key={i} className={`rounded-lg border px-3 py-2 text-[0.8rem] ${m.cls}`}>
+              <div className="flex items-center gap-2">
+                <span>{r.icon}</span>
+                <span className="font-semibold text-term-ink">{r.sector}</span>
+                <span className="tnum text-term-muted">{r.weight}%</span>
+                <span className="ml-auto rounded-full bg-black/30 px-2 py-0.5 text-[0.62rem] font-semibold text-term-ink">{m.label}</span>
+              </div>
+              <p className="mt-1 text-term-muted">{r.message}</p>
+            </div>
+          );
+        })}
+        {g.missing_top.length > 0 && (
+          <div>
+            <p className="mb-1 text-[0.74rem] font-semibold text-term-ink">✨ 미보유 주도 섹터 (매수 후보)</p>
+            {g.missing_top.map((m) => (
+              <div key={m.sector} className="flex items-center justify-between text-[0.78rem] text-term-muted">
+                <span>{m.sector} · {m.name}</span>
+                <span className={`tnum ${signClass(m.return_5d)}`}>{m.return_5d >= 0 ? "+" : ""}{m.return_5d}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function Tile({ label, value, tone, sub }: { label: string; value: string; tone: string; sub?: string }) {
   return (
     <div className="rounded-lg border border-term-border bg-black/20 px-3 py-2 text-center">
       <div className="text-[0.62rem] text-term-muted">{label}</div>
@@ -273,21 +342,6 @@ function SummaryTile({ label, value, tone, sub }: { label: string; value: string
       {sub && <div className="text-[0.6rem] text-term-muted">{sub}</div>}
     </div>
   );
-}
-
-function RecBlock({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <h4 className="text-[0.8rem] font-semibold text-term-ink">{title}</h4>
-      {children}
-    </div>
-  );
-}
-
-function RankBadge({ rank }: { rank: "TOP" | "NORMAL" | "BOTTOM" }) {
-  const m = rank === "TOP" ? "text-gain" : rank === "BOTTOM" ? "text-loss" : "text-term-muted";
-  const t = rank === "TOP" ? "▲" : rank === "BOTTOM" ? "▼" : "·";
-  return <span className={`${m} font-bold`}>{t}</span>;
 }
 
 function Trades() {

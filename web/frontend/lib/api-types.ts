@@ -142,13 +142,50 @@ export interface PfSectorScore {
   return_20d: number;
   rank: "TOP" | "NORMAL" | "BOTTOM";
 }
+export type PfActionLevel = "danger" | "warn" | "good" | "neutral";
+
+/** 종목별 종합 평가 리포트 (차트신호+모멘텀+손절선). */
+export interface PfHolding {
+  ticker: string;
+  name: string;
+  quantity: number;
+  avg_price: number;
+  current_price: number;
+  pnl_pct: number;
+  eval_value: number;
+  ok?: boolean;
+  tech_score?: number;
+  signal_label?: string;
+  signal_badge?: string;
+  expected_return_pct?: number | null;
+  win_prob?: number | null;
+  momentum_20d?: number;
+  atr_pct?: number;
+  stop_loss_price?: number;
+  stop_distance_pct?: number;
+  stop_breached?: boolean;
+  action: string;
+  action_level: PfActionLevel;
+  reasons: string[];
+}
+
+export interface PfOverall {
+  total_value: number;
+  total_cost: number;
+  total_pnl_pct: number;
+  holdings_count: number;
+  action_counts: Record<PfActionLevel, number>;
+  verdict: string;
+  verdict_level: PfActionLevel;
+  hhi: number | null;
+  is_concentrated: boolean;
+  market_status: string;
+}
+
 export interface PortfolioAnalysis {
   empty: boolean;
-  total_value: number;
-  market_status: string;
-  kospi_above_ma?: boolean;
-  kosdaq_above_ma?: boolean;
-  unknown_tickers?: string[];
+  overall: PfOverall;
+  holdings: PfHolding[];
   guide: {
     hhi: number;
     is_concentrated: boolean;
