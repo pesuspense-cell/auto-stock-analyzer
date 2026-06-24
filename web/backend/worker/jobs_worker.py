@@ -60,7 +60,7 @@ INTERACTIVE_CONCURRENCY = max(1, int(os.getenv("JOBS_INTERACTIVE_CONCURRENCY", "
 
 # 레인 정의 — kind → 레인. 배치는 1스레드, 인터랙티브는 N스레드.
 BATCH_KINDS = ("backtest", "asa")
-INTERACTIVE_KINDS = ("analysis", "news", "fundamental", "fundamental_ai", "portfolio_analysis")
+INTERACTIVE_KINDS = ("analysis", "news", "fundamental", "fundamental_ai", "portfolio_analysis", "investors")
 
 _running = True
 
@@ -181,6 +181,15 @@ def _process(conn, job: dict) -> dict:
         logger.info("펀더멘털 실행 — %s", ticker)
         return fundamental_service.fundamental(ticker)
 
+    if kind == "investors":
+        # 투자자별 매매동향(수급) — 일일 갱신. 분기 캐시되는 fundamental 과 분리해 신선도 유지.
+        ticker = params["ticker"]
+        logger.info("수급 실행 — %s", ticker)
+        return {
+            "investors": fundamental_service.investors(ticker),
+            "history": fundamental_service.investor_history(ticker),
+        }
+
     if kind == "fundamental_ai":
         ticker = params["ticker"]
         use_llm = bool(params.get("useLlm", True))
@@ -267,6 +276,9 @@ def _cache_scope(job: dict) -> str | None:
     tkr = str(ticker).upper()
     if kind == "news":
         return f"news:{tkr}"
+    if kind == "investors":
+        # 일 단위 키 — KST 날짜가 바뀌면 scope 가 달라져 자동 재수집(수급은 매일 변함).
+        return f"investors:{tkr}:{datetime.now(_KST).strftime('%Y%m%d')}"
     if kind == "fundamental":
         return f"fundamental:{tkr}:{_quarter_key()}"
     if kind == "analysis":

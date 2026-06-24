@@ -136,7 +136,7 @@ export function FundamentalTab({ picked }: { picked: StockHit | null }) {
 
         {data.is_etf && <EtfCard data={data} />}
 
-        <InvestorCard investors={data.investors} />
+        <InvestorCard ticker={data.ticker} />
       </div>
 
       <AiReportCard ticker={data.ticker} />
@@ -229,34 +229,103 @@ function EtfCard({ data }: { data: FundamentalResponse }) {
   );
 }
 
-function InvestorCard({ investors }: { investors: Record<string, any> }) {
-  const rows: [string, number | null][] = [
-    ["외국인", investors["외국인"] ?? null],
-    ["기관", investors["기관합계"] ?? null],
-    ["개인", investors["개인"] ?? null],
+interface InvestorTrend {
+  investors: Record<string, any>;
+  history: { date: string; 외국인: number; 기관합계: number; 개인: number }[];
+}
+
+const fmtMMDD = (yyyymmdd?: string) =>
+  yyyymmdd && yyyymmdd.length === 8 ? `${yyyymmdd.slice(4, 6)}.${yyyymmdd.slice(6, 8)}` : "";
+
+/** 투자자별 매매동향 — 당일·전일 순매수 + 최근 5일 추세(스파크라인). 일 단위로 신선하게 수집. */
+function InvestorCard({ ticker }: { ticker: string }) {
+  const isKr = /\.(KS|KQ)$/i.test(ticker);
+  const { result, busy, enqueue, reset } = useJob<InvestorTrend>();
+
+  useEffect(() => {
+    if (isKr) enqueue("/api/v1/investors/run", { ticker });
+    else reset();
+  }, [ticker, isKr, enqueue, reset]);
+
+  const history = result?.history ?? [];
+  const last = history[history.length - 1];
+  const prev = history[history.length - 2];
+  const last5 = history.slice(-5);
+  const SERIES: [string, "외국인" | "기관합계" | "개인"][] = [
+    ["외국인", "외국인"], ["기관", "기관합계"], ["개인", "개인"],
   ];
-  const has = rows.some(([, v]) => v != null);
+
   return (
     <section className="rounded-card border border-hairline bg-surface p-5 shadow-card">
       <h3 className="mb-3 text-sm font-semibold text-ink">
-        🏦 투자자별 매매동향 {investors.date && <span className="text-xs text-ink-2">({investors.date})</span>}
+        🏦 투자자별 매매동향{" "}
+        {last?.date && <span className="text-xs text-ink-2">({fmtMMDD(last.date)} 기준 · 순매수 주)</span>}
       </h3>
-      {!has ? (
+      {!isKr ? (
         <p className="text-sm text-ink-2">수급 데이터 없음 (국내 종목 전용)</p>
+      ) : busy && history.length === 0 ? (
+        <p className="text-sm text-ink-2">수급 데이터 불러오는 중…</p>
+      ) : history.length === 0 ? (
+        <p className="text-sm text-ink-2">수급 데이터 없음</p>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
-          {rows.map(([label, v]) => (
-            <div key={label} className="rounded-lg bg-canvas p-3 text-center">
-              <div className="text-[0.72rem] text-ink-2">{label}</div>
-              <div className={`tnum text-[0.95rem] font-bold ${v != null ? signClass(v) : "text-ink-2"}`}>
-                {v != null ? `${v >= 0 ? "+" : ""}${fmtNum(v)}` : "—"}
+        <div className="space-y-2">
+          {SERIES.map(([label, key]) => {
+            const today = last ? Number(last[key]) : null;
+            const yest = prev ? Number(prev[key]) : null;
+            const sum5 = last5.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+            const spark = last5.map((r) => Number(r[key]) || 0);
+            return (
+              <div key={label} className="rounded-lg bg-canvas p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-[0.78rem] font-semibold text-ink">{label}</span>
+                  <Spark values={spark} />
+                </div>
+                <div className="grid grid-cols-3 gap-1 text-center">
+                  <NetCell label="당일" v={today} />
+                  <NetCell label="전일" v={yest} />
+                  <NetCell label="5일 누적" v={sum5} />
+                </div>
               </div>
-              <div className="text-[0.62rem] text-ink-3">주</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
+  );
+}
+
+function NetCell({ label, v }: { label: string; v: number | null }) {
+  return (
+    <div>
+      <div className="text-[0.6rem] text-ink-3">{label}</div>
+      <div className={`tnum text-[0.78rem] font-bold ${v != null && !Number.isNaN(v) ? signClass(v) : "text-ink-2"}`}>
+        {v != null && !Number.isNaN(v) ? `${v >= 0 ? "+" : ""}${fmtNum(v, 0)}` : "—"}
+      </div>
+    </div>
+  );
+}
+
+/** 최근 N일 순매수 스파크라인 — 매수(상단·녹)/매도(하단·적) 막대. */
+function Spark({ values }: { values: number[] }) {
+  if (values.length === 0) return null;
+  const max = Math.max(1, ...values.map((v) => Math.abs(v)));
+  return (
+    <div className="flex items-stretch gap-0.5" title="최근 5일 순매수 추세">
+      {values.map((v, i) => {
+        const h = Math.max(1, Math.round((Math.abs(v) / max) * 12));
+        const up = v >= 0;
+        return (
+          <div key={i} className="flex w-1.5 flex-col justify-center">
+            <div className="flex h-3 items-end justify-center">
+              {up && <div className="w-full rounded-t-sm bg-gain" style={{ height: h }} />}
+            </div>
+            <div className="flex h-3 items-start justify-center">
+              {!up && <div className="w-full rounded-b-sm bg-loss" style={{ height: h }} />}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
