@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/validate-kr-tickers.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "validate:tickers": "node scripts/validate-kr-tickers.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
