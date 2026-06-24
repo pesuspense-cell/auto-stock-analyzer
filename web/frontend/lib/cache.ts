@@ -6,9 +6,23 @@
 //   · 장외/주말은 60초 TTL
 //   · 만료 시에만 Yahoo 호출 → quote_cache upsert
 import { createServiceClient } from "@/lib/supabase/server";
-import { fetchQuote, fetchRate } from "@/lib/providers/yahoo";
+import { fetchQuote, fetchRate, type RawQuote } from "@/lib/providers/yahoo";
+import { fetchNaverQuote } from "@/lib/providers/naver";
 
 const KST_OFFSET = 9 * 60; // minutes
+
+const isKrTicker = (t: string) => /\.K[SQ]$/i.test(t);
+
+/**
+ * 시세 공급원 선택 — 국내(.KS/.KQ)는 네이버 실시간(지연 0),
+ * 실패 시 Yahoo 로 폴백. 그 외(미국주·환율)는 Yahoo.
+ */
+async function fetchQuoteFor(ticker: string): Promise<RawQuote | null> {
+  if (isKrTicker(ticker)) {
+    return (await fetchNaverQuote(ticker)) ?? (await fetchQuote(ticker));
+  }
+  return fetchQuote(ticker);
+}
 
 function isKoreanMarketOpen(d = new Date()): boolean {
   const utcMin = d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -60,7 +74,7 @@ export async function getQuote(ticker: string): Promise<CachedQuote | null> {
     };
   }
 
-  const fresh = await fetchQuote(ticker);
+  const fresh = await fetchQuoteFor(ticker);
   if (!fresh) {
     // 외부 실패 → 만료된 캐시라도 폴백 반환 (stale-if-error)
     if (row) {
