@@ -25,6 +25,7 @@ export function PortfolioTab() {
             <h2 className="text-lg font-bold text-ink">💼 내 포트폴리오</h2>
             <UserMenu />
           </div>
+          <SummaryDashboard />
           <AddForm />
           <Holdings />
           <PortfolioAnalysisCard />
@@ -33,6 +34,92 @@ export function PortfolioTab() {
         </div>
       )}
     </AuthGate>
+  );
+}
+
+// ── 종합 상황판: 매수(원가)·보유(평가/평가손익)·매도(실현손익)를 통화별로 집계 ──
+const isKr = (t: string) => /\.K[SQ]$/i.test(t);
+type Ccy = "KRW" | "USD";
+const ccyOf = (t: string): Ccy => (isKr(t) ? "KRW" : "USD");
+const ccySym: Record<Ccy, string> = { KRW: "₩", USD: "$" };
+const fmtMoney = (ccy: Ccy, n: number) =>
+  `${n < 0 ? "-" : ""}${ccySym[ccy]}${fmtNum(Math.abs(n), ccy === "KRW" ? 0 : 2)}`;
+
+interface Bucket {
+  ccy: Ccy; cost: number; evalAmt: number; realized: number;
+  holdCount: number; tradeCount: number; wins: number;
+}
+
+function SummaryDashboard() {
+  const { data: holdings } = useSWR<PortfolioItem[]>("/api/v1/portfolio", jfetch, { refreshInterval: 30_000 });
+  const { data: trades } = useSWR<TradeItem[]>("/api/v1/portfolio/trades", jfetch);
+
+  const byCcy = new Map<Ccy, Bucket>();
+  const bucket = (ccy: Ccy): Bucket => {
+    let b = byCcy.get(ccy);
+    if (!b) { b = { ccy, cost: 0, evalAmt: 0, realized: 0, holdCount: 0, tradeCount: 0, wins: 0 }; byCcy.set(ccy, b); }
+    return b;
+  };
+
+  for (const h of holdings ?? []) {
+    const b = bucket(ccyOf(h.ticker));
+    const cost = h.avgPrice * h.quantity;
+    b.cost += cost;
+    b.evalAmt += h.evalAmount ?? cost; // 현재가 없으면 원가로 (평가손익 0 처리)
+    b.holdCount += 1;
+  }
+  for (const t of trades ?? []) {
+    const b = bucket(ccyOf(t.ticker));
+    b.realized += t.netProfit;
+    b.tradeCount += 1;
+    if (t.netProfit > 0) b.wins += 1;
+  }
+
+  const buckets = [...byCcy.values()].filter((b) => b.holdCount > 0 || b.tradeCount > 0)
+    .sort((a, b) => (a.ccy === "KRW" ? -1 : 1)); // 원화 우선
+  if (buckets.length === 0) return null;
+
+  return (
+    <section className="rounded-card border border-term-border bg-term-1 p-4 shadow-elevated">
+      <h3 className="mb-3 text-sm font-semibold text-term-ink">📊 종합 상황판</h3>
+      <div className="space-y-4">
+        {buckets.map((b) => {
+          const unreal = b.evalAmt - b.cost;
+          const unrealPct = b.cost ? (b.evalAmt / b.cost - 1) * 100 : 0;
+          const total = unreal + b.realized;
+          const winRate = b.tradeCount ? (b.wins / b.tradeCount) * 100 : null;
+          return (
+            <div key={b.ccy}>
+              <div className="mb-2 flex items-center gap-2 text-[0.7rem] text-term-muted">
+                <span className="rounded-full bg-black/30 px-2 py-0.5 font-semibold text-term-ink">{b.ccy}</span>
+                <span>보유 {b.holdCount}종목 · 매도 {b.tradeCount}건{winRate != null ? ` · 승률 ${winRate.toFixed(0)}%` : ""}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <Tile label="매입원가" value={fmtMoney(b.ccy, b.cost)} tone="text-term-ink" />
+                <Tile label="보유 평가액" value={fmtMoney(b.ccy, b.evalAmt)} tone="text-term-ink" />
+                <Tile
+                  label="평가손익(보유)"
+                  value={`${unreal >= 0 ? "+" : ""}${fmtMoney(b.ccy, unreal)}`}
+                  tone={signClass(unreal)}
+                  sub={`${unrealPct >= 0 ? "+" : ""}${unrealPct.toFixed(2)}%`}
+                />
+                <Tile
+                  label="실현손익(매도)"
+                  value={`${b.realized >= 0 ? "+" : ""}${fmtMoney(b.ccy, b.realized)}`}
+                  tone={signClass(b.realized)}
+                />
+                <Tile
+                  label="총손익"
+                  value={`${total >= 0 ? "+" : ""}${fmtMoney(b.ccy, total)}`}
+                  tone={signClass(total)}
+                  sub="평가+실현"
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -95,13 +182,23 @@ function Holdings() {
   const { data, isLoading } = useSWR<PortfolioItem[]>("/api/v1/portfolio", jfetch, { refreshInterval: 30_000 });
 
   async function sell(item: PortfolioItem) {
-    const input = prompt(`'${item.name ?? item.ticker}' 매도가를 입력하세요`, String(item.currentPrice ?? item.avgPrice));
-    if (!input) return;
+    const label = item.name ?? item.ticker;
+    const priceIn = prompt(`'${label}' 매도가를 입력하세요`, String(item.currentPrice ?? item.avgPrice));
+    if (priceIn == null) return;
+    const sellPrice = Number(priceIn);
+    if (!(sellPrice > 0)) { alert("매도가가 유효하지 않습니다."); return; }
+
+    const qtyIn = prompt(`매도 수량을 입력하세요 (보유 ${item.quantity})`, String(item.quantity));
+    if (qtyIn == null) return;
+    const quantity = Number(qtyIn);
+    if (!(quantity > 0) || quantity > item.quantity) { alert(`수량은 1 ~ ${item.quantity} 사이여야 합니다.`); return; }
+
     const res = await fetch(`/api/v1/portfolio/${item.id}/sell`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-      body: JSON.stringify({ sellPrice: Number(input) }),
+      body: JSON.stringify({ sellPrice, quantity }),
     });
     if (res.ok) { mutate("/api/v1/portfolio"); mutate("/api/v1/portfolio/trades"); }
+    else alert((await res.json().catch(() => ({})))?.error ?? "매도 실패");
   }
   async function remove(item: PortfolioItem) {
     if (!confirm("삭제하시겠습니까?")) return;
@@ -346,6 +443,14 @@ function Tile({ label, value, tone, sub }: { label: string; value: string; tone:
 
 function Trades() {
   const { data } = useSWR<TradeItem[]>("/api/v1/portfolio/trades", jfetch);
+
+  async function removeTrade(t: TradeItem) {
+    if (!confirm(`'${t.name ?? t.ticker}' 매도 이력을 삭제하시겠습니까?`)) return;
+    const res = await fetch(`/api/v1/portfolio/trades/${t.id}`, { method: "DELETE", credentials: "same-origin" });
+    if (res.ok) mutate("/api/v1/portfolio/trades");
+    else alert((await res.json().catch(() => ({})))?.error ?? "삭제 실패");
+  }
+
   if (!data || data.length === 0) return null;
   return (
     <section className="overflow-auto rounded-card border border-hairline bg-surface p-4 shadow-card">
@@ -354,7 +459,8 @@ function Trades() {
         <thead>
           <tr className="border-b border-hairline text-left text-xs text-ink-2">
             <th className="py-2 pr-4">종목</th><th className="py-2 pr-4 text-right">매수→매도</th>
-            <th className="py-2 pr-4 text-right">수량</th><th className="py-2 pr-4 text-right">순손익</th><th className="py-2 text-right">수익률</th>
+            <th className="py-2 pr-4 text-right">수량</th><th className="py-2 pr-4 text-right">순손익</th>
+            <th className="py-2 pr-4 text-right">수익률</th><th className="py-2 text-right">관리</th>
           </tr>
         </thead>
         <tbody>
@@ -364,7 +470,10 @@ function Trades() {
               <td className="py-1.5 pr-4 text-right tnum text-ink-2">{fmtNum(t.buyPrice, 2)} → {fmtNum(t.sellPrice, 2)}</td>
               <td className="py-1.5 pr-4 text-right tnum text-ink">{t.quantity}</td>
               <td className={`py-1.5 pr-4 text-right tnum font-semibold ${signClass(t.netProfit)}`}>{t.netProfit >= 0 ? "+" : ""}{fmtNum(t.netProfit, 0)}</td>
-              <td className={`py-1.5 text-right tnum ${signClass(t.returnRate)}`}>{t.returnRate >= 0 ? "+" : ""}{t.returnRate.toFixed(2)}%</td>
+              <td className={`py-1.5 pr-4 text-right tnum ${signClass(t.returnRate)}`}>{t.returnRate >= 0 ? "+" : ""}{t.returnRate.toFixed(2)}%</td>
+              <td className="py-1.5 text-right">
+                <button onClick={() => removeTrade(t)} className="text-xs text-loss hover:underline">삭제</button>
+              </td>
             </tr>
           ))}
         </tbody>
