@@ -1,11 +1,14 @@
 """
 live_screener.py — 실전 라이브 스크리너 & 잔고 관리 시스템
 
-backtest.py 핵심 로직 완전 계승:
+backtest.py 핵심 로직 + 리스크 관리 모듈 완전 계승:
   ▸ 시장 지수 판별: KOSPI·KOSDAQ SMA_60 기준 야수/디펜스 모드 자동 분기
-  ▸ 지수 RSI_14 > 75 과열 브레이크 → 베팅 비중 50% 자동 축소
-  ▸ ATR 동적 손절선: max(진입가 - 2.5×ATR, 진입가 × 0.92) 중 타이트한 쪽
-  ▸ 확신도 점수대별 배분: 85pt→50% / 70pt→35% / 55pt→20%
+  ▸ [개편1] ATR 기반 고정 리스크 배정: 수량 = (총자산×0.02)/(진입가−손절가)
+            → 손절 시 계좌 타격 항상 총자산 2% 고정 + 단일 종목 20% 비중 캡(몰빵 차단)
+  ▸ [개편2] RSI 하드필터: 종목 RSI_14 ≥ 70 이면 신규 진입 전면 금지(비중 축소 폐지)
+  ▸ [개편3] 시장 필터 락아웃: KOSPI/KOSDAQ 모두 20일선 아래면 신규 매수 중단(현금 보유)
+  ▸ [개편4] 보수적 체결: 장중 저가(Low)가 손절선 터치 시 손절선 −1% 슬리피지로 청산 처리
+  ▸ ATR 동적 손절선: 야수 max(진입가 − 2.5×ATR, 진입가 × 0.92) / 디펜스 진입가 − 2×ATR
   ▸ 오후 6시 이후 실행 시 우측 하단 지속성 팝업창 자동 표시
 
 실행 타이밍: 장 마감 후 (15:30~) 또는 다음 날 장 시작 전
@@ -60,10 +63,17 @@ MY_CURRENT_BALANCE: dict = {
 UNIVERSE_PER_MARKET: int   = 150    # 시장별 스크리닝 유니버스 상위 N종목
 LOOKBACK_DAYS:       int   = 120    # 데이터 로드 기간 (지표 계산용)
 
-RSI_OVERHEAT_THRESHOLD: float = 75.0   # 지수 RSI 과열 브레이크 임계값
+RSI_HARD_LIMIT:         float = 70.0   # [개편2] RSI 하드필터 — 이상이면 신규 진입 전면 금지
 MIN_TURNOVER_RATIO:     float = 2.5    # 야수 모드 거래대금 최소 배율
 MAX_POS_BULL:           int   = 8      # 야수(상승장) 최대 보유 종목 수
 MAX_POS_BEAR:           int   = 3      # 디펜스(하락장) 최대 보유 종목 수
+
+# ── [개편1] 리스크 관리 파라미터 (backtest.py 동일) ──────────────────────────
+MAX_RISK_PER_TRADE:   float = 0.02   # 단일 종목 손절 시 허용 손실 = 총자산의 2%
+MAX_POSITION_PCT:     float = 0.20   # 단일 종목 평가액 상한 = 총자산의 20% (몰빵 방지)
+SL_FALLBACK_PCT:      float = 0.93   # ATR 미산출 시 손절 폴백 (-7%)
+SL_SLIPPAGE_PCT:      float = 0.01   # [개편4] 손절 체결 보수 슬리피지 (-1%)
+NULIM_PRIORITY_BONUS: float = 8.0    # [개편2] 눌림목 전략 우선순위 가산점
 
 BENCHMARK_SYMBOLS: dict[str, str] = {
     "KOSPI":  "^KS11",
@@ -127,6 +137,7 @@ def _prepare_df(raw: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
             return None
         df = _add_sma(df)
         df["ATR"] = _calc_atr(df)
+        df["RSI_14"] = _calc_rsi(df["Close"])   # [개편2] 종목 과열 하드필터용
         return df
     except Exception:
         return None
@@ -196,6 +207,23 @@ class MarketAnalyzer:
                 values.append(val)
         return max(values) if values else 50.0
 
+    def is_index_above_ma20(self) -> bool:
+        """[개편3] KOSPI 또는 KOSDAQ 중 하나라도 종가가 자기 20일선 위에 안착했는가.
+
+        모두 20일선 아래면 위험 회피(risk-off) → 신규 매수 락아웃.
+        """
+        for df in self._index_dfs.values():
+            if df.empty or "SMA_20" not in df.columns:
+                continue
+            row   = df.iloc[-1]
+            close = float(row.get("Close", np.nan))
+            sma20 = float(row.get("SMA_20", np.nan))
+            if np.isnan(close) or np.isnan(sma20):
+                continue
+            if close > sma20:
+                return True
+        return False
+
     def get_summary(self) -> dict[str, dict]:
         """지수별 요약 정보 반환"""
         out = {}
@@ -240,31 +268,44 @@ class PositionMonitor:
         for ticker, info in self.positions.items():
             try:
                 if isinstance(raw.columns, pd.MultiIndex):
-                    s = raw.xs(ticker, axis=1, level=1)["Close"].dropna()
+                    sub = raw.xs(ticker, axis=1, level=1)
                 else:
-                    s = _flatten_columns(raw)["Close"].dropna()
-
-                if s.empty:
+                    sub = _flatten_columns(raw)
+                close_s = sub["Close"].dropna()
+                if close_s.empty:
                     print(f"    ⚠️ {ticker} 가격 데이터 없음 — 건너뜀")
                     continue
+                low_s  = sub["Low"].dropna()  if "Low"  in sub.columns else close_s
+                open_s = sub["Open"].dropna() if "Open" in sub.columns else close_s
 
-                current_price = float(s.iloc[-1])
+                current_price = float(close_s.iloc[-1])
+                today_low     = float(low_s.iloc[-1])  if not low_s.empty  else current_price
+                today_open    = float(open_s.iloc[-1]) if not open_s.empty else current_price
                 entry  = float(info["entry_price"])
                 sl     = float(info["sl"])
                 tp     = float(info["tp"])
                 name   = info.get("name", ticker)
-                pnl    = (current_price - entry) / entry * 100
 
+                # [개편4] 보수적 체결: 종가가 아니라 '장중 저가'가 손절선 터치 시 청산.
+                # 체결가는 손절선 −1% 슬리피지, 갭하락 시초가가 손절선 하회면 시초가로.
                 alert_type: str | None = None
-                if current_price <= sl:
+                fill_price = current_price
+                if today_low <= sl:
                     alert_type = "SELL_SL"
+                    fill_price = sl * (1.0 - SL_SLIPPAGE_PCT)
+                    if today_open < sl:
+                        fill_price = min(fill_price, today_open)
+                    fill_price = max(fill_price, today_low)
                 elif current_price >= tp:
                     alert_type = "SELL_TP"
+                    fill_price = tp
+                pnl = (fill_price - entry) / entry * 100
 
                 self.results.append({
                     "ticker":        ticker,
                     "name":          name,
                     "current_price": current_price,
+                    "fill_price":    fill_price,
                     "entry_price":   entry,
                     "quantity":      int(info.get("quantity", 0)),
                     "sl":            sl,
@@ -368,7 +409,8 @@ def _score_nulim(df: pd.DataFrame, max_spike_ratio: float) -> float:
     gap_bonus = max(0.0, 20.0 - (gap_pct * 4.0))
     vol_bonus = 30.0 if max_spike_ratio >= 10 else (20.0 if max_spike_ratio >= 5 else 10.0)
 
-    return min(100.0, round(50.0 + gap_bonus + vol_bonus, 1))
+    # [개편2] 승률 높은 눌림목 전략 우선순위 가산
+    return min(100.0, round(50.0 + gap_bonus + vol_bonus + NULIM_PRIORITY_BONUS, 1))
 
 
 def _detect_golden_cross(df: pd.DataFrame) -> tuple[bool, float, float]:
@@ -498,6 +540,10 @@ def run_screening(
 
                 if ok and score >= 55.0:
                     row   = df.iloc[-1]
+                    # [개편2] RSI 하드필터 — 과열 종목 신규 진입 금지(상투 추격 차단)
+                    stock_rsi = float(row.get("RSI_14", np.nan))
+                    if not np.isnan(stock_rsi) and stock_rsi >= RSI_HARD_LIMIT:
+                        continue
                     close = float(row["Close"])
                     atr   = float(row.get("ATR", np.nan))
                     candidates.append({
@@ -529,56 +575,61 @@ def run_screening(
 def calc_buy_plan(
     candidate:     dict,
     cash:          float,
-    is_overheated: bool,
+    total_asset:   float,
     n_positions:   int,
     max_positions: int,
 ) -> dict | None:
-    """확신도 점수 + RSI 과열 여부를 반영해 매수 금액·수량·SL·TP를 계산한다.
+    """[개편1] ATR 손절 기반 고정 리스크 배정으로 매수 수량·SL·TP를 계산한다.
 
-    배분 기준 (backtest.py _try_buy 완전 동일):
-      85pt 이상 → 50%  /  70pt 이상 → 35%  /  55pt 이상 → 20%
-    RSI 과열 시: 모든 비중을 정확히 절반으로 축소
+    backtest.py _resolve_stop_loss + _calc_position_qty 완전 동일:
+      손절가 = 야수 max(close−2.5×ATR, close×0.92) / 디펜스 close−2.0×ATR
+      수량   = (총자산 × MAX_RISK_PER_TRADE) / (close − 손절가)
+               단, 단일 종목 평가액 ≤ 총자산×MAX_POSITION_PCT, 매수금 ≤ 현금×95%
+      → 손절 시 손실이 항상 총자산의 2%로 고정 (점수 기반 % 배정·RSI 비중축소 폐지)
     """
     if n_positions >= max_positions:
         return None
 
     score = candidate["score"]
-    if score >= 85:
-        alloc_pct = 0.50
-    elif score >= 70:
-        alloc_pct = 0.35
-    elif score >= 55:
-        alloc_pct = 0.20
-    else:
+    if score < 55:                       # 진입 자격 게이트(품질 필터)
         return None
 
-    if is_overheated:
-        alloc_pct *= 0.5
+    close  = float(candidate["close"])
+    atr    = float(candidate["atr"])
+    signal = candidate.get("signal", "")
+    if close <= 0:
+        return None
 
-    alloc_cash = cash * alloc_pct
-    close      = candidate["close"]
-    atr        = candidate["atr"]
+    # ── 신호별 손절가 산정 ──────────────────────────────────────────────────
+    has_atr = (not np.isnan(atr)) and atr > 0
+    if signal == "SMA_GOLDEN_CROSS":
+        sl = max(close - 2.5 * atr, close * 0.92) if has_atr else close * SL_FALLBACK_PCT
+        tp = close * 1.25                                   # +25% 고정 익절
+    else:  # DRY_VOLUME_NULIM 등
+        sl = (close - 2.0 * atr) if has_atr else close * SL_FALLBACK_PCT
+        tp = (close + 3.5 * atr) if has_atr else close * 1.25
+    if sl <= 0 or sl >= close:
+        return None
 
-    qty = int(alloc_cash / close) if close > 0 else 0
+    # ── ATR 고정 리스크 포지션 사이징 ───────────────────────────────────────
+    risk_per_share = close - sl
+    risk_budget    = total_asset * MAX_RISK_PER_TRADE
+    qty = int(risk_budget / risk_per_share)
+    qty = min(qty, int((total_asset * MAX_POSITION_PCT) / close))   # 비중 상한 캡
+    qty = min(qty, int((cash * 0.95) / close))                     # 현금 하드캡
     if qty <= 0:
         return None
 
-    # [Step 3] ATR 기반 동적 손절선 — backtest.py _try_buy SMA_GOLDEN_CROSS 블록 동일
-    if not np.isnan(atr) and atr > 0:
-        sl_atr   = close - 2.5 * atr   # ATR 버퍼 손절
-        sl_fixed = close * 0.92         # -8% 고정 하한 안전망
-        sl       = max(sl_atr, sl_fixed)   # 더 높은 쪽 = 더 타이트한 손절
-    else:
-        sl = close * 0.93               # ATR 미산출 시 -7% 폴백
-
-    tp = close * 1.25   # 야수 모드 고정 +25% 익절
-
+    invest   = qty * close
+    risk_amt = risk_per_share * qty
     return {
-        "alloc_pct":  alloc_pct,
-        "alloc_cash": alloc_cash,
+        "alloc_pct":  invest / total_asset if total_asset > 0 else 0.0,
+        "alloc_cash": invest,
         "qty":        qty,
         "sl":         sl,
         "tp":         tp,
+        "risk_amt":   risk_amt,
+        "risk_pct":   risk_amt / total_asset * 100 if total_asset > 0 else 0.0,
     }
 
 
@@ -670,7 +721,8 @@ def print_report(
     index_summary:    dict,
     is_bear:          bool,
     market_rsi:       float,
-    is_overheated:    bool,
+    buy_locked:       bool,
+    lock_reason:      str,
     position_results: list[dict],
     buy_plans:        list[dict],
     cash:             float,
@@ -680,8 +732,8 @@ def print_report(
 
     mode_label = "디펜스 모드 기동 중 🛡️" if is_bear else "야수 모드 기동 중 🔥"
     rsi_label  = (
-        f"⚠️ 과열 브레이크 작동 — 베팅 비중 50% 축소"
-        if is_overheated
+        f"🔒 신규 매수 락아웃 — {lock_reason}"
+        if buy_locked
         else "✅ 정상 구간"
     )
 
@@ -714,22 +766,28 @@ def print_report(
     if sell_alerts:
         print("🚨 [내일 아침 시초가 즉시 매도 지침]")
         for r in sell_alerts:
+            fill = r.get("fill_price", r["current_price"])
             if r["alert_type"] == "SELL_TP":
                 trigger_word = "익절가"
                 side_val     = r["tp"]
                 breach_word  = "돌파"
+                touch_word   = "현재가"
+                touch_val    = r["current_price"]
             else:
                 trigger_word = "손절선"
                 side_val     = r["sl"]
-                breach_word  = "이탈"
-            est_amt = r["current_price"] * r["quantity"]
+                breach_word  = "터치(장중 저가)"
+                touch_word   = "장중 저가"
+                touch_val    = fill
+            est_amt = fill * r["quantity"]
             print(
                 f"  - [{r['ticker']}  {r['name']}]"
-                f"  오늘 종가({r['current_price']:,.0f})가"
+                f"  {touch_word}({touch_val:,.0f})가"
                 f" {trigger_word}({side_val:,.0f}) {breach_word}!"
             )
             print(
                 f"    → 즉시 전량 매도 {r['quantity']}주"
+                f"  예상 체결가 {fill:,.0f}원"
                 f"  예상 회수금 {est_amt:,.0f}원"
                 f"  손익률 {r['pnl_pct']:+.1f}%"
             )
@@ -750,27 +808,36 @@ def print_report(
     print(LINE)
 
     # ── 매수 지침 ─────────────────────────────────────────────────────────────
-    if buy_plans:
+    if buy_locked:
+        print(f"🔒 [매수 락아웃] {lock_reason}")
+        print("   → 신규 매수 전면 중단, 현금 보유 권장 (지수 20일선 안착 시 재개)")
+    elif buy_plans:
         print(f"🛒 [내일 아침 시초가 신규 매수 지침]  가용 예수금 {cash:,.0f}원")
+        print("   ※ 배정은 ATR 손절 기반 고정 리스크(종목당 손실 ≤ 총자산 2%) 방식입니다.")
         print()
         for bp in buy_plans:
             c = bp["candidate"]
             p = bp["plan"]
             mode_tag = "야수 돌파" if c["signal"] == "SMA_GOLDEN_CROSS" else "디펜스 눌림목"
             atr_str  = f"{c['atr']:,.0f}원" if not np.isnan(c["atr"]) else "산출 불가"
+            tp_note  = "+25% 고정" if c["signal"] == "SMA_GOLDEN_CROSS" else "ATR×3.5"
             print(
                 f"  - [{c['ticker']}  {c['name']}]"
                 f"  {mode_tag} 포착  (확신도 {c['score']:.1f}pt"
-                f" / 배정 비중 {p['alloc_pct']:.1%})"
+                f" / 투입 비중 {p['alloc_pct']:.1%})"
             )
             print(f"    ▶ 추천 매수 금액 : {p['alloc_cash']:>12,.0f} 원")
             print(
                 f"    ▶ 예상 매수 수량 : 약 {p['qty']} 주"
                 f"  (내일 시초가 부근 진입  /  ATR {atr_str})"
             )
+            print(
+                f"    ▶ 리스크(손절 시 손실) : {p['risk_amt']:>10,.0f} 원"
+                f"  (총자산 {p['risk_pct']:.2f}%)"
+            )
             print(f"    ▶ 진입 후 즉시 설정할 타겟 가격:")
             print(f"       - 🛑 동적 손절가 (SL) : {p['sl']:>10,.0f} 원  (ATR 변동성 반영)")
-            print(f"       - 🎯 목표 익절가 (TP) : {p['tp']:>10,.0f} 원  (+25% 고정)")
+            print(f"       - 🎯 목표 익절가 (TP) : {p['tp']:>10,.0f} 원  ({tp_note})")
             print()
     else:
         print("📭 [매수 지침] 오늘 기준 신규 매수 신호 없음 — 내일 관망")
@@ -812,19 +879,32 @@ def main() -> None:
     analyzer.load()
     is_bear        = analyzer.is_bear_market()
     market_rsi     = analyzer.get_market_rsi()
-    is_overheated  = market_rsi > RSI_OVERHEAT_THRESHOLD
+    index_ok       = analyzer.is_index_above_ma20()
     max_positions  = MAX_POS_BEAR if is_bear else MAX_POS_BULL
     index_summary  = analyzer.get_summary()
 
+    # [개편2·3] 신규 매수 락아웃 판정 — 지수 20일선 아래(위험회피) 또는 RSI 과열
+    is_overheated = market_rsi >= RSI_HARD_LIMIT
+    if not index_ok:
+        buy_locked, lock_reason = True, "KOSPI·KOSDAQ 모두 20일선 아래 (위험 회피)"
+    elif is_overheated:
+        buy_locked, lock_reason = True, f"지수 RSI {market_rsi:.1f} ≥ {RSI_HARD_LIMIT:.0f} 과열"
+    else:
+        buy_locked, lock_reason = False, ""
+
     mode_str  = "디펜스 모드" if is_bear else "야수 모드"
-    heat_str  = f"  ⚠️  RSI {market_rsi:.1f} > {RSI_OVERHEAT_THRESHOLD:.0f} 과열 브레이크 발동 — 베팅 비중 50% 축소" if is_overheated else ""
-    print(f"  → {mode_str}  |  지수 RSI {market_rsi:.1f}  |  최대 보유 {max_positions}종목{heat_str}")
+    lock_str  = f"  🔒 매수 락아웃 — {lock_reason}" if buy_locked else ""
+    print(f"  → {mode_str}  |  지수 RSI {market_rsi:.1f}  |  최대 보유 {max_positions}종목{lock_str}")
     print()
 
     # ── Step 2: 보유 포지션 청산 점검 ─────────────────────────────────────────
     print("[ 2/4 ] 보유 포지션 청산 조건 점검 중...")
     monitor = PositionMonitor(positions)
     monitor.check()
+    # [개편1] 총자산 = 가용현금 + 보유 종목 평가액 (고정 리스크 사이징 기준)
+    held_value  = sum(r["current_price"] * r["quantity"] for r in monitor.results)
+    total_asset = cash + held_value
+    print(f"  💼 총자산 평가액 : {total_asset:>15,.0f} 원 (현금 {cash:,.0f} + 주식 {held_value:,.0f})")
     print()
 
     # ── Step 3: 신규 매수 스크리닝 ────────────────────────────────────────────
@@ -839,22 +919,25 @@ def main() -> None:
     # ── Step 4: 매수 계획 계산 ────────────────────────────────────────────────
     print("[ 4/4 ] 매수 금액·수량·SL/TP 계산 중...")
     buy_plans: list[dict] = []
-    cur_n = n_pos
-    for c in candidates:
-        if cur_n >= max_positions:
-            print(f"  최대 보유 종목 수({max_positions}개) 도달 — 추가 매수 지침 생략")
-            break
-        plan = calc_buy_plan(
-            candidate     = c,
-            cash          = cash,
-            is_overheated = is_overheated,
-            n_positions   = cur_n,
-            max_positions = max_positions,
-        )
-        if plan:
-            buy_plans.append({"candidate": c, "plan": plan})
-            cur_n += 1
-    print(f"  → {len(buy_plans)}개 매수 지침 산출 완료")
+    if buy_locked:
+        print(f"  🔒 매수 락아웃 활성 ({lock_reason}) — 신규 매수 지침 전면 생략")
+    else:
+        cur_n = n_pos
+        for c in candidates:
+            if cur_n >= max_positions:
+                print(f"  최대 보유 종목 수({max_positions}개) 도달 — 추가 매수 지침 생략")
+                break
+            plan = calc_buy_plan(
+                candidate     = c,
+                cash          = cash,
+                total_asset   = total_asset,
+                n_positions   = cur_n,
+                max_positions = max_positions,
+            )
+            if plan:
+                buy_plans.append({"candidate": c, "plan": plan})
+                cur_n += 1
+        print(f"  → {len(buy_plans)}개 매수 지침 산출 완료")
     print()
 
     # ── 통합 리포트 출력 ───────────────────────────────────────────────────────
@@ -863,7 +946,8 @@ def main() -> None:
         index_summary    = index_summary,
         is_bear          = is_bear,
         market_rsi       = market_rsi,
-        is_overheated    = is_overheated,
+        buy_locked       = buy_locked,
+        lock_reason      = lock_reason,
         position_results = monitor.results,
         buy_plans        = buy_plans,
         cash             = cash,

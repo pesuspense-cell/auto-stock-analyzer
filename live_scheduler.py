@@ -12,11 +12,15 @@ live_scheduler.py — 실시간 자동매매 스케줄러
   TELEGRAM_CHAT_ID=<chat id>
 
 설정:
-  SCAN_MARKETS      — 대상 마켓 목록
-  UNIVERSE_N        — 마켓별 유니버스 크기
-  VOLUME_TOP_N      — 거래대금 상위 N (매수 후보 1차 필터)
-  POSITION_PCT      — 정상 베팅 비중 (총자산 대비)
-  POSITION_PCT_BEAR — 하락장 베팅 비중 (KOSDAQ < SMA20 시 적용)
+  SCAN_MARKETS       — 대상 마켓 목록
+  UNIVERSE_N         — 마켓별 유니버스 크기
+  VOLUME_TOP_N       — 거래대금 상위 N (매수 후보 1차 필터)
+  ACCOUNT_CAPITAL    — 리스크 사이징 기준 총자산
+  MAX_RISK_PER_TRADE — 종목당 손절 시 허용 손실 비율(총자산 2%) [개편1]
+  RSI_HARD_LIMIT     — 이 RSI 이상 종목 신규 진입 금지 [개편2]
+
+리스크 관리(backtest.py 동일): ATR 고정 리스크 배정 / RSI 하드필터 /
+연쇄손절 시장필터 락아웃 / 보수적 손절 체결.
 """
 from __future__ import annotations
 
@@ -56,11 +60,23 @@ SCAN_MARKETS      = ["KOSPI", "KOSDAQ"]
 UNIVERSE_N        = 100       # 마켓별 유니버스 크기
 VOLUME_TOP_N      = 30        # 거래대금 상위 N (1차 필터)
 
-POSITION_PCT      = 0.10      # 정상 베팅 비중
-POSITION_PCT_BEAR = 0.05      # 하락장 베팅 비중
+# ── [개편1] 리스크 관리 파라미터 (backtest.py 동일 규칙) ─────────────────────
+ACCOUNT_CAPITAL    = 10_000_000  # 리스크 사이징 기준 총자산 (실제 계좌 규모로 조정)
+MAX_RISK_PER_TRADE = 0.02        # 단일 종목 손절 시 허용 손실 = 총자산의 2%
+MAX_POSITION_PCT   = 0.20        # 단일 종목 평가액 상한 = 총자산의 20% (몰빵 방지)
+SL_FALLBACK_PCT    = 0.93        # ATR 미산출 시 손절 폴백 (-7%)
+SL_SLIPPAGE_PCT    = 0.01        # [개편4] 손절 체결 보수 슬리피지 (-1%)
+
+# ── [개편2] RSI 하드필터 ─────────────────────────────────────────────────────
+RSI_HARD_LIMIT     = 70.0        # 종목 RSI_14 이 값 이상이면 신규 진입 전면 금지
+
+# ── [개편3] 연쇄손절 → 시장 필터 연동 락아웃 ────────────────────────────────
+SL_LOOKBACK_DAYS   = 5           # 연쇄손절 집계 윈도우(일)
+SL_LOCKOUT_COUNT   = 3           # 윈도우 내 SELL_SL 발생 임계 횟수
 
 POSITIONS_FILE = Path(__file__).parent / "live_positions.json"
 ALERTED_FILE   = Path(__file__).parent / "live_alerted.json"
+LOCKOUT_FILE   = Path(__file__).parent / "live_lockout.json"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID",   "")
@@ -147,6 +163,38 @@ def save_alerted(alerted: dict) -> None:
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
+# [개편3] 연쇄손절 락아웃 상태 영속화
+# ══════════════════════════════════════════════════════════════════════════════
+
+def load_lockout() -> dict:
+    """{"sl_dates": [ISO date,...], "locked": bool} 형태의 락아웃 상태."""
+    if LOCKOUT_FILE.exists():
+        try:
+            data = json.loads(LOCKOUT_FILE.read_text(encoding="utf-8"))
+            return {"sl_dates": list(data.get("sl_dates", [])),
+                    "locked":   bool(data.get("locked", False))}
+        except Exception:
+            pass
+    return {"sl_dates": [], "locked": False}
+
+
+def save_lockout(state: dict) -> None:
+    LOCKOUT_FILE.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _calc_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder's RSI — backtest.py / live_screener.py 와 동일."""
+    delta    = close.diff()
+    gain     = delta.where(delta > 0, 0.0)
+    loss     = -delta.where(delta < 0, 0.0)
+    avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    rs       = avg_gain / avg_loss.replace(0.0, np.nan)
+    return (100.0 - (100.0 / (1.0 + rs))).fillna(50.0)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # KOSDAQ 시장 상황 (하락장 여부)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -183,6 +231,51 @@ def is_bear_market() -> bool:
         _bear_cache.update({"ts": now_ts, "value": False})
         return False
 
+
+_recover_cache: dict = {"ts": 0.0, "value": False}   # 1시간 캐시
+
+
+def market_recovered() -> bool:
+    """[개편3] KOSPI 또는 KOSDAQ 중 하나라도 종가가 자기 20일선 위 안착 → 락아웃 해제 조건."""
+    now_ts = time.time()
+    if now_ts - _recover_cache["ts"] < 3600:
+        return _recover_cache["value"]
+    result = False
+    for sym in ("^KS11", "^KQ11"):
+        try:
+            raw = yf.download(sym, period="2mo", auto_adjust=True, progress=False)
+            if raw.empty or len(raw) < 20:
+                continue
+            close = (raw["Close"].iloc[:, 0] if isinstance(raw.columns, pd.MultiIndex)
+                     else raw["Close"]).dropna()
+            sma20 = float(close.rolling(20).mean().iloc[-1])
+            if float(close.iloc[-1]) > sma20:
+                result = True
+                break
+        except Exception as e:
+            logger.warning(f"{sym} 20일선 조회 실패: {e}")
+    _recover_cache.update({"ts": now_ts, "value": result})
+    return result
+
+
+def resolve_stop_loss(price: float, atr: float, tag: str) -> float:
+    """[개편1] 신호별 손절가 — backtest.py _resolve_stop_loss 동일."""
+    if atr > 0:
+        if tag == "SMA_GOLDEN_CROSS":
+            return max(price - 2.5 * atr, price * 0.92)
+        return price - 2.0 * atr          # 추세추종 등
+    return price * SL_FALLBACK_PCT
+
+
+def calc_position_qty(price: float, stop_loss: float, total_asset: float) -> int:
+    """[개편1] ATR 손절 기반 고정 리스크 수량 — 손절 시 손실 = 총자산의 2% 고정."""
+    risk_per_share = price - stop_loss
+    if risk_per_share <= 0 or price <= 0:
+        return 0
+    qty = int(total_asset * MAX_RISK_PER_TRADE / risk_per_share)
+    qty = min(qty, int(total_asset * MAX_POSITION_PCT / price))   # 20% 비중 캡
+    return max(qty, 0)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 종목 데이터 다운로드 + 지표 계산
 # ══════════════════════════════════════════════════════════════════════════════
@@ -211,6 +304,7 @@ def fetch_ticker_data(tickers: list[str]) -> dict[str, pd.DataFrame]:
                         continue
                     df = _flatten_columns(df)
                     df = _add_indicators(df)
+                    df["RSI_14"] = _calc_rsi(df["Close"])   # [개편2] 과열 하드필터용
                     result[ticker] = df
                 except Exception:
                     continue
@@ -253,6 +347,10 @@ def screen_buy_candidates(
         prev_sma5 = float(prev.get("SMA_5", np.nan))
         if any(np.isnan(v) for v in [sma5, sma20, prev_sma5]):
             continue
+        # [개편2] RSI 하드필터 — 과열 종목 신규 진입 금지(상투 추격 차단)
+        stock_rsi = float(row.get("RSI_14", np.nan))
+        if not np.isnan(stock_rsi) and stock_rsi >= RSI_HARD_LIMIT:
+            continue
         if strategy.is_entry_signal(sma5, sma20, prev_sma5):
             tag = "SMA_GOLDEN_CROSS" if prev_sma5 <= sma20 else "SMA_TREND_FOLLOW"
             candidates[ticker] = tag
@@ -275,43 +373,55 @@ def check_sell_signals(
             continue
         row   = df.iloc[-1]
         price = float(row.get("Close", 0))
+        high  = float(row.get("High",  price))
+        low   = float(row.get("Low",   price))
+        open_ = float(row.get("Open",  price))
         atr   = float(row.get("ATR",   np.nan))
         if price <= 0:
             continue
 
         atr_val     = atr if not np.isnan(atr) and atr > 0 else -1.0
         entry_price = float(pos.get("entry_price", 0))
-        peak_price  = max(float(pos.get("peak_price", price)), price)
+        # 트레일링은 '직전 최고가' 기준 (당일 고점-손절 동시 발생 방지)
+        prev_peak   = float(pos.get("peak_price", price))
         take_profit = float(pos.get("take_profit", -1))
         stop_loss   = float(pos.get("stop_loss",   -1))
 
-        positions[ticker]["peak_price"] = peak_price  # 최고가 갱신
-
         action = reason = None
+        fill_price = price
 
-        if take_profit > 0 and price >= take_profit:
+        # [개편4] 보수적 체결: 손절을 익절보다 먼저 검사, 장중 저가가 손절선 터치 시 청산
+        trailing_sl = strategy.get_trailing_stop(prev_peak, atr_val) if atr_val > 0 else -1.0
+        hard_sl     = stop_loss   if stop_loss   > 0 else float("-inf")
+        ts_val      = trailing_sl if trailing_sl > 0 else float("-inf")
+        effective   = max(hard_sl, ts_val)
+
+        if effective > float("-inf") and low <= effective:
+            fill_price = effective * (1.0 - SL_SLIPPAGE_PCT)
+            if open_ < effective:               # 갭하락: 시초가가 손절선 하회
+                fill_price = min(fill_price, open_)
+            fill_price = max(fill_price, low)   # 당일 최저가 밑으로는 체결 불가
+            if trailing_sl > 0 and trailing_sl >= stop_loss:
+                action = "SELL_TS"
+                reason = f"트레일링 스톱 (최고가 {prev_peak:,.0f} → 청산선 {effective:,.0f}, 체결 {fill_price:,.0f})"
+            else:
+                action = "SELL_SL"
+                reason = f"손절선 터치 (손절선 {stop_loss:,.0f}, 체결 {fill_price:,.0f})"
+        elif take_profit > 0 and high >= take_profit:
             action = "SELL_TP"
+            fill_price = take_profit
             reason = f"익절 목표가 도달 ({take_profit:,.0f})"
         else:
-            trailing_sl = strategy.get_trailing_stop(peak_price, atr_val) if atr_val > 0 else -1.0
-            hard_sl     = stop_loss   if stop_loss   > 0 else float("-inf")
-            ts_val      = trailing_sl if trailing_sl > 0 else float("-inf")
-            effective   = max(hard_sl, ts_val)
-            if effective > float("-inf") and price <= effective:
-                if trailing_sl > 0 and trailing_sl >= stop_loss:
-                    action = "SELL_TS"
-                    reason = f"트레일링 스톱 (최고가 {peak_price:,.0f} → 청산선 {effective:,.0f})"
-                else:
-                    action = "SELL_SL"
-                    reason = f"손절가 도달 ({stop_loss:,.0f})"
+            # 미청산 — 당일 고가를 peak 에 반영 (다음 틱 트레일링 추적용)
+            positions[ticker]["peak_price"] = max(prev_peak, high)
 
         if action:
-            pnl = (price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
+            pnl = (fill_price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
             signals.append({
                 "ticker":      ticker,
                 "name":        pos.get("name", ticker),
                 "action":      action,
-                "price":       price,
+                "price":       fill_price,
                 "entry_price": entry_price,
                 "pnl_pct":     pnl,
                 "reason":      reason,
@@ -328,9 +438,11 @@ def run_scan(
     strategy: TradingStrategy,
     positions: dict,
     alerted: dict,
+    lockout: dict,
     bear: bool,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, dict]:
     now_str = datetime.now(KST).strftime("%H:%M")
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
     logger.info(f"=== 스캔 {now_str} ({'하락장' if bear else '상승장'}) ===")
 
     # 유니버스 + 보유 종목 모두 포함
@@ -342,7 +454,7 @@ def run_scan(
     ticker_data = fetch_ticker_data(tickers)
     if not ticker_data:
         logger.warning("데이터 없음 — 스캔 스킵")
-        return positions, alerted
+        return positions, alerted, lockout
 
     # ── 매도 우선 ──────────────────────────────────────────────────────────────
     sell_signals = check_sell_signals(positions, ticker_data, strategy)
@@ -354,7 +466,7 @@ def run_scan(
             text = (
                 f"{icon} <b>[매도 신호] {sig['name']} ({ticker})</b>\n"
                 f"유형: {sig['action']}\n"
-                f"현재가: {sig['price']:,.0f}원\n"
+                f"체결가: {sig['price']:,.0f}원\n"
                 f"진입가: {sig['entry_price']:,.0f}원\n"
                 f"손익: {sig['pnl_pct']:+.1f}%\n"
                 f"사유: {sig['reason']}"
@@ -362,16 +474,37 @@ def run_scan(
             if send_telegram(text):
                 alerted[alert_key] = now_str
                 logger.info(f"매도 알림 발송: {ticker} {sig['action']}")
+        # [개편3] 연쇄손절 집계 — SELL_SL 발생 일자 기록
+        if sig["action"] == "SELL_SL":
+            lockout["sl_dates"].append(today_str)
         del positions[ticker]
 
-    # ── 매수 후보 스크리닝 ──────────────────────────────────────────────────────
+    # ── [개편3] 시장 필터 연동 락아웃 평가 ──────────────────────────────────────
+    cutoff = (datetime.now(KST) - timedelta(days=SL_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    lockout["sl_dates"] = [d for d in lockout["sl_dates"] if d >= cutoff]
+    if lockout["locked"]:
+        if market_recovered():
+            lockout["locked"] = False
+            logger.info("🔓 락아웃 해제 — 지수 20일선 안착")
+            send_telegram("🔓 <b>락아웃 해제</b> — KOSPI/KOSDAQ 20일선 안착, 신규 매수 재개")
+    elif len(lockout["sl_dates"]) >= SL_LOCKOUT_COUNT:
+        lockout["locked"] = True
+        logger.info(f"🔒 락아웃 발동 — 최근 {SL_LOOKBACK_DAYS}일 SELL_SL {len(lockout['sl_dates'])}회")
+        send_telegram(
+            f"🔒 <b>연쇄손절 락아웃 발동</b>\n"
+            f"최근 {SL_LOOKBACK_DAYS}일 SELL_SL {len(lockout['sl_dates'])}회 → "
+            f"지수(KOSPI/KOSDAQ) 20일선 안착까지 신규 매수 전면 중단(현금 보유)."
+        )
+
+    # ── 매수 후보 스크리닝 (락아웃 중이면 전면 스킵) ────────────────────────────
+    if lockout["locked"]:
+        logger.info("락아웃 활성 — 신규 매수 스킵")
+        return positions, alerted, lockout
+
     buy_candidates = screen_buy_candidates(ticker_data, strategy)
     new_buys = {t: tag for t, tag in buy_candidates.items() if t not in positions}
 
     if new_buys:
-        today_str    = datetime.now(KST).strftime("%Y-%m-%d")
-        sizing_label = f"{POSITION_PCT_BEAR:.0%}" if bear else f"{POSITION_PCT:.0%}"
-
         for ticker, tag in new_buys.items():
             alert_key = f"buy_{ticker}_{today_str}"
             if alert_key in alerted:
@@ -387,19 +520,30 @@ def run_scan(
                 continue
 
             atr_val = atr_raw if not np.isnan(atr_raw) and atr_raw > 0 else -1.0
-            tp = strategy.get_exit_price(price, atr_val, is_profit=True)  if atr_val > 0 else -1.0
-            sl = strategy.get_exit_price(price, atr_val, is_profit=False) if atr_val > 0 else -1.0
+            # [개편1] 신호별 손절가 + ATR 고정 리스크 사이징
+            sl = resolve_stop_loss(price, atr_val, tag)
+            if sl <= 0 or sl >= price:
+                continue
+            tp = price * 1.25 if tag == "SMA_GOLDEN_CROSS" else (
+                strategy.get_exit_price(price, atr_val, is_profit=True) if atr_val > 0 else price * 1.25
+            )
+            qty = calc_position_qty(price, sl, ACCOUNT_CAPITAL)
+            if qty <= 0:
+                continue
+            invest   = qty * price
+            risk_amt = (price - sl) * qty
 
-            market_label = "⚠️ 하락장 (베팅 축소)" if bear else "✅ 상승장"
+            market_label = "⚠️ 하락장" if bear else "✅ 상승장"
             tag_label    = {"SMA_GOLDEN_CROSS": "SMA 골든크로스", "SMA_TREND_FOLLOW": "SMA 추세 추종"}.get(tag, tag)
             text = (
                 f"🟢 <b>[매수 신호] {universe_map.get(ticker, ticker)} ({ticker})</b>\n"
                 f"신호: {tag_label}\n"
                 f"현재가: {price:,.0f}원\n"
-                f"익절 목표: {tp:,.0f}원\n" if tp > 0 else ""
-                f"손절선: {sl:,.0f}원\n"   if sl > 0 else ""
-                f"시장: {market_label}\n"
-                f"베팅 비중: {sizing_label}"
+                f"추천 수량: 약 {qty}주 (투입 {invest:,.0f}원 / 비중 {invest / ACCOUNT_CAPITAL * 100:.0f}%)\n"
+                f"익절 목표: {tp:,.0f}원\n"
+                f"손절선: {sl:,.0f}원\n"
+                f"리스크: {risk_amt:,.0f}원 (총자산 {risk_amt / ACCOUNT_CAPITAL * 100:.2f}%)\n"
+                f"시장: {market_label}"
             )
             if send_telegram(text):
                 alerted[alert_key] = now_str
@@ -413,12 +557,13 @@ def run_scan(
                 "take_profit": tp,
                 "stop_loss":   sl,
                 "signal_tag":  tag,
+                "quantity":    qty,
                 "entry_time":  datetime.now(KST).isoformat(),
             }
     else:
         logger.info("매수 신호 없음")
 
-    return positions, alerted
+    return positions, alerted, lockout
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 타이밍 헬퍼
@@ -463,7 +608,9 @@ def main() -> None:
     print("=" * 60)
     print(f"  마켓  : {SCAN_MARKETS}")
     print(f"  주기  : {SCAN_INTERVAL_MIN}분  (09:00 ~ 15:20 KST, 평일)")
-    print(f"  베팅  : 정상 {POSITION_PCT:.0%}  / 하락장 {POSITION_PCT_BEAR:.0%}")
+    print(f"  리스크: 종목당 총자산 {MAX_RISK_PER_TRADE:.0%} 고정 / 비중 상한 {MAX_POSITION_PCT:.0%} "
+          f"(기준 자본 {ACCOUNT_CAPITAL:,.0f}원)")
+    print(f"  필터  : RSI≥{RSI_HARD_LIMIT:.0f} 진입금지 / 연쇄손절 {SL_LOCKOUT_COUNT}회→20일선 안착까지 락아웃")
     print(f"  텔레그램 chat_id: {TELEGRAM_CHAT_ID}")
     print("=" * 60)
 
@@ -476,6 +623,7 @@ def main() -> None:
     universe_date: str            = ""
     positions  = load_positions()
     alerted:   dict[str, str]     = {}
+    lockout    = load_lockout()   # [개편3] 연쇄손절 락아웃 상태 복원
 
     while True:
         now = datetime.now(KST)
@@ -524,12 +672,15 @@ def main() -> None:
 
         # ── 스캔 실행 ─────────────────────────────────────────────────────────
         try:
-            positions, alerted = run_scan(universe_map, strategy, positions, alerted, bear)
+            positions, alerted, lockout = run_scan(
+                universe_map, strategy, positions, alerted, lockout, bear
+            )
         except Exception as e:
             logger.error(f"스캔 오류: {e}", exc_info=True)
 
         save_positions(positions)
         save_alerted(alerted)
+        save_lockout(lockout)
 
         sleep_until_next_tick()
 

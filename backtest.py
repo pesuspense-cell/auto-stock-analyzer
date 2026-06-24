@@ -3,15 +3,25 @@ backtest.py — 듀얼 모드(야수 모드 + 디펜스 모드) 백테스팅 통
 
 [야수 모드 - 상승장]  벤치마크 지수 SMA_60 위 (KOSPI·KOSDAQ 모두)
   → SMA_GOLDEN_CROSS: 거래대금 3배+ 폭발 + 5일선 20일선 돌파 → 추격 돌파 매매
-  → MAX 8종목 동시 보유, 물타기 금지, 비중 20/35/50%
-  → [Step 2] 지수 RSI_14 > 75 과열 시 비중 자동 절반으로 축소
-  → [Step 3] 진입 시 ATR 기반 동적 손절선 (2.5×ATR vs -8% 중 타이트한 쪽)
+  → MAX 8종목 동시 보유, 물타기 금지
 
 [디펜스 모드 - 하락장]  벤치마크 지수 SMA_60 아래 (모든 시장 동시)
   → DRY_VOLUME_NULIM: 10일 내 5배+ 폭발 후 거래량 70% 이하 급감 눌림목
-  → MAX 3종목 강한 통제, 물타기 최대 2회, 비중 20/35/50%
+  → MAX 3종목 강한 통제, 물타기 최대 2회 (단, 종목 비중 상한 내에서만)
 
-- MDD: 실제 자산 가치(max_peak_asset) 기준 낙폭 비율 계산 [Step 1]
+[리스크 관리 모듈 — MDD -97% 파산 방지 4대 개편]
+  1) ATR 기반 고정 리스크 배정(Position Sizing):
+     수량 = (총자산 × MAX_RISK_PER_TRADE 0.02) / (진입가 − 손절가)
+     → 손절선 청산 시 계좌 타격이 '항상 총자산의 2%'로 고정. 자산 증가 시 몰빵 차단.
+     → 추가로 단일 종목 평가액을 총자산의 MAX_POSITION_PCT(20%)로 캡.
+  2) RSI 하드 필터: 종목 RSI ≥ 70 구간은 '비중 축소 매수' 폐지하고 신규 진입 전면 금지(Lock).
+     승률 높은 DRY_VOLUME_NULIM 우선순위 가산.
+  3) 시장 필터 연동 락아웃: 최근 5일 SELL_SL 3회+ → 일수 기준이 아니라
+     'KOSPI 또는 KOSDAQ 가 각 20일선 위 안착'할 때까지 신규 매수 전면 중단(현금 보유).
+  4) 보수적 체결 엔진: 일봉 저가(Low)가 손절선을 터치하면 종가가 아니라
+     '손절선 −1% 슬리피지' (갭하락 시는 시초가)로 당일 즉시 청산 처리.
+
+- MDD: 실제 자산 가치(max_peak_asset) 기준 낙폭 비율 계산
 - UI 완벽 지원: StockScreener.screen() 및 _score_chunk() 연동
 """
 from __future__ import annotations
@@ -153,8 +163,17 @@ class BacktestEngine:
     MAX_POS_BEAR    = 3    # 디펜스 모드(하락장): 최대 3종목
     MAX_REBUY_COUNT = 2    # 물타기 최대 허용 횟수 (DRY_VOLUME_NULIM 전용)
 
-    # [Step 2] 야수 모드 RSI 과열 브레이크 임계값
-    RSI_OVERHEAT_THRESHOLD = 75.0
+    # ── [개편 1] ATR 기반 고정 리스크 배정 파라미터 ──────────────────────────
+    MAX_RISK_PER_TRADE = 0.02   # 단일 종목 손절 시 허용 손실 = 총자산의 2%
+    MAX_POSITION_PCT   = 0.20   # 단일 종목 평가액 상한 = 총자산의 20% (몰빵 방지 캡)
+    SL_FALLBACK_PCT    = 0.93   # ATR 미산출 시 손절 폴백 (-7%)
+
+    # ── [개편 2] RSI 하드 필터: 이 값 이상이면 신규 진입 전면 금지 ──────────
+    RSI_HARD_LIMIT      = 70.0
+    NULIM_PRIORITY_BONUS = 8.0  # 승률 높은 눌림목 전략 확신도 가산점
+
+    # ── [개편 4] 보수적 체결: 손절선 대비 슬리피지 비율 ──────────────────────
+    SL_SLIPPAGE_PCT = 0.01      # 손절 체결 시 손절선 -1% 보수 반영
 
     BENCHMARK_INDEXMAP = {
         "KOSPI":  "^KS11",
@@ -190,8 +209,9 @@ class BacktestEngine:
         self.trade_log:    list[dict] = []
         self.equity_curve: list[dict] = []
         self._market_index_dfs: dict[str, pd.DataFrame] = {}
-        # [연쇄 손절 락아웃] 최근 5일 SELL_SL 3회 이상 → 3일간 매수 정지 만료일
-        self._sl_lockout_until: pd.Timestamp | None = None
+        # [개편 3] 시장 필터 연동 락아웃: 최근 5일 SELL_SL 3회+ 발동 →
+        # KOSPI/KOSDAQ 중 하나가 각 20일선 위 안착할 때까지 신규 매수 전면 중단
+        self._sl_lockout_active: bool = False
 
     # ── 데이터 로드 ──────────────────────────────────────────────────────────
 
@@ -248,6 +268,10 @@ class BacktestEngine:
                     # SMA_5 보정: stock_ai._add_indicators 미포함 시 인라인 계산
                     if "SMA_5" not in df.columns:
                         df["SMA_5"] = df["Close"].rolling(5).mean()
+
+                    # [개편 2] 종목별 Wilder RSI_14 — 진입 직전 과열 하드필터용
+                    # stock_ai 의 SMA식 RSI(컬럼명 "RSI")와 별개로 일관된 Wilder 방식 사용
+                    df["RSI_14"] = self._calc_rsi(df["Close"], period=14)
 
                     ticker_data[ticker] = df
                 except Exception:
@@ -350,13 +374,39 @@ class BacktestEngine:
 
     # ── 연쇄 손절 락아웃 ─────────────────────────────────────────────────────
 
-    def _update_sl_lockout(self, date: pd.Timestamp) -> None:
-        """최근 5일 내 SELL_SL 3회 이상이면 지수 장세와 무관하게 3일간 매수 정지.
+    def _index_above_ma20(self, date: pd.Timestamp) -> bool:
+        """KOSPI 또는 KOSDAQ 중 '하나라도' 종가가 자기 20일선 위에 안착했는가."""
+        for _, df in self._market_index_dfs.items():
+            if "SMA_20" not in df.columns:
+                continue
+            idx_loc = df.index.get_indexer([date], method="ffill")[0]
+            if idx_loc < 0:
+                continue
+            row   = df.iloc[idx_loc]
+            close = float(row.get("Close", np.nan))
+            sma20 = float(row.get("SMA_20", np.nan))
+            if np.isnan(close) or np.isnan(sma20):
+                continue
+            if close > sma20:
+                return True
+        return False
 
-        이미 락아웃 활성 중에는 재발동·연장하지 않는다 (만료 후 재평가).
+    def _update_sl_lockout(self, date: pd.Timestamp) -> None:
+        """[개편 3] 연쇄손절 락아웃 — 일수 기준 폐지, 시장 필터(20일선) 연동.
+
+        - 비활성 상태: 최근 5일 내 SELL_SL 3회 이상이면 락아웃 발동(신규 매수 전면 중단).
+        - 활성 상태:  KOSPI 또는 KOSDAQ 가 각 20일선 위에 안착하면 해제. 그 전까지는
+                      며칠이 지나든 신규 매수를 하지 않고 현금을 보유한다.
         """
-        if self._sl_lockout_until is not None and date <= self._sl_lockout_until:
-            return  # 현재 락아웃 중 — 재검사 불필요
+        if self._sl_lockout_active:
+            # 해제 조건: 지수 20일선 안착 (시장 회복 확인)
+            if self._index_above_ma20(date):
+                self._sl_lockout_active = False
+                print(
+                    f"  🔓 락아웃 해제 [{date.strftime('%Y-%m-%d')}] "
+                    f"지수 20일선 안착 → 신규 매수 재개"
+                )
+            return
 
         window_start = date - pd.Timedelta(days=5)
         sl_count = sum(
@@ -365,15 +415,15 @@ class BacktestEngine:
             and window_start <= pd.Timestamp(t["date"]) <= date
         )
         if sl_count >= 3:
-            self._sl_lockout_until = date + pd.Timedelta(days=3)
+            self._sl_lockout_active = True
             print(
-                f"  🔒 연쇄손절 락아웃 [{date.strftime('%Y-%m-%d')}] "
+                f"  🔒 연쇄손절 락아웃 발동 [{date.strftime('%Y-%m-%d')}] "
                 f"최근 5일 SELL_SL {sl_count}회 → "
-                f"{self._sl_lockout_until.strftime('%Y-%m-%d')}까지 매수 정지"
+                f"지수(KOSPI/KOSDAQ) 20일선 안착까지 매수 전면 중단"
             )
 
-    def _is_sl_lockout_active(self, date: pd.Timestamp) -> bool:
-        return self._sl_lockout_until is not None and date <= self._sl_lockout_until
+    def _is_sl_lockout_active(self, date: pd.Timestamp | None = None) -> bool:
+        return self._sl_lockout_active
 
     # ── 확신도 점수 연산 ──────────────────────────────────────────────────────
 
@@ -394,7 +444,8 @@ class BacktestEngine:
         else:
             vol_bonus = 10.0
 
-        return min(100.0, round(base + gap_bonus + vol_bonus, 1))
+        # [개편 2] 승률 높은 눌림목 전략 우선순위 가산 (추격 매매 대비 우대)
+        return min(100.0, round(base + gap_bonus + vol_bonus + self.NULIM_PRIORITY_BONUS, 1))
 
     def _score_entry_golden(self, df: pd.DataFrame, idx: int, vol_ratio: float) -> float:
         """SMA_GOLDEN_CROSS: 거래대금 배율 × 당일 모멘텀 × 이격도 기반 확신도 (50~100pt)"""
@@ -578,6 +629,44 @@ class BacktestEngine:
         sorted_c = sorted(candidates.items(), key=lambda x: x[1][1], reverse=True)
         return dict(sorted_c[: max(self.news_candidate_n, self.MAX_POS_BULL * 2)])
 
+    # ── [개편 1] 리스크 관리 모듈: 손절가 산정 + 고정 리스크 포지션 사이징 ────
+
+    def _resolve_stop_loss(self, price: float, atr: float, signal_tag: str) -> float:
+        """진입가·ATR·전략별 손절가 산정 (포지션 사이징/청산 공통 기준).
+
+        - SMA_GOLDEN_CROSS: max(진입가−2.5×ATR, 진입가×0.92) = 더 타이트한 쪽
+        - DRY_VOLUME_NULIM 등: 진입가−2.0×ATR (strategy.get_exit_price)
+        - ATR 미산출 시: 진입가 × SL_FALLBACK_PCT(-7%)
+        """
+        if signal_tag == "SMA_GOLDEN_CROSS":
+            if atr > 0:
+                return max(price - 2.5 * atr, price * 0.92)
+            return price * self.SL_FALLBACK_PCT
+        if atr > 0:
+            sl = self.strategy.get_exit_price(price, atr, is_profit=False)
+            if sl > 0:
+                return sl
+        return price * self.SL_FALLBACK_PCT
+
+    def _calc_position_qty(
+        self, price: float, stop_loss: float, total_asset: float, cash: float
+    ) -> int:
+        """ATR 손절 기반 고정 리스크 배정 — 자산 증가 시 몰빵 차단의 핵심.
+
+        수량 = (총자산 × MAX_RISK_PER_TRADE) / (진입가 − 손절가)
+        → 손절선 청산 시 손실이 항상 '총자산의 2%'로 고정.
+        추가 안전캡: ① 단일 종목 평가액 ≤ 총자산 × MAX_POSITION_PCT
+                     ② 매수금액 ≤ 가용현금 × 95%
+        """
+        risk_per_share = price - stop_loss
+        if risk_per_share <= 0 or price <= 0:
+            return 0
+        risk_budget = total_asset * self.MAX_RISK_PER_TRADE
+        qty = int(risk_budget / risk_per_share)               # 고정 리스크 수량
+        qty = min(qty, int((total_asset * self.MAX_POSITION_PCT) / price))  # 비중 상한 캡
+        qty = min(qty, int((cash * 0.95) / price))            # 현금 하드캡
+        return max(qty, 0)
+
     # ── 매매 집행 ─────────────────────────────────────────────────────────────
 
     def _try_sell(
@@ -593,36 +682,31 @@ class BacktestEngine:
             return
 
         row   = df.iloc[idx]
-        price = float(row["Close"])
+        close = float(row["Close"])
+        high  = float(row.get("High", close))
+        low   = float(row.get("Low",  close))
+        open_ = float(row.get("Open", close))
         atr   = float(row.get("ATR", np.nan))
         if np.isnan(atr) or atr <= 0:
             atr = -1.0
 
-        pos.peak_price = max(pos.peak_price, price)
-
-        # 고정 익절선 도달
-        if pos.take_profit > 0 and price >= pos.take_profit:
-            qty = self.simulator.portfolio.get(ticker, 0)
-            if qty and self.simulator.execute_sell(ticker, price, qty):
-                pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
-                self._log_trade(
-                    date_str, ticker, "SELL_TP", price, qty,
-                    f"익절 달성 (목표: {pos.take_profit:,.0f}, 손익: {pnl_pct:+.1f}%)",
-                    entry_price=pos.entry_price, signal_tag=pos.signal_tag,
-                )
-                del self.positions[ticker]
-            return
-
-        # 트레일링 스톱 / 하드 손절선
+        # 트레일링 스톱은 '직전까지의 최고가' 기준으로 산정 (당일 고점-손절 동시 발생 방지)
         trailing_sl  = self.strategy.get_trailing_stop(pos.peak_price, atr) if atr > 0 else -1.0
         hard_sl      = pos.stop_loss if pos.stop_loss > 0 else float("-inf")
         ts_val       = trailing_sl   if trailing_sl    > 0 else float("-inf")
         effective_sl = max(hard_sl, ts_val)
 
-        if effective_sl > float("-inf") and price <= effective_sl:
-            qty = self.simulator.portfolio.get(ticker, 0)
-            if qty and self.simulator.execute_sell(ticker, price, qty):
-                pnl_pct    = (price - pos.entry_price) / pos.entry_price * 100
+        # ── [개편 4] 손절/트레일링 우선 체크 — 보수적 체결 ─────────────────────
+        # 일봉 저가(Low)가 손절선을 터치했다면 종가가 아니라 '손절선 -1% 슬리피지'로
+        # 당일 즉시 청산. 갭하락으로 시초가가 손절선보다 더 낮으면 시초가로 체결.
+        if effective_sl > float("-inf") and low <= effective_sl:
+            fill = effective_sl * (1.0 - self.SL_SLIPPAGE_PCT)
+            if open_ < effective_sl:          # 갭하락: 시초가가 손절선 하회
+                fill = min(fill, open_)
+            fill = max(fill, low)             # 당일 최저가 밑으로는 체결 불가
+            qty  = self.simulator.portfolio.get(ticker, 0)
+            if qty and self.simulator.execute_sell(ticker, fill, qty):
+                pnl_pct    = (fill - pos.entry_price) / pos.entry_price * 100
                 action     = "SELL_TS" if trailing_sl > 0 and trailing_sl >= pos.stop_loss else "SELL_SL"
                 reason_txt = (
                     f"트레일링스톱 작동 (선: {effective_sl:,.0f})"
@@ -630,29 +714,53 @@ class BacktestEngine:
                     else f"손절선 이탈 ({pos.stop_loss:,.0f})"
                 )
                 self._log_trade(
-                    date_str, ticker, action, price, qty,
-                    f"{reason_txt} [손익: {pnl_pct:+.1f}%]",
+                    date_str, ticker, action, fill, qty,
+                    f"{reason_txt} [체결 {fill:,.0f} / 손익: {pnl_pct:+.1f}%]",
                     entry_price=pos.entry_price, signal_tag=pos.signal_tag,
                 )
                 del self.positions[ticker]
             return
 
-        # 분할 매수(물타기): DRY_VOLUME_NULIM 전용, 최대 MAX_REBUY_COUNT회
+        # ── 고정 익절선 도달 (고가 기준, 목표가 체결) ─────────────────────────
+        if pos.take_profit > 0 and high >= pos.take_profit:
+            fill = pos.take_profit
+            if open_ > pos.take_profit:        # 갭상승: 시초가가 목표가 상회
+                fill = open_
+            fill = min(fill, high)
+            qty  = self.simulator.portfolio.get(ticker, 0)
+            if qty and self.simulator.execute_sell(ticker, fill, qty):
+                pnl_pct = (fill - pos.entry_price) / pos.entry_price * 100
+                self._log_trade(
+                    date_str, ticker, "SELL_TP", fill, qty,
+                    f"익절 달성 (목표: {pos.take_profit:,.0f}, 손익: {pnl_pct:+.1f}%)",
+                    entry_price=pos.entry_price, signal_tag=pos.signal_tag,
+                )
+                del self.positions[ticker]
+            return
+
+        # 미청산 — 당일 고가를 peak 에 반영 (다음 봉 트레일링 추적용)
+        pos.peak_price = max(pos.peak_price, high)
+
+        # ── 분할 매수(물타기): DRY_VOLUME_NULIM 전용, 최대 MAX_REBUY_COUNT회 ───
         # GOLDEN_CROSS 추격 매매는 물타기 금지 (달리는 말에서 내리는 전략)
         if pos.signal_tag == "SMA_GOLDEN_CROSS":
             return
 
         if (pos.rebuy_count < self.MAX_REBUY_COUNT
-                and self.strategy.is_rebuy_signal(price, pos.entry_price, pos.rebuy_count)):
+                and self.strategy.is_rebuy_signal(close, pos.entry_price, pos.rebuy_count)):
+            # [개편 1] 물타기도 종목 비중 상한(MAX_POSITION_PCT) 내에서만 허용 → 몰빵 방지
             total_asset = self.simulator.get_total_asset(current_prices)
-            rebuy_pct   = pos.allocated_pct if pos.allocated_pct > 0 else 0.10
-            alloc_cash  = min(total_asset * rebuy_pct, self.simulator.cash * 0.9)
-
-            qty = int(alloc_cash / price)
-            if qty > 0 and self.simulator.execute_buy(ticker, price, qty):
+            held_qty    = self.simulator.portfolio.get(ticker, 0)
+            cur_value   = held_qty * close
+            room        = total_asset * self.MAX_POSITION_PCT - cur_value
+            if room < close:
+                return  # 이미 비중 상한 도달 — 추가 매수 불가
+            alloc_cash = min(room, self.simulator.cash * 0.9)
+            add_qty    = int(alloc_cash / close)
+            if add_qty > 0 and self.simulator.execute_buy(ticker, close, add_qty):
                 pos.rebuy_count += 1
                 self._log_trade(
-                    date_str, ticker, f"REBUY#{pos.rebuy_count}", price, qty,
+                    date_str, ticker, f"REBUY#{pos.rebuy_count}", close, add_qty,
                     f"눌림목 분할 추가 물타기 [배정 {alloc_cash:,.0f}원]",
                     signal_tag=pos.signal_tag,
                 )
@@ -682,57 +790,39 @@ class BacktestEngine:
         if self.simulator.cash < price:
             return
 
-        # 확신도 점수대별 동적 배분 스케일링
-        if score >= 85:
-            alloc_pct = 0.50    # 강한 주도주 → 자산의 50%
-        elif score >= 70:
-            alloc_pct = 0.35    # 중상위 확신 → 35%
-        elif score >= 55:
-            alloc_pct = 0.20    # 기본 확신 → 20%
-        else:
+        # 확신도 품질 필터 (배정 비중이 아니라 '진입 자격' 게이트 — 55pt 미만 컷)
+        if score < 55:
             return
 
-        # ── [Step 2] 야수 모드 지수 RSI 과열 브레이크 ──────────────────────────
-        # RSI_14 > 75인 극도 탐욕·과열 구간: 투자 비중을 정확히 절반으로 축소
-        market_rsi     = 50.0
-        rsi_overheated = False
+        # ── [개편 2] RSI 하드 필터 — 과열 구간 신규 진입 전면 금지(Lock) ────────
+        # 기존 'RSI>75 비중 절반' 로직 완전 폐기. 종목 자신의 RSI_14 ≥ 70 이면
+        # 상투 추격을 원천 차단(진입 자체 금지).
+        stock_rsi = float(row.get("RSI_14", np.nan))
+        if not np.isnan(stock_rsi) and stock_rsi >= self.RSI_HARD_LIMIT:
+            return
+        # 야수 모드(추격 돌파)는 시장 지수 과열도 추가 차단
         if signal_tag == "SMA_GOLDEN_CROSS":
-            market_rsi = self._get_market_rsi(pd.Timestamp(date_str))
-            if market_rsi > self.RSI_OVERHEAT_THRESHOLD:
-                alloc_pct     *= 0.5   # 20%→10%, 35%→17.5%, 50%→25%
-                rsi_overheated = True
-        # ────────────────────────────────────────────────────────────────────────
+            if self._get_market_rsi(pd.Timestamp(date_str)) >= self.RSI_HARD_LIMIT:
+                return
+
+        # ── [개편 1] 손절가 먼저 산정 → ATR 기반 고정 리스크 포지션 사이징 ──────
+        sl = self._resolve_stop_loss(price, atr, signal_tag)
+        if sl <= 0 or sl >= price:
+            return
 
         total_asset = self.simulator.get_total_asset(current_prices)
-        alloc_cash  = total_asset * alloc_pct
-
-        # [안전장치 3] 실시간 예수금 하드캡 락
-        if alloc_cash > self.simulator.cash:
-            alloc_cash = self.simulator.cash * 0.9
-
-        qty = int(alloc_cash / price)
+        qty = self._calc_position_qty(price, sl, total_asset, self.simulator.cash)
         if qty <= 0:
             return
 
         if not self.simulator.execute_buy(ticker, price, qty):
             return
 
-        tp = self.strategy.get_exit_price(price, atr, is_profit=True)  if atr > 0 else -1.0
-        sl = self.strategy.get_exit_price(price, atr, is_profit=False) if atr > 0 else -1.0
-
-        # ── 야수 모드 추격 매매 전용 익절/손절 세팅 ──────────────────────────────
+        # 익절: 야수 모드 +25% 고정 / 그 외 ATR×3.5
         if signal_tag == "SMA_GOLDEN_CROSS":
-            tp = price * 1.25   # 목표 수익률 +25% 고정 익절
-
-            # [Step 3] 변동성(ATR) 기반 동적 손절선 — 슬리피지 과잉 손절 방어
-            # entry - 2.5×ATR 과 entry × 0.92(-8%) 중 '더 타이트한(주가에 가까운)' 값 선택
-            if atr > 0:
-                sl_atr   = price - (2.5 * atr)   # ATR 버퍼 손절 (변동성 반영)
-                sl_fixed = price * 0.92           # -8% 고정 하한 안전망
-                sl = max(sl_atr, sl_fixed)        # 더 높은 쪽 = 더 타이트한 손절
-            else:
-                sl = price * 0.93                 # ATR 미산출 시 기존 -7% 폴백
-        # ────────────────────────────────────────────────────────────────────────
+            tp = price * 1.25
+        else:
+            tp = self.strategy.get_exit_price(price, atr, is_profit=True) if atr > 0 else -1.0
 
         pos                = PositionState()
         pos.in_position    = True
@@ -742,19 +832,18 @@ class BacktestEngine:
         pos.take_profit    = tp
         pos.stop_loss      = sl
         pos.signal_tag     = signal_tag
-        pos.allocated_pct  = alloc_pct
+        # 실제 투입 비중(%) 기록 — 배정 로직이 아니라 사후 참고/물타기 캡 계산용
+        pos.allocated_pct  = (price * qty) / total_asset if total_asset > 0 else 0.0
         self.positions[ticker] = pos
 
+        invest_amt = price * qty
+        risk_amt   = (price - sl) * qty
+        risk_pct   = risk_amt / total_asset * 100 if total_asset > 0 else 0.0
         mode_label = "야수" if signal_tag == "SMA_GOLDEN_CROSS" else "디펜스"
-        rsi_note   = (
-            f" [RSI {market_rsi:.0f} 과열→비중 절반]" if rsi_overheated else ""
-        )
-        sl_note = (
-            f" | 손절 {sl:,.0f}" if sl > 0 else ""
-        )
         self._log_trade(
             date_str, ticker, "BUY", price, qty,
-            f"[{mode_label}] {score:.1f}pt → {alloc_pct:.1%} 배정 {alloc_cash:,.0f}원{rsi_note}{sl_note}",
+            f"[{mode_label}] {score:.1f}pt | 투입 {invest_amt:,.0f}원({pos.allocated_pct:.1%}) "
+            f"| 손절 {sl:,.0f} | 리스크 {risk_amt:,.0f}원(총자산 {risk_pct:.2f}%)",
             signal_tag=signal_tag,
         )
 
