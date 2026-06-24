@@ -7,6 +7,8 @@
 //     · ETF: DB 에 없으면 이 사전 항목을 결과에 직접 주입.
 //   레거시 stock_ai.py `_US_KR_ALIASES` 를 이식·확장했다.
 
+import { KR_ETFS } from "./kr-etfs.generated";
+
 export interface AliasEntry {
   ticker: string;
   nameKr: string;
@@ -107,10 +109,18 @@ const ETFS: AliasEntry[] = [
   { ticker: "102960.KS", nameKr: "KODEX 증권", market: "KR ETF", isEtf: true },
 ];
 
-/** 전체 별칭 항목(US 종목 + ETF). ETF 는 full 엔트리, US 는 ticker+nameKr. */
+// ── KRX 전체 국내 ETF(약 1,100종) — 위 ETFS 의 큐레이션과 중복되는 티커는 제외 ──
+//   큐레이션 항목(보기 좋은 market 라벨/표기)을 우선하고, 나머지는 자동 생성분으로 보강.
+const CURATED_TICKERS = new Set(ETFS.map((e) => e.ticker.toUpperCase()));
+const KR_ETF_ENTRIES: AliasEntry[] = KR_ETFS.filter(
+  (e) => !CURATED_TICKERS.has(e.ticker.toUpperCase())
+).map((e) => ({ ticker: e.ticker, nameKr: e.nameKr, market: "KR ETF", isEtf: true }));
+
+/** 전체 별칭 항목(US 종목 + 큐레이션 ETF + KRX 전체 국내 ETF). */
 export const ALIAS_ENTRIES: AliasEntry[] = [
   ...Object.entries(US_ALIASES).map(([ticker, nameKr]) => ({ ticker, nameKr })),
   ...ETFS,
+  ...KR_ETF_ENTRIES,
 ];
 
 /** ticker → 별칭 항목 (DB 결과에 nameKr 오버레이용). */
