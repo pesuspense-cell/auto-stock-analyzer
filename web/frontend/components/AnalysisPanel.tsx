@@ -22,8 +22,9 @@ export function AnalysisPanel({ picked }: { picked: StockHit | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picked?.ticker]);
 
+  // 수동 "다시 분석" — 캐시를 우회(force)해 강제 재분석. (자동 로드는 캐시 재활용)
   function rerun(llm: boolean) {
-    if (picked) enqueue("/api/v1/analysis/run", { ticker: picked.ticker, period: "6mo", use_llm: llm });
+    if (picked) enqueue("/api/v1/analysis/run", { ticker: picked.ticker, period: "6mo", use_llm: llm, force: true });
   }
 
   if (!picked) {

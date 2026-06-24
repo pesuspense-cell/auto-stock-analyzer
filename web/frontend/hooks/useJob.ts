@@ -9,7 +9,7 @@ type RunState = "idle" | JobStatus;
  * 비동기 Job 큐 클라이언트 — enqueue 후 jobs/[id] 를 폴링해 상태를 추적한다.
  * pending(큐 대기) → processing(워커 처리 중) → completed(결과) | error.
  */
-export function useJob<R = unknown>(pollMs = 2500) {
+export function useJob<R = unknown>(pollMs = 1200) {
   const [status, setStatus] = useState<RunState>("idle");
   const [result, setResult] = useState<R | null>(null);
   const [error, setError] = useState<string | null>(null);

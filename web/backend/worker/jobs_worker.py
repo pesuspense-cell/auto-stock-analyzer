@@ -29,7 +29,7 @@ import os
 import signal
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 import psycopg2.extras
@@ -52,7 +52,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jobs_worker")
 
-POLL_INTERVAL = float(os.getenv("JOBS_POLL_INTERVAL", "3"))
+POLL_INTERVAL = float(os.getenv("JOBS_POLL_INTERVAL", "1"))
 # 인터랙티브 동시 처리 스레드 수. 분석/뉴스 작업은 대부분 네트워크(yfinance·LLM) 대기라
 # 스레드 동시성이 지연을 실질적으로 줄인다. 다만 동시 pandas 연산은 메모리를 먹으므로
 # Render starter(512MB)에선 2가 안전. 메모리 여유가 있으면 환경변수로 올린다.
@@ -203,17 +203,32 @@ def _process(conn, job: dict) -> dict:
     raise ValueError(f"알 수 없는 작업 종류: {kind}")
 
 
+# 클레임 우선순위 — 작은 값일수록 먼저 처리. 사용자가 화면에서 대기 중인 작업
+# (analysis·portfolio_analysis)을 차트탭의 투기적 prefetch(news·fundamental)보다
+# 먼저 집어, 2스레드밖에 없어도 화면용 분석이 prefetch 뒤에 줄 서지 않게 한다.
+_CLAIM_PRIORITY_SQL = """
+            CASE kind
+                WHEN 'analysis' THEN 0
+                WHEN 'portfolio_analysis' THEN 0
+                WHEN 'fundamental_ai' THEN 1
+                ELSE 2
+            END, created_at
+"""
+
+
 def _claim_one(conn, kinds: tuple[str, ...]) -> dict | None:
-    """주어진 레인(kinds)의 pending 작업 1건을 원자적으로 클레임(→processing)."""
+    """주어진 레인(kinds)의 pending 작업 1건을 원자적으로 클레임(→processing).
+
+    우선순위(_CLAIM_PRIORITY_SQL) → created_at 순. 동일 우선순위는 FIFO."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            """
+            f"""
             UPDATE public.jobs
                SET status = 'processing', updated_at = now()
              WHERE id = (
                  SELECT id FROM public.jobs
                   WHERE status = 'pending' AND kind = ANY(%s)
-                  ORDER BY created_at
+                  ORDER BY {_CLAIM_PRIORITY_SQL}
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
              )
@@ -226,19 +241,46 @@ def _claim_one(conn, kinds: tuple[str, ...]) -> dict | None:
     return dict(row) if row else None
 
 
-# 지속 캐시 대상(kind → market_cache scope 접두). 재조회 즉시응답용.
-_CACHE_SCOPE = {"news": "news", "fundamental": "fundamental"}
+_KST = timezone(timedelta(hours=9))
+
+
+def _quarter_key(now: datetime | None = None) -> str:
+    """현재 분기 키(KST 기준, 예: 2026Q2). fundamental 캐시 scope 에 사용 — 분기당 1회 갱신."""
+    n = now or datetime.now(_KST)
+    return f"{n.year}Q{(n.month - 1) // 3 + 1}"
+
+
+def _cache_scope(job: dict) -> str | None:
+    """kind 별 market_cache scope 키. 캐시 대상이 아니면 None.
+
+    재조회 즉시응답(enqueue 단계)을 위한 키. 각 enqueue 라우트가 동일 규칙으로 키를
+    만들어 캐시를 조회하므로(둘이 어긋나면 캐시 미스), 형식을 반드시 일치시킬 것.
+      · news        → 일 단위 TTL 로 갱신(scope 고정)
+      · fundamental → 분기 키 포함 → 분기 경계에서만 자동 갱신
+      · analysis    → period·LLM 에 따라 결과가 달라지므로 scope 에 함께 인코딩
+    """
+    kind = job["kind"]
+    params = job.get("params") or {}
+    ticker = params.get("ticker")
+    if not ticker:
+        return None
+    tkr = str(ticker).upper()
+    if kind == "news":
+        return f"news:{tkr}"
+    if kind == "fundamental":
+        return f"fundamental:{tkr}:{_quarter_key()}"
+    if kind == "analysis":
+        period = params.get("period", "6mo")
+        lane = "llm" if params.get("useLlm", False) else "base"
+        return f"analysis:{tkr}:{period}:{lane}"
+    return None
 
 
 def _cache_result(conn, job: dict, result: dict) -> None:
-    """news/fundamental 결과를 market_cache 에 upsert → 다음 조회는 enqueue 단계에서 즉시응답."""
-    prefix = _CACHE_SCOPE.get(job["kind"])
-    if not prefix:
+    """analysis/news/fundamental 결과를 market_cache 에 upsert → 다음 조회는 enqueue 단계에서 즉시응답."""
+    scope = _cache_scope(job)
+    if not scope:
         return
-    ticker = (job.get("params") or {}).get("ticker")
-    if not ticker:
-        return
-    scope = f"{prefix}:{str(ticker).upper()}"
     try:
         with conn.cursor() as cur:
             cur.execute(

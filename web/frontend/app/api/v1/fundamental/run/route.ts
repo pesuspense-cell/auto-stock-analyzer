@@ -10,6 +10,20 @@ import type { ApiError, JobEnqueued } from "@/lib/api-types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// 현재 분기 키(KST 기준, 예: 2026Q2). 분기가 바뀌면 scope 가 달라져 캐시가 자동 무효화된다.
+// scope 형식은 워커 _cache_scope(fundamental) 와 반드시 일치해야 한다.
+function quarterKey(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "numeric",
+  }).formatToParts(date);
+  let y = 0, m = 1;
+  for (const p of parts) {
+    if (p.type === "year") y = parseInt(p.value, 10);
+    else if (p.type === "month") m = parseInt(p.value, 10);
+  }
+  return `${y}Q${Math.floor((m - 1) / 3) + 1}`;
+}
+
 export async function POST(req: Request): Promise<NextResponse<JobEnqueued | ApiError>> {
   const supabase = await createServerSupabase();
   try {
@@ -18,8 +32,10 @@ export async function POST(req: Request): Promise<NextResponse<JobEnqueued | Api
     const ticker = String(body?.ticker ?? "").trim();
     if (!ticker) return NextResponse.json({ error: "ticker가 필요합니다." }, { status: 400 });
 
-    // 지속 캐시(market_cache) 신선하면 워커 큐 없이 즉시응답 (펀더멘털 TTL 1시간)
-    const cached = await readFreshCache(supabase, `fundamental:${ticker.toUpperCase()}`, 3600);
+    // 펀더멘털은 분기 단위로만 의미있게 변하므로 분기 키를 scope 에 넣어 분기당 1회만 갱신한다.
+    // (분기 경계 전까지는 항상 캐시 적중 → 워커 큐·재수집 없이 즉시응답). TTL 은 안전 상한.
+    const scope = `fundamental:${ticker.toUpperCase()}:${quarterKey()}`;
+    const cached = await readFreshCache(supabase, scope, 100 * 24 * 3600);
     if (cached) return NextResponse.json({ jobId: null, status: "completed", result: cached });
 
     const { data, error } = await supabase

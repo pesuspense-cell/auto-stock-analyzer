@@ -10,6 +10,7 @@ import concurrent.futures
 import logging
 from datetime import datetime, timezone, timedelta
 
+import httpx
 import pandas as pd
 import yfinance as yf
 
@@ -66,12 +67,51 @@ def bench_returns(ticker: str) -> pd.Series:
         return pd.Series(dtype=float)
 
 
+# 네이버 실시간 폴링(무인증, delayTime=0) — Yahoo 의 ~15분 지연 대체용.
+_NAVER_POLL = "https://polling.finance.naver.com/api/realtime/domestic/stock"
+_NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/"}
+
+
+def _naver_realtime(ticker: str) -> dict | None:
+    """국내(.KS/.KQ) 실시간 현재가 — 네이버 폴링. 실패/비국내면 None."""
+    if not ticker.endswith((".KS", ".KQ")):
+        return None
+    code = ticker.split(".")[0]
+    try:
+        r = httpx.get(f"{_NAVER_POLL}/{code}", headers=_NAVER_HEADERS, timeout=5.0)
+        if r.status_code != 200:
+            return None
+        datas = r.json().get("datas") or []
+        d = datas[0] if datas else None
+        if not d:
+            return None
+        price = float(str(d.get("closePrice", "")).replace(",", "") or 0)
+        if price <= 0:
+            return None
+        is_open = d.get("marketStatus") == "OPEN"
+        return {
+            "price": price, "ts": _now_kst().strftime("%H:%M:%S"),
+            "is_realtime": is_open, "stale": not is_open,
+            "stale_msg": "" if is_open else "장 마감 후 종가입니다.",
+        }
+    except Exception as e:
+        logger.warning("[naver-rt] %s: %s", ticker, e)
+        return None
+
+
 @ttl_cache(ttl=60)
 def realtime_price(ticker: str) -> dict:
-    """app.py _realtime_price_1m 의 핵심 로직 이식."""
+    """app.py _realtime_price_1m 의 핵심 로직 이식. 국내는 네이버 실시간 우선."""
     now_k = _now_kst()
     ts = now_k.strftime("%H:%M:%S")
     is_kr = ticker.endswith((".KS", ".KQ"))
+
+    # 국내(.KS/.KQ)는 네이버 실시간(지연 0) 우선 — 실패 시 아래 yfinance 폴백.
+    if is_kr:
+        nv = _naver_realtime(ticker)
+        if nv:
+            return nv
+
     after_close = is_kr and (now_k.hour * 60 + now_k.minute) >= (15 * 60 + 30)
 
     try:

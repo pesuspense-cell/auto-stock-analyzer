@@ -18,8 +18,8 @@ export async function POST(req: Request): Promise<NextResponse<JobEnqueued | Api
     const ticker = String(body?.ticker ?? "").trim();
     if (!ticker) return NextResponse.json({ error: "ticker가 필요합니다." }, { status: 400 });
 
-    // 지속 캐시(market_cache) 신선하면 워커 큐 없이 즉시응답 (뉴스 TTL 10분)
-    const cached = await readFreshCache(supabase, `news:${ticker.toUpperCase()}`, 600);
+    // 지속 캐시(market_cache) 신선하면 워커 큐 없이 즉시응답 (뉴스 TTL 1일 — 하루 1회 갱신)
+    const cached = await readFreshCache(supabase, `news:${ticker.toUpperCase()}`, 86400);
     if (cached) return NextResponse.json({ jobId: null, status: "completed", result: cached });
 
     const { data, error } = await supabase
