@@ -45,17 +45,24 @@ const capW = (v: any) => { const n = N(v); return n == null ? "—" : `${(n / 1e
 interface Row { label: string; value: string; tone?: string; help: string }
 
 /** fund_info(fi) + fund_score_data(fsd) → 기업가치 판단용 지표 그룹. */
-function buildGroups(fi: Record<string, any>, fsd: Record<string, any>): { title: string; rows: Row[] }[] {
+function buildGroups(fi: Record<string, any>, fsd: Record<string, any>, isKr: boolean): { title: string; rows: Row[] }[] {
   const peg = N(fsd.peg);
   const pegTone = peg == null ? "" : peg < 1 ? "text-gain" : peg > 2 ? "text-loss" : "";
   const growthTone = (v: any) => { const n = N(v); return n == null ? "" : signClass(n); };
+  // 주당 가치(EPS/BPS) — 통화별 표기.
+  const perShare = (v: any) => { const n = N(v); if (n == null) return "—"; return isKr ? `₩${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `$${n.toFixed(2)}`; };
+  // PEG 가 실제로 쓴 성장률(EPS 3년 CAGR 우선, 없으면 이익성장률).
+  const pegGrowth = N(fsd.eps_cagr_3yr) != null ? pctRaw(fsd.eps_cagr_3yr) : pctFrac(fi.earnings_growth);
+  const pegBasis = N(fsd.eps_cagr_3yr) != null ? "EPS 3년 CAGR" : "이익성장률";
 
   const valuation: Row[] = [
     { label: "PER", value: mult(fi.per), help: "주가수익비율. 주가를 주당순이익(EPS)으로 나눈 값으로, 이익 1원에 시장이 매기는 가격입니다. 낮을수록 이익 대비 저평가입니다." },
     { label: "PBR", value: mult(fi.pbr), help: "주가순자산비율. 주가를 주당순자산(BPS)으로 나눈 값입니다. 1배 미만이면 장부상 순자산보다 싸게 거래됩니다." },
     { label: "PSR", value: mult(fi.psr), help: "주가매출비율. 시가총액을 매출로 나눈 값으로, 적자·성장주 평가에 씁니다. 낮을수록 매출 대비 저평가입니다." },
+    { label: "EPS", value: perShare(fi.eps_ttm), help: "주당순이익 = 순이익 ÷ 발행주식수(최근 12개월). PER의 분모이자, 이 EPS의 성장률이 PEG의 핵심 입력값입니다." },
     { label: "선행 PER", value: mult(fi.forward_pe), help: "향후 12개월 추정이익 기준 PER입니다. 현재 PER보다 낮으면 이익 성장이 기대된다는 뜻입니다." },
-    { label: "PEG", value: num(peg), tone: pegTone, help: "PER을 이익성장률로 나눈 값(피터 린치 지표). 1 미만이면 성장 대비 저평가, 2 초과면 고평가로 봅니다." },
+    { label: "PEG", value: num(peg), tone: pegTone, help: `PER ÷ 이익성장률로 성장 대비 밸류를 봅니다(피터 린치). 1 미만이면 저평가, 2 초과면 고평가. 현재 계산식: PER ${mult(fi.per)} ÷ ${pegGrowth} (${pegBasis}).` },
+    { label: "성장률(PEG 기준)", value: pegGrowth, tone: growthTone(N(fsd.eps_cagr_3yr) != null ? fsd.eps_cagr_3yr : (N(fi.earnings_growth) != null ? fi.earnings_growth * 100 : null)), help: `PEG 계산에 실제 사용된 이익 성장률입니다(${pegBasis}). EPS 3년 CAGR이 있으면 우선 사용하고, 없으면 yfinance 이익성장률을 씁니다.` },
     { label: "시가총액", value: capW(fi.market_cap), help: "발행주식 전체의 시장가치(주가×주식수)로 기업 규모를 나타냅니다." },
   ];
   const profit: Row[] = [
@@ -110,7 +117,8 @@ export function FundamentalTab({ picked }: { picked: StockHit | null }) {
   if (!data) return <Placeholder>데이터를 불러오지 못했습니다.</Placeholder>;
 
   const fsd = data.fund_score_data;
-  const groups = data.is_etf ? [] : buildGroups(data.fund_info, fsd ?? {});
+  const isKr = /\.(KS|KQ)$/i.test(data.ticker);
+  const groups = data.is_etf ? [] : buildGroups(data.fund_info, fsd ?? {}, isKr);
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
