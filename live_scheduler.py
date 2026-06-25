@@ -63,9 +63,14 @@ VOLUME_TOP_N      = 30        # 거래대금 상위 N (1차 필터)
 # ── [개편1] 리스크 관리 파라미터 (backtest.py 동일 규칙) ─────────────────────
 ACCOUNT_CAPITAL    = 10_000_000  # 리스크 사이징 기준 총자산 (실제 계좌 규모로 조정)
 MAX_RISK_PER_TRADE = 0.02        # 단일 종목 손절 시 허용 손실 = 총자산의 2%
-MAX_POSITION_PCT   = 0.20        # 단일 종목 평가액 상한 = 총자산의 20% (몰빵 방지)
-SL_FALLBACK_PCT    = 0.93        # ATR 미산출 시 손절 폴백 (-7%)
-SL_SLIPPAGE_PCT    = 0.01        # [개편4] 손절 체결 보수 슬리피지 (-1%)
+MAX_POSITION_PCT   = 0.15        # [v2] 단일 종목 평가액 상한 = 총자산의 15% (자산 보호 하드캡)
+SL_FALLBACK_PCT    = 0.90        # ATR 미산출 시 손절 폴백 (-10%)
+SL_SLIPPAGE_PCT    = 0.01        # 손절 체결 보수 슬리피지 (-1%)
+ATR_SL_MULT_BULL   = 3.0         # [v2] 야수 손절 ATR 배수 (2.5→3.0, 노이즈 칼손절 방지)
+BULL_SL_FLOOR_PCT  = 0.88        # [v2] 야수 손절 하한 (-8%→-12%)
+ATR_SL_MULT_BEAR   = 3.0         # [v2] 추세추종 손절 ATR 배수 (2.0→3.0)
+TRAIL_ACTIVATE_PROFIT = 0.15     # [v2] 트레일링 스톱은 +15% 도달 후에만 활성화
+MAX_GROSS_EXPOSURE = 0.45        # [v3] 총 주식노출 ≤ ACCOUNT_CAPITAL의 45% (초과 시 비중축소 알림) — MDD 주 방어
 
 # ── [개편2] RSI 하드필터 ─────────────────────────────────────────────────────
 RSI_HARD_LIMIT     = 70.0        # 종목 RSI_14 이 값 이상이면 신규 진입 전면 금지
@@ -262,8 +267,8 @@ def resolve_stop_loss(price: float, atr: float, tag: str) -> float:
     """[개편1] 신호별 손절가 — backtest.py _resolve_stop_loss 동일."""
     if atr > 0:
         if tag == "SMA_GOLDEN_CROSS":
-            return max(price - 2.5 * atr, price * 0.92)
-        return price - 2.0 * atr          # 추세추종 등
+            return max(price - ATR_SL_MULT_BULL * atr, price * BULL_SL_FLOOR_PCT)
+        return price - ATR_SL_MULT_BEAR * atr          # 추세추종 등
     return price * SL_FALLBACK_PCT
 
 
@@ -390,8 +395,14 @@ def check_sell_signals(
         action = reason = None
         fill_price = price
 
+        # [v2-1] 트레일링 지연 활성화 — 수익률 +15% 최초 도달 후에만 ON (조기 약손실 청산 차단)
+        trailing_on = bool(pos.get("trailing_active", False))
+        if not trailing_on and entry_price > 0 and high >= entry_price * (1.0 + TRAIL_ACTIVATE_PROFIT):
+            trailing_on = True
+            positions[ticker]["trailing_active"] = True
+
         # [개편4] 보수적 체결: 손절을 익절보다 먼저 검사, 장중 저가가 손절선 터치 시 청산
-        trailing_sl = strategy.get_trailing_stop(prev_peak, atr_val) if atr_val > 0 else -1.0
+        trailing_sl = strategy.get_trailing_stop(prev_peak, atr_val) if (trailing_on and atr_val > 0) else -1.0
         hard_sl     = stop_loss   if stop_loss   > 0 else float("-inf")
         ts_val      = trailing_sl if trailing_sl > 0 else float("-inf")
         effective   = max(hard_sl, ts_val)
@@ -501,6 +512,23 @@ def run_scan(
         logger.info("락아웃 활성 — 신규 매수 스킵")
         return positions, alerted, lockout
 
+    # [v3] 현재 총 주식노출 산정 (보유 수량 × 현재가) + 상한 초과 시 비중축소 알림
+    exposure_cap = MAX_GROSS_EXPOSURE * ACCOUNT_CAPITAL
+    gross_invested = 0.0
+    for t, p in positions.items():
+        d = ticker_data.get(t)
+        if d is not None and not d.empty:
+            gross_invested += float(p.get("quantity", 0)) * float(d.iloc[-1].get("Close", 0) or 0)
+    if gross_invested > exposure_cap:
+        rb_key = f"rebal_{today_str}"
+        if rb_key not in alerted:
+            excess = gross_invested - exposure_cap
+            if send_telegram(
+                f"♻️ <b>[비중축소 권고]</b> 총 주식노출 {gross_invested/ACCOUNT_CAPITAL*100:.0f}% > 상한 "
+                f"{MAX_GROSS_EXPOSURE:.0%}\n약 {excess:,.0f}원(평가액 큰 종목부터) 부분매도 권장."
+            ):
+                alerted[rb_key] = now_str
+
     buy_candidates = screen_buy_candidates(ticker_data, strategy)
     new_buys = {t: tag for t, tag in buy_candidates.items() if t not in positions}
 
@@ -509,6 +537,11 @@ def run_scan(
             alert_key = f"buy_{ticker}_{today_str}"
             if alert_key in alerted:
                 continue  # 당일 동일 종목 중복 알림 방지
+
+            # [v3] 총노출 45% 상한 도달 시 신규 매수 중단
+            if gross_invested >= exposure_cap:
+                logger.info("총노출 상한 도달 — 신규 매수 스킵")
+                break
 
             df = ticker_data.get(ticker)
             if df is None:
@@ -528,6 +561,11 @@ def run_scan(
                 strategy.get_exit_price(price, atr_val, is_profit=True) if atr_val > 0 else price * 1.25
             )
             qty = calc_position_qty(price, sl, ACCOUNT_CAPITAL)
+            # [v3] 총노출 상한 준수 — 잔여 노출 여력 내로 수량 제한
+            room = exposure_cap - gross_invested
+            if room < price:
+                continue
+            qty = min(qty, int(room / price))
             if qty <= 0:
                 continue
             invest   = qty * price
@@ -551,15 +589,17 @@ def run_scan(
 
             # 포지션 등록
             positions[ticker] = {
-                "name":        universe_map.get(ticker, ticker),
-                "entry_price": price,
-                "peak_price":  price,
-                "take_profit": tp,
-                "stop_loss":   sl,
-                "signal_tag":  tag,
-                "quantity":    qty,
-                "entry_time":  datetime.now(KST).isoformat(),
+                "name":            universe_map.get(ticker, ticker),
+                "entry_price":     price,
+                "peak_price":      price,
+                "take_profit":     tp,
+                "stop_loss":       sl,
+                "signal_tag":      tag,
+                "quantity":        qty,
+                "trailing_active": False,   # [v2-1] +15% 도달 후 활성화
+                "entry_time":      datetime.now(KST).isoformat(),
             }
+            gross_invested += invest        # [v3] 누적 노출 갱신 (동일 스캔 내 다음 매수 제한)
     else:
         logger.info("매수 신호 없음")
 
