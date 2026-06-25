@@ -30,15 +30,10 @@ def _metrics(equity_curve: list[dict], trade_log: list[dict]) -> dict:
     ec = equity_curve
     last = ec[-1]
 
-    max_peak = float("-inf")
-    mdd = 0.0
-    for r in ec:
-        asset = r["total_asset"]
-        if asset > max_peak:
-            max_peak = asset
-        if max_peak > 0:
-            dd = (max_peak - asset) / max_peak * 100
-            mdd = max(mdd, dd)
+    # MDD: backtest.compute_mdd(표준 cummax + 글리치 방어)로 일원화 — 백테스트
+    # 엔진 성적표와 동일 공식 사용(허수 피크/트로프로 MDD가 폭발하는 버그 차단).
+    from backtest import compute_mdd
+    mdd = abs(compute_mdd([r["total_asset"] for r in ec]))
 
     try:
         n_years = (pd.Timestamp(ec[-1]["date"]) - pd.Timestamp(ec[0]["date"])).days / 365.25

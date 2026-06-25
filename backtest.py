@@ -83,6 +83,23 @@ DEPOSIT_SCHEDULE: dict[str, int] = {
 RESULT_DIR = Path(__file__).parent / "backtest_results"
 
 
+def compute_mdd(assets) -> float:
+    """표준 최대낙폭(MDD, %) — 누적 최고점 대비 최대 하락폭을 음수로 반환(예: -18.46).
+
+    공식: drawdown = (asset − cummax(asset)) / cummax(asset);  MDD = min(drawdown) × 100.
+    데이터 글리치(NaN·inf·0 이하)는 허수 낙폭(피크/트로프 왜곡)의 원인이므로 사전 제거한다.
+    유효 표본이 2개 미만이면 0.0 반환.
+    """
+    clean = [float(a) for a in assets if a is not None and np.isfinite(a) and a > 0]
+    if len(clean) < 2:
+        return 0.0
+    s        = pd.Series(clean, dtype="float64")
+    peak     = s.cummax()
+    drawdown = (s - peak) / peak
+    mdd      = drawdown.min() * 100.0
+    return float(mdd) if np.isfinite(mdd) else 0.0
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 펀드 회계 시뮬레이터
 # ══════════════════════════════════════════════════════════════════════════════
@@ -96,10 +113,13 @@ class TradingSimulator:
         self.unit_price       = 1.0
 
     def get_total_asset(self, current_market_prices: dict[str, float]) -> float:
-        stock_value = sum(
-            qty * current_market_prices.get(code, 0)
-            for code, qty in self.portfolio.items()
-        )
+        stock_value = 0.0
+        for code, qty in self.portfolio.items():
+            price = current_market_prices.get(code, 0.0)
+            # NaN/inf 가격이 평가액을 오염시켜 자산곡선이 튀는 것을 방지(글리치 방어)
+            if not np.isfinite(price) or price <= 0:
+                continue
+            stock_value += qty * price
         return self.cash + stock_value
 
     def update_unit_price(self, current_market_prices: dict[str, float]) -> float:
@@ -432,8 +452,11 @@ class BacktestEngine:
         for t, df in ticker_data.items():
             if date in df.index:
                 p = float(df.loc[date, "Close"])
-                prices[t] = p
-                self._last_close[t] = p
+                if np.isfinite(p) and p > 0:           # NaN·0·음수 종가는 데이터 결함 → 무시
+                    prices[t] = p
+                    self._last_close[t] = p             # 정상가만 캐리(_last_close 오염 방지)
+                elif t in self._last_close:             # 결함 종가는 직전 정상가로 대체
+                    prices[t] = self._last_close[t]
         for t in self.positions:                       # 보유분은 직전가로라도 반드시 평가
             if t not in prices and t in self._last_close:
                 prices[t] = self._last_close[t]
@@ -1087,20 +1110,11 @@ class BacktestEngine:
         ec   = self.equity_curve
         last = ec[-1]
 
-        # ── [Step 1] MDD: 실제 자산 가치(max_peak_asset) 기준 낙폭 비율 계산 ──
-        # 공식: drawdown = (max_peak_asset - current_total_asset) / max_peak_asset * 100
-        # 누적 수익률 단순 차감 방식 완전 폐기 — 추가 입금·복리 왜곡 없음
-        max_peak_asset = float("-inf")
-        mdd            = 0.0
-
-        for r in ec:
-            asset = r["total_asset"]
-            if asset > max_peak_asset:
-                max_peak_asset = asset
-            if max_peak_asset > 0:
-                drawdown = (max_peak_asset - asset) / max_peak_asset * 100
-                if drawdown > mdd:
-                    mdd = drawdown
+        # ── [Step 1] MDD: 표준 cummax 낙폭 공식(글리치 방어 포함) ──────────────
+        # compute_mdd 는 NaN·inf·0이하 자산점을 제거 후 (asset−peak)/peak 의 최솟값을
+        # 계산한다. 일시적 데이터 튐(허수 피크/트로프)에 MDD가 폭발하지 않는다.
+        # 표기 일관성을 위해 양수 크기로 보관(예: 18.46 → "-18.46%" 출력).
+        mdd = abs(compute_mdd([r["total_asset"] for r in ec]))
         # ────────────────────────────────────────────────────────────────────────
 
         n_years = (
