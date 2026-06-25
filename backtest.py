@@ -193,16 +193,26 @@ class BacktestEngine:
     MAX_POS_BEAR    = 3    # 디펜스 모드(하락장): 최대 3종목
     MAX_REBUY_COUNT = 2    # 물타기 최대 허용 횟수 (DRY_VOLUME_NULIM 전용)
 
-    # ── [v2-2] ATR 기반 고정 리스크 배정 + 15% 하드캡 ────────────────────────
+    # ── [v2-2] ATR 기반 고정 리스크 배정 + 단일종목 하드캡 ───────────────────
     MAX_RISK_PER_TRADE = 0.02   # 단일 종목 손절 시 허용 손실 = 총자산의 2%
-    MAX_POSITION_PCT   = 0.15   # 단일 종목 평가액 상한 = 총자산의 15% (자산 보호 하드캡)
+    MAX_POSITION_PCT   = 0.15   # 단일 종목 평가액 상한 = 총자산의 15% (디펜스/기본 하드캡)
+    # [v4] 야수 모드 한정 단일종목 캡 상향 — 주도주 상승기 익절 효율 극대화.
+    # 전체 포트폴리오 노출상한(MAX_GROSS_EXPOSURE 45%)은 그대로라 2종목×22%≈44%로 자연 제한.
+    MAX_POSITION_PCT_BULL = 0.22  # 야수(SMA_GOLDEN_CROSS) 진입 시 단일종목 상한 = 22%
     SL_FALLBACK_PCT    = 0.90   # ATR 미산출 시 손절 폴백 (-10%)
 
-    # ── [v2-4] ATR 손절 버퍼 상향 (노이즈 칼손절 방지) ───────────────────────
-    ATR_SL_MULT_BULL  = 3.0     # 야수 손절 ATR 배수 (기존 2.5 → 3.0)
-    BULL_SL_FLOOR_PCT = 0.88    # 야수 손절 하한 (기존 -8% → -12%, 더 넓게)
-    ATR_SL_MULT_BEAR  = 3.0     # 디펜스(눌림목) 손절 ATR 배수 (기존 2.0 → 3.0)
+    # ── [v4] ATR 손절 버퍼: v3 값 유지 (확대안은 백테스트로 기각) ─────────────
+    # 시도: ATR 배수 ×1.15(3.0→3.45)·하한 -12%→-14% 확대 → 2020~2026 백테스트에서
+    # MDD -28.5%→-43%, 수익 +27%→-12% 로 급격히 악화(하락장에서 패자를 더 오래 들고감).
+    # 결론: 잦은 손절(잽) 방지는 '버퍼 확대'가 아니라 아래 '재진입 쿨다운'으로 해결.
+    ATR_SL_MULT_BULL  = 3.0     # 야수 손절 ATR 배수 (v3 유지)
+    BULL_SL_FLOOR_PCT = 0.88    # 야수 손절 하한 -12% (v3 유지)
+    ATR_SL_MULT_BEAR  = 3.0     # 디펜스(눌림목) 손절 ATR 배수 (v3 유지)
     SL_SLIPPAGE_PCT   = 0.01    # 손절 체결 시 손절선 -1% 보수 반영
+
+    # ── [v4] 손절 직후 동일종목 재진입 쿨다운 (뇌동매매·재추격 방지) ──────────
+    # 백테스트상 수익 +3.8M·MDD -1.8%p 개선 효과 확인(ATR 확대 대비 안전한 잽 방지책).
+    REENTRY_COOLDOWN_DAYS = 7   # SELL_SL 발생 종목은 7일(캘린더, ≈5거래일) 신규진입 금지
 
     # ── [v2-1] 트레일링 스톱 지연 활성화 ─────────────────────────────────────
     TRAIL_ACTIVATE_PROFIT = 0.15  # 수익률 +15% 최초 도달 후에만 트레일링 ON
@@ -270,6 +280,8 @@ class BacktestEngine:
         self._last_close:        dict[str, float] = {}
         # [v3.1] 글리치 필터용: 종목별 마지막 '관측' 종가(글리치 포함) — 새 레벨 재동기 판정
         self._last_raw_close:    dict[str, float] = {}
+        # [v4] 손절 직후 재진입 쿨다운: 종목 → 마지막 SELL_SL 일자
+        self._sl_block:          dict[str, pd.Timestamp] = {}
 
     # ── 데이터 로드 ──────────────────────────────────────────────────────────
 
@@ -780,21 +792,23 @@ class BacktestEngine:
         return price * self.SL_FALLBACK_PCT
 
     def _calc_position_qty(
-        self, price: float, stop_loss: float, total_asset: float, cash: float
+        self, price: float, stop_loss: float, total_asset: float, cash: float,
+        max_pos_pct: float | None = None,
     ) -> int:
         """ATR 손절 기반 고정 리스크 배정 — 자산 증가 시 몰빵 차단의 핵심.
 
         수량 = (총자산 × MAX_RISK_PER_TRADE) / (진입가 − 손절가)
         → 손절선 청산 시 손실이 항상 '총자산의 2%'로 고정.
-        추가 안전캡: ① 단일 종목 평가액 ≤ 총자산 × MAX_POSITION_PCT
+        추가 안전캡: ① 단일 종목 평가액 ≤ 총자산 × max_pos_pct(모드별, 기본 MAX_POSITION_PCT)
                      ② 매수금액 ≤ 가용현금 × 95%
         """
         risk_per_share = price - stop_loss
         if risk_per_share <= 0 or price <= 0:
             return 0
+        pos_pct = max_pos_pct if max_pos_pct is not None else self.MAX_POSITION_PCT
         risk_budget = total_asset * self.MAX_RISK_PER_TRADE
         qty = int(risk_budget / risk_per_share)               # 고정 리스크 수량
-        qty = min(qty, int((total_asset * self.MAX_POSITION_PCT) / price))  # 비중 상한 캡
+        qty = min(qty, int((total_asset * pos_pct) / price))  # 비중 상한 캡(모드별)
         qty = min(qty, int((cash * 0.95) / price))            # 현금 하드캡
         return max(qty, 0)
 
@@ -864,6 +878,9 @@ class BacktestEngine:
                     f"{reason_txt} [체결 {fill:,.0f} / 손익: {pnl_pct:+.1f}%]",
                     entry_price=pos.entry_price, signal_tag=pos.signal_tag,
                 )
+                # [v4] 진짜 손절(SELL_SL)만 재진입 쿨다운 등록 — 트레일링 익절(SELL_TS)은 제외
+                if action == "SELL_SL":
+                    self._sl_block[ticker] = pd.Timestamp(date_str)
                 del self.positions[ticker]
             return
 
@@ -890,6 +907,12 @@ class BacktestEngine:
         # ── 분할 매수(물타기): DRY_VOLUME_NULIM 전용, 최대 MAX_REBUY_COUNT회 ───
         # GOLDEN_CROSS 추격 매매는 물타기 금지 (달리는 말에서 내리는 전략)
         if pos.signal_tag == "SMA_GOLDEN_CROSS":
+            return
+
+        # [v4] 디펜스(하락장) 모드에서는 어떤 종목도 물타기 금지 — 하락장 추가매수가
+        # 반등 실패 후 손절될 때 비중 누적 타격이 크다. 최초 1회 단발 진입만 허용.
+        # (야수 모드로 전환된 상태라면 아래 분할매수 로직이 정상 동작)
+        if self._is_bear_market(pd.Timestamp(date_str)):
             return
 
         if (pos.rebuy_count < self.MAX_REBUY_COUNT
@@ -940,6 +963,11 @@ class BacktestEngine:
         if self.simulator.cash < price:
             return
 
+        # [v4] 손절 직후 재진입 쿨다운 — 같은 종목을 SELL_SL 후 N일 내 재매수 금지(뇌동매매 차단)
+        last_sl = self._sl_block.get(ticker)
+        if last_sl is not None and (pd.Timestamp(date_str) - last_sl).days < self.REENTRY_COOLDOWN_DAYS:
+            return
+
         # 확신도 품질 필터 (배정 비중이 아니라 '진입 자격' 게이트 — 55pt 미만 컷)
         if score < 55:
             return
@@ -960,8 +988,13 @@ class BacktestEngine:
         if sl <= 0 or sl >= price:
             return
 
+        # [v4] 야수(SMA_GOLDEN_CROSS) 진입만 단일종목 캡 22%, 그 외(디펜스)는 15% 유지
+        pos_pct = (
+            self.MAX_POSITION_PCT_BULL if signal_tag == "SMA_GOLDEN_CROSS"
+            else self.MAX_POSITION_PCT
+        )
         total_asset = self.simulator.get_total_asset(current_prices)
-        qty = self._calc_position_qty(price, sl, total_asset, self.simulator.cash)
+        qty = self._calc_position_qty(price, sl, total_asset, self.simulator.cash, pos_pct)
         if qty <= 0:
             return
 
@@ -1164,7 +1197,9 @@ class BacktestEngine:
         mdd_flag = "✅ 목표(-20%) 이내" if mdd <= 20.0 else "⚠️ 목표(-20%) 초과"
 
         print("\n" + "=" * 70)
-        print(f"  [최종] 백테스트 성적표 v3 — 트레일링지연 + 15%캡 + 노출{self.MAX_GROSS_EXPOSURE:.0%}상한리밸런싱 + ATR버퍼")
+        print(f"  [최종] 백테스트 성적표 v4 (수익 밸런스 튜닝) — 야수캡{self.MAX_POSITION_PCT_BULL:.0%}"
+              f"/디펜스캡{self.MAX_POSITION_PCT:.0%} + 노출{self.MAX_GROSS_EXPOSURE:.0%}상한 "
+              f"+ 디펜스물타기OFF + 손절쿨다운{self.REENTRY_COOLDOWN_DAYS}일")
         print("=" * 70)
         print(f"  총 투자 원금    : {last['invested']:>15,.0f} 원")
         print(f"  최종 자산       : {last['total_asset']:>15,.0f} 원")
