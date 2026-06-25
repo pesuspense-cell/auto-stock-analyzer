@@ -237,7 +237,7 @@ class BacktestEngine:
         self._market_index_dfs: dict[str, pd.DataFrame] = {}
         # [v3] 드로다운 방어 상태 (상시 노출상한 + 낙폭 매수잠금)
         self._peak_asset:        float = float(initial_capital)  # 전고점 자산(HWM, 상승만)
-        self._exposure_cap_value: float = float("inf")           # 당일 허용 주식 평가액(=55%×총자산)
+        self._exposure_cap_value: float = float("inf")           # 당일 허용 주식 평가액(=MAX_GROSS_EXPOSURE×총자산), 리밸런싱 백스톱용
         self._buy_locked:        bool  = False                   # 낙폭 매수잠금 활성 여부
         # [v2] 시가평가 보정용: 종목별 마지막 종가 캐리 (당일 바 누락 시 0 평가 방지)
         self._last_close:        dict[str, float] = {}
@@ -445,6 +445,16 @@ class BacktestEngine:
             self.simulator.portfolio.get(t, 0) * prices.get(t, 0.0)
             for t in self.positions
         )
+
+    def _exposure_cap_live(self, prices: dict[str, float]) -> float:
+        """실시간 노출 상한 평가액 = MAX_GROSS_EXPOSURE × 현재 총자산.
+        체결 직전마다 라이브로 재계산 → 같은 날 여러 매수가 누적돼도 상한 불침범 보장."""
+        return self.MAX_GROSS_EXPOSURE * self.simulator.get_total_asset(prices)
+
+    def _exposure_room(self, prices: dict[str, float]) -> float:
+        """추가 매수 가능 금액(원) = 노출상한 − 현재 주식 평가액 (음수면 0).
+        모든 매수 경로(_try_buy·물타기)가 통과해야 하는 하드 게이트의 단일 기준."""
+        return max(0.0, self._exposure_cap_live(prices) - self._gross_invested(prices))
 
     def _update_risk_state(
         self, date: pd.Timestamp, date_str: str, total_asset: float,
@@ -774,6 +784,13 @@ class BacktestEngine:
             self.strategy.get_trailing_stop(pos.peak_price, atr)
             if (pos.trailing_active and atr > 0) else -1.0
         )
+        # [버그픽스] 트레일링은 +15%(TRAIL_ACTIVATE_PROFIT) 최초 돌파 후에만 켜지고(위 라인),
+        # 일단 켜지면 손절선을 최소 '본전' 위로 끌어올린다 → 트레일링이 마이너스 청산을
+        # 절대 찍지 못함(이익 보호 전용). 활성화 전에는 trailing_sl=-1 이라 ATR 손절선만 동작.
+        # 슬리피지(SL_SLIPPAGE_PCT) 차감 후에도 체결가 ≥ 본전이 되도록 본전을 역보정.
+        if trailing_sl > 0:
+            breakeven_floor = pos.entry_price / (1.0 - self.SL_SLIPPAGE_PCT)
+            trailing_sl     = max(trailing_sl, breakeven_floor)
         hard_sl      = pos.stop_loss if pos.stop_loss > 0 else float("-inf")
         ts_val       = trailing_sl   if trailing_sl    > 0 else float("-inf")
         effective_sl = max(hard_sl, ts_val)
@@ -830,13 +847,17 @@ class BacktestEngine:
 
         if (pos.rebuy_count < self.MAX_REBUY_COUNT
                 and self.strategy.is_rebuy_signal(close, pos.entry_price, pos.rebuy_count)):
-            # [개편 1] 물타기도 종목 비중 상한(MAX_POSITION_PCT) 내에서만 허용 → 몰빵 방지
+            # [개편 1 + v3-hard] 물타기도 ① 종목 비중 상한(MAX_POSITION_PCT)과
+            # ② 총노출 상한(MAX_GROSS_EXPOSURE)을 동시에 만족해야 한다. 둘 중 더 빡빡한
+            # 여력만큼만 추가 매수 → 물타기로 총노출이 45%를 넘던 누수 경로 차단.
             total_asset = self.simulator.get_total_asset(current_prices)
             held_qty    = self.simulator.portfolio.get(ticker, 0)
             cur_value   = held_qty * close
-            room        = total_asset * self.MAX_POSITION_PCT - cur_value
+            pos_room    = total_asset * self.MAX_POSITION_PCT - cur_value  # 단일종목 15% 여력
+            gross_room  = self._exposure_room(current_prices)             # 총노출 45% 여력
+            room        = min(pos_room, gross_room)
             if room < close:
-                return  # 이미 비중 상한 도달 — 추가 매수 불가
+                return  # 종목/총노출 상한 도달 — 추가 매수 불가
             alloc_cash = min(room, self.simulator.cash * 0.9)
             add_qty    = int(alloc_cash / close)
             if add_qty > 0 and self.simulator.execute_buy(ticker, close, add_qty):
@@ -897,10 +918,13 @@ class BacktestEngine:
         if qty <= 0:
             return
 
-        # [v3] CPPI 노출 상한 준수 — 현재 주식평가액 + 신규매수 ≤ 허용 cap
-        room = self._exposure_cap_value - self._gross_invested(current_prices)
+        # [v3-hard] 노출 상한 하드 게이트 — [현재 주식평가액 + 신규매수금액]이
+        # [총자산 × MAX_GROSS_EXPOSURE]를 1원이라도 초과하면 주문을 전면 차단한다.
+        # 라이브 총자산 기준으로 매 체결 직전 재계산하므로, 같은 날 신호가 동시에 떠도
+        # 누적 노출이 상한을 넘는 일이 없다(체결 → 다음 호출 시 room 자동 감소).
+        room = self._exposure_room(current_prices)
         if room < price:
-            return                       # 노출 여력 없음(낙폭 구간) → 신규 매수 보류
+            return                       # 노출 여력 없음 → 신규 매수 전면 차단
         qty = min(qty, int(room / price))
         if qty <= 0:
             return
