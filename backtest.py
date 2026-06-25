@@ -221,6 +221,13 @@ class BacktestEngine:
     MAX_GROSS_EXPOSURE = 0.45   # 총 주식 평가액 ≤ 총자산의 45% — 초과 시 부분매도로 리밸런싱(실현 노출 통제)
     DD_BUY_LOCK        = 1.00   # 전고점 대비 낙폭 매수잠금 (1.00=사실상 OFF; 노출상한이 주 방어)
 
+    # ── [v3.1] 데이터 글리치 방어: 단일봉 비정상 가격점프 필터 ────────────────
+    # 한국주식 일일 등락 제한은 ±30% → 단일봉 2.5배↑/0.4배↓ 변동은 데이터 오류로 간주하고
+    # 직전 '정상가'로 평가(평가액 폭주·유령 리밸런싱·MDD 폭발 차단). 단, 새 레벨이 이틀
+    # 연속 유지되면 실제 가격변화로 수용해 특정 종목 평가가 영구 동결되는 것을 방지한다.
+    GLITCH_JUMP_HIGH = 2.5
+    GLITCH_JUMP_LOW  = 0.4
+
     BENCHMARK_INDEXMAP = {
         "KOSPI":  "^KS11",
         "KOSDAQ": "^KQ11",
@@ -259,8 +266,10 @@ class BacktestEngine:
         self._peak_asset:        float = float(initial_capital)  # 전고점 자산(HWM, 상승만)
         self._exposure_cap_value: float = float("inf")           # 당일 허용 주식 평가액(=MAX_GROSS_EXPOSURE×총자산), 리밸런싱 백스톱용
         self._buy_locked:        bool  = False                   # 낙폭 매수잠금 활성 여부
-        # [v2] 시가평가 보정용: 종목별 마지막 종가 캐리 (당일 바 누락 시 0 평가 방지)
+        # [v2] 시가평가 보정용: 종목별 마지막 '정상' 종가 캐리 (당일 바 누락·글리치 시 사용)
         self._last_close:        dict[str, float] = {}
+        # [v3.1] 글리치 필터용: 종목별 마지막 '관측' 종가(글리치 포함) — 새 레벨 재동기 판정
+        self._last_raw_close:    dict[str, float] = {}
 
     # ── 데이터 로드 ──────────────────────────────────────────────────────────
 
@@ -450,13 +459,28 @@ class BacktestEngine:
         """
         prices: dict[str, float] = {}
         for t, df in ticker_data.items():
-            if date in df.index:
-                p = float(df.loc[date, "Close"])
-                if np.isfinite(p) and p > 0:           # NaN·0·음수 종가는 데이터 결함 → 무시
-                    prices[t] = p
-                    self._last_close[t] = p             # 정상가만 캐리(_last_close 오염 방지)
-                elif t in self._last_close:             # 결함 종가는 직전 정상가로 대체
+            if date not in df.index:
+                continue
+            p = float(df.loc[date, "Close"])
+            if not (np.isfinite(p) and p > 0):         # NaN·0·음수 종가 → 직전 정상가 캐리
+                if t in self._last_close:
                     prices[t] = self._last_close[t]
+                continue
+
+            last = self._last_close.get(t)             # 마지막 '정상가'(글리치 제외 기준)
+            raw  = self._last_raw_close.get(t)         # 마지막 '관측가'(글리치 포함)
+            self._last_raw_close[t] = p                # 원관측가는 항상 갱신
+            jump = last is not None and (
+                p > last * self.GLITCH_JUMP_HIGH or p < last * self.GLITCH_JUMP_LOW
+            )
+            # 비정상 점프지만 직전 관측가와 동일 레벨이면(이틀 연속) 실제 변화로 수용 → 영구 동결 방지
+            stable = raw is not None and 0.7 * raw <= p <= 1.3 * raw
+            if jump and not stable:                    # 단일봉 글리치 → 평가에서 직전 정상가 사용
+                if t in self._last_close:
+                    prices[t] = self._last_close[t]    # _last_close 미갱신(오염 방지)
+            else:                                      # 정상가 → 채택 및 캐리 갱신
+                prices[t] = p
+                self._last_close[t] = p
         for t in self.positions:                       # 보유분은 직전가로라도 반드시 평가
             if t not in prices and t in self._last_close:
                 prices[t] = self._last_close[t]
