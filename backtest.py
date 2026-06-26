@@ -15,8 +15,11 @@ backtest.py — 듀얼 모드(야수 모드 + 디펜스 모드) 백테스팅 통
   평가액을 0으로 계산하던 시가평가 버그(자산곡선 허수 폭락)였다.
 
   1) 트레일링 스톱 지연 활성화: 진입 즉시 감시(조기 약손실 청산)를 폐지.
-     보유 수익률이 최초 +15%(TRAIL_ACTIVATE_PROFIT)에 도달한 뒤에만 트레일링 ON.
+     보유 수익률이 최초 +12%(TRAIL_ACTIVATE_PROFIT)에 도달한 뒤에만 트레일링 ON.
      그 전에는 고정 익절(TP)·ATR 손절(SL)로만 판단 → 흔들림 칼손절 차단.
+     [v4] 활성화 순간 손절선을 '본전 +0.5%(수수료 보전선)'으로 즉시 상향 → 10%대
+     수익을 줬던 종목이 마이너스 손절로 돌변하는 경로를 원천 차단(이익 보호 전용).
+     (참고: 손절폭 하드컷 -9.5% 안은 통제 백테스트에서 휩쏘·MDD 악화로 기각 — _resolve_stop_loss 주석)
   2) ATR 고정 리스크 배정 + '15% 하드캡': 수량 = (총자산×2%)/(진입가−손절가),
      단일 종목 평가액 ≤ 총자산 MAX_POSITION_PCT(15%) 강제. RSI≥70 진입 금지.
   3) 드로다운 방어 = 상시 노출상한 + 낙폭 매수잠금 (강제 매도 없음):
@@ -210,12 +213,24 @@ class BacktestEngine:
     ATR_SL_MULT_BEAR  = 3.0     # 디펜스(눌림목) 손절 ATR 배수 (v3 유지)
     SL_SLIPPAGE_PCT   = 0.01    # 손절 체결 시 손절선 -1% 보수 반영
 
+    # ── [v4-튜닝, 기각] 단일종목 최대 손절 폭 하드컷(-9.5%) — 역효과로 폐기 ────
+    # 시도: ATR 손절선이 -9.5%보다 깊어도 -9.5%에서 칼손절해 '잽' 데미지를 줄이려 함.
+    # 통제 백테스트 결과(동일 유니버스): 트레일링만(-20.2%/MDD -16.5%) → 하드컷 추가 시
+    # -37.3%/MDD -35.1%로 급악화. 원인 ① -9.5%는 모멘텀주 정상 되돌림 안쪽이라 휩쏘
+    # 손절이 191→260회로 폭증 ② 고정리스크 사이징이 손절폭을 좁히자 종목비중을 16→21%로
+    # 역팽창시켜 휩쏘 손실·MDD를 함께 키움. 결론: 손절폭 조이기는 이 전략과 상극 → 미적용.
+
     # ── [v4] 손절 직후 동일종목 재진입 쿨다운 (뇌동매매·재추격 방지) ──────────
     # 백테스트상 수익 +3.8M·MDD -1.8%p 개선 효과 확인(ATR 확대 대비 안전한 잽 방지책).
     REENTRY_COOLDOWN_DAYS = 7   # SELL_SL 발생 종목은 7일(캘린더, ≈5거래일) 신규진입 금지
 
-    # ── [v2-1] 트레일링 스톱 지연 활성화 ─────────────────────────────────────
-    TRAIL_ACTIVATE_PROFIT = 0.15  # 수익률 +15% 최초 도달 후에만 트레일링 ON
+    # ── [v4-튜닝] 트레일링 스톱 지연 활성화 + 본전 보전선 ────────────────────
+    # v3의 +15% 활성화는 익절 전 흔들림을 피했으나, 10%대 수익을 줬다가 마이너스
+    # 손절로 돌변하는 케이스가 남았다. → 활성화 시점을 +12%로 앞당기고(지연 방지),
+    # 활성화 즉시 손절선을 '진입가 본전 + 0.5%(수수료 보전선)'으로 끌어올려 수익
+    # 보존을 강제한다. 일단 +12% 수익을 준 종목이 손실로 돌변하는 경로를 원천 차단.
+    TRAIL_ACTIVATE_PROFIT = 0.12  # 수익률 +12% 최초 도달 시 트레일링 즉시 ON
+    TRAIL_BREAKEVEN_PCT   = 0.005 # 활성화 시 손절선을 본전 +0.5%(수수료 보전선)로 상향
 
     # ── [v2-2] RSI 하드 필터: 이 값 이상이면 신규 진입 전면 금지 ─────────────
     RSI_HARD_LIMIT       = 70.0
@@ -835,23 +850,26 @@ class BacktestEngine:
         if np.isnan(atr) or atr <= 0:
             atr = -1.0
 
-        # [v2-1] 트레일링 스톱 지연 활성화 — 수익률 +15% 최초 도달 후에만 ON.
+        # [v4] 트레일링 스톱 즉시 활성화 — 수익률 +12%(TRAIL_ACTIVATE_PROFIT) 최초 도달 시 ON(지연 방지).
         # 활성화 전에는 고정 익절(TP)·ATR 손절(SL)만으로 판단 → 흔들림 조기 약손실 청산 차단.
+        # 활성화되는 순간 손절선 자체를 '본전 +0.5%(수수료 보전선)'으로 즉시 상향한다 →
+        # 10%대 수익을 줬던 종목이 마이너스 손절로 돌변하는 경로를 ATR 유무와 무관하게 원천 차단.
+        # 슬리피지(SL_SLIPPAGE_PCT) 차감 후에도 체결가 ≥ 본전+0.5%가 되도록 손절선을 역보정.
+        breakeven_floor = (
+            pos.entry_price * (1.0 + self.TRAIL_BREAKEVEN_PCT) / (1.0 - self.SL_SLIPPAGE_PCT)
+        )
         if not pos.trailing_active and high >= pos.entry_price * (1.0 + self.TRAIL_ACTIVATE_PROFIT):
             pos.trailing_active = True
+            pos.stop_loss       = max(pos.stop_loss, breakeven_floor)  # 손절선 본전+0.5%로 즉시 상향
 
         # 트레일링은 '직전까지의 최고가' 기준으로 산정 (당일 고점-손절 동시 발생 방지)
         trailing_sl  = (
             self.strategy.get_trailing_stop(pos.peak_price, atr)
             if (pos.trailing_active and atr > 0) else -1.0
         )
-        # [버그픽스] 트레일링은 +15%(TRAIL_ACTIVATE_PROFIT) 최초 돌파 후에만 켜지고(위 라인),
-        # 일단 켜지면 손절선을 최소 '본전' 위로 끌어올린다 → 트레일링이 마이너스 청산을
-        # 절대 찍지 못함(이익 보호 전용). 활성화 전에는 trailing_sl=-1 이라 ATR 손절선만 동작.
-        # 슬리피지(SL_SLIPPAGE_PCT) 차감 후에도 체결가 ≥ 본전이 되도록 본전을 역보정.
+        # 트레일링 손절선도 본전+0.5% 아래로는 내려가지 않게 보정(이익 보호 전용 — 마이너스 청산 불가).
         if trailing_sl > 0:
-            breakeven_floor = pos.entry_price / (1.0 - self.SL_SLIPPAGE_PCT)
-            trailing_sl     = max(trailing_sl, breakeven_floor)
+            trailing_sl = max(trailing_sl, breakeven_floor)
         hard_sl      = pos.stop_loss if pos.stop_loss > 0 else float("-inf")
         ts_val       = trailing_sl   if trailing_sl    > 0 else float("-inf")
         effective_sl = max(hard_sl, ts_val)
@@ -867,7 +885,10 @@ class BacktestEngine:
             qty  = self.simulator.portfolio.get(ticker, 0)
             if qty and self.simulator.execute_sell(ticker, fill, qty):
                 pnl_pct    = (fill - pos.entry_price) / pos.entry_price * 100
-                action     = "SELL_TS" if trailing_sl > 0 and trailing_sl >= pos.stop_loss else "SELL_SL"
+                # [v4] 트레일링 활성화(+12% 도달, 손절선이 본전 위로 상향됨) 후 끊긴 청산은
+                # 본전 이상에서 체결되므로 이익보호(SELL_TS)로 분류 — ATR 유무와 무관.
+                # 그 외(활성화 전 ATR 손절·하드컷)는 진짜 손절(SELL_SL).
+                action     = "SELL_TS" if (pos.trailing_active and fill >= pos.entry_price) else "SELL_SL"
                 reason_txt = (
                     f"트레일링스톱 작동 (선: {effective_sl:,.0f})"
                     if action == "SELL_TS"
@@ -1197,7 +1218,8 @@ class BacktestEngine:
         mdd_flag = "✅ 목표(-20%) 이내" if mdd <= 20.0 else "⚠️ 목표(-20%) 초과"
 
         print("\n" + "=" * 70)
-        print(f"  [최종] 백테스트 성적표 v4 (수익 밸런스 튜닝) — 야수캡{self.MAX_POSITION_PCT_BULL:.0%}"
+        print(f"  [최종] 백테스트 성적표 v4 (손익비 튜닝) — 트레일링+{self.TRAIL_ACTIVATE_PROFIT:.0%}"
+              f"즉시본전보호 | 야수캡{self.MAX_POSITION_PCT_BULL:.0%}"
               f"/디펜스캡{self.MAX_POSITION_PCT:.0%} + 노출{self.MAX_GROSS_EXPOSURE:.0%}상한 "
               f"+ 디펜스물타기OFF + 손절쿨다운{self.REENTRY_COOLDOWN_DAYS}일")
         print("=" * 70)
