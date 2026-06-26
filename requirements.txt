@@ -35,3 +35,7 @@ python-dotenv>=1.0.0
 
 # ── Telegram Bot ───────────────────────────────────────────────────────────
 python-telegram-bot>=20.0
+
+# ── Realtime Signal Bot (signal_bot.py) ────────────────────────────────────
+schedule>=1.2.0
+pytz>=2024.1
