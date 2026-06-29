@@ -33,8 +33,8 @@ export interface Database {
         Relationships: [];
       };
       user_settings: {
-        Row: { user_id: string; gemini_api_key: string | null; groq_api_key: string | null; dart_api_key: string | null; watchlist: unknown; updated_at: string };
-        Insert: { user_id: string; gemini_api_key?: string | null; groq_api_key?: string | null; dart_api_key?: string | null; watchlist?: unknown };
+        Row: { user_id: string; gemini_api_key: string | null; groq_api_key: string | null; dart_api_key: string | null; watchlist: unknown; cash_balance: number; updated_at: string };
+        Insert: { user_id: string; gemini_api_key?: string | null; groq_api_key?: string | null; dart_api_key?: string | null; watchlist?: unknown; cash_balance?: number; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["user_settings"]["Insert"]>;
         Relationships: [];
       };

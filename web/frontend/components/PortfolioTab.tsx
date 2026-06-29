@@ -6,7 +6,7 @@ import useSWR, { mutate } from "swr";
 import { AuthGate, UserMenu } from "@/components/AuthGate";
 import { useJob } from "@/hooks/useJob";
 import { fmtNum, signClass } from "@/lib/format";
-import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation, PfHolding, PfOverall, PfActionLevel } from "@/lib/api-types";
+import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation, PfHolding, PfOverall, PfActionLevel, CashBalance } from "@/lib/api-types";
 import { StockSearch } from "@/components/StockSearch";
 
 // 쿠키 세션 기반 동일 출처 fetch (Supabase Auth 쿠키 자동 포함)
@@ -26,6 +26,7 @@ export function PortfolioTab() {
             <UserMenu />
           </div>
           <SummaryDashboard />
+          <CashCard />
           <AddForm />
           <Holdings />
           <PortfolioAnalysisCard />
@@ -53,6 +54,8 @@ interface Bucket {
 function SummaryDashboard() {
   const { data: holdings } = useSWR<PortfolioItem[]>("/api/v1/portfolio", jfetch, { refreshInterval: 30_000 });
   const { data: trades } = useSWR<TradeItem[]>("/api/v1/portfolio/trades", jfetch);
+  const { data: cash } = useSWR<CashBalance>("/api/v1/portfolio/cash", jfetch);
+  const cashKrw = cash?.cashBalance ?? 0;
 
   const byCcy = new Map<Ccy, Bucket>();
   const bucket = (ccy: Ccy): Bucket => {
@@ -114,11 +117,99 @@ function SummaryDashboard() {
                   tone={signClass(total)}
                   sub="평가+실현"
                 />
+                {b.ccy === "KRW" && (
+                  <>
+                    <Tile label="예수금(현금)" value={fmtMoney("KRW", cashKrw)} tone="text-term-ink" />
+                    <Tile
+                      label="총 자산"
+                      value={fmtMoney("KRW", cashKrw + b.evalAmt)}
+                      tone="text-term-ink"
+                      sub="현금+평가액"
+                    />
+                  </>
+                )}
               </div>
             </div>
           );
         })}
       </div>
+    </section>
+  );
+}
+
+// ── 예수금(현금 잔고) 입력/표시 — 총자산 계산 및 시그널 봇 계좌 연동 기준 ──
+function CashCard() {
+  const { data } = useSWR<CashBalance>("/api/v1/portfolio/cash", jfetch);
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const cash = data?.cashBalance ?? 0;
+
+  function startEdit() {
+    setVal(cash ? String(cash) : "");
+    setErr(null);
+    setEditing(true);
+  }
+
+  async function save() {
+    const n = Number(val.replace(/,/g, "").trim());
+    if (!Number.isFinite(n) || n < 0) { setErr("0 이상의 숫자를 입력하세요."); return; }
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/v1/portfolio/cash", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ cashBalance: n }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "저장 실패");
+      mutate("/api/v1/portfolio/cash");
+      setEditing(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "저장 실패");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-card border border-hairline bg-surface p-4 shadow-card">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">💰 예수금 (현금 잔고)</h3>
+          <p className="mt-0.5 text-xs text-ink-2">총자산(현금+평가액) 계산과 시그널 봇 계좌의 기준이 됩니다.</p>
+        </div>
+        {!editing && (
+          <div className="flex items-center gap-3">
+            <span className="tnum text-lg font-bold text-ink">₩{fmtNum(cash, 0)}</span>
+            <button onClick={startEdit} className="rounded-lg border border-hairline-md px-3 py-1.5 text-xs font-semibold text-ink hover:bg-hairline/30">
+              {cash ? "수정" : "입력"}
+            </button>
+          </div>
+        )}
+      </div>
+      {editing && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-ink-2">₩</span>
+            <input
+              type="number" inputMode="numeric" autoFocus value={val}
+              onChange={(e) => setVal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+              placeholder="예수금(원)"
+              className="w-44 rounded-lg border border-hairline-md bg-surface px-3 py-2 text-sm tabular-nums"
+            />
+          </div>
+          <button onClick={save} disabled={busy} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-40">
+            {busy ? "저장 중…" : "저장"}
+          </button>
+          <button onClick={() => setEditing(false)} disabled={busy} className="rounded-lg border border-hairline-md px-3 py-2 text-sm text-ink-2 hover:bg-hairline/30">
+            취소
+          </button>
+        </div>
+      )}
+      {err && <p className="mt-2 text-sm text-loss">{err}</p>}
     </section>
   );
 }

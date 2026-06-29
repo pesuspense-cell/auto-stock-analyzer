@@ -102,6 +102,12 @@ export interface OkResponse {
   ok: boolean;
   error?: string;
 }
+export interface CashBalance {
+  cashBalance: number; // 예수금(현금 잔고), KRW
+}
+export interface CashUpdateRequest {
+  cashBalance: number;
+}
 
 // ── 비동기 Job 큐 (ASA / 백테스트 / 분석·뉴스·펀더멘털) ──────────────
 export type JobKind =
