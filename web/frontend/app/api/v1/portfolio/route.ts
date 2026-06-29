@@ -20,7 +20,7 @@ export async function GET(): Promise<NextResponse<PortfolioItem[] | ApiError>> {
     // RLS로 본인 행만 반환되지만 명시적으로도 필터
     const { data: rows, error } = await supabase
       .from("portfolios")
-      .select("id,ticker,avg_price,quantity,added_at")
+      .select("id,ticker,avg_price,quantity,stop_loss,take_profit,added_at")
       .eq("user_id", user.id)
       .order("added_at", { ascending: false });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -41,6 +41,8 @@ export async function GET(): Promise<NextResponse<PortfolioItem[] | ApiError>> {
           name: nameMap.get(r.ticker) ?? null,
           avgPrice: avg,
           quantity: r.quantity,
+          stopLoss: r.stop_loss ?? null,
+          takeProfit: r.take_profit ?? null,
           addedAt: r.added_at,
           currentPrice: price,
           returnPct: price && avg ? (price / avg - 1) * 100 : null,
@@ -66,6 +68,9 @@ export async function POST(req: Request): Promise<NextResponse<OkResponse | ApiE
     if (!ticker || !(avgPrice > 0) || !(quantity > 0)) {
       return NextResponse.json({ error: "ticker/avgPrice/quantity 가 유효하지 않습니다." }, { status: 400 });
     }
+    // 손절/익절가는 선택 입력 — 양수일 때만 반영
+    const stopLoss = body.stopLoss != null && Number(body.stopLoss) > 0 ? Number(body.stopLoss) : null;
+    const takeProfit = body.takeProfit != null && Number(body.takeProfit) > 0 ? Number(body.takeProfit) : null;
 
     // 가중평균 업서트 (upsert_portfolio 이식)
     const { data: existing } = await supabase
@@ -78,15 +83,17 @@ export async function POST(req: Request): Promise<NextResponse<OkResponse | ApiE
     if (existing) {
       const newQty = existing.quantity + quantity;
       const newAvg = (existing.avg_price * existing.quantity + avgPrice * quantity) / newQty;
-      const { error } = await supabase
-        .from("portfolios")
-        .update({ avg_price: newAvg, quantity: newQty })
-        .eq("id", existing.id);
+      // sl/tp 는 이번에 입력했을 때만 갱신(미입력 시 기존값 유지)
+      const patch: { avg_price: number; quantity: number; stop_loss?: number; take_profit?: number } =
+        { avg_price: newAvg, quantity: newQty };
+      if (stopLoss != null) patch.stop_loss = stopLoss;
+      if (takeProfit != null) patch.take_profit = takeProfit;
+      const { error } = await supabase.from("portfolios").update(patch).eq("id", existing.id);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     } else {
       const { error } = await supabase
         .from("portfolios")
-        .insert({ user_id: user.id, ticker, avg_price: avgPrice, quantity });
+        .insert({ user_id: user.id, ticker, avg_price: avgPrice, quantity, stop_loss: stopLoss, take_profit: takeProfit });
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
     return NextResponse.json({ ok: true });

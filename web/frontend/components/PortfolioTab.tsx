@@ -6,7 +6,8 @@ import useSWR, { mutate } from "swr";
 import { AuthGate, UserMenu } from "@/components/AuthGate";
 import { useJob } from "@/hooks/useJob";
 import { fmtNum, signClass } from "@/lib/format";
-import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation, PfHolding, PfOverall, PfActionLevel, CashBalance } from "@/lib/api-types";
+import { ALERT_TYPES } from "@/lib/api-types";
+import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation, PfHolding, PfOverall, PfActionLevel, CashBalance, AlertPrefs, AlertPrefsResponse, AlertType } from "@/lib/api-types";
 import { StockSearch } from "@/components/StockSearch";
 
 // 쿠키 세션 기반 동일 출처 fetch (Supabase Auth 쿠키 자동 포함)
@@ -30,6 +31,7 @@ export function PortfolioTab() {
           <AddForm />
           <Holdings />
           <PortfolioAnalysisCard />
+          <AlertSettingsCard />
           <Trades />
           <p className="text-xs text-ink-3">로그인: {user.email}</p>
         </div>
@@ -218,6 +220,8 @@ function AddForm() {
   const [picked, setPicked] = useState<{ ticker: string; name: string } | null>(null);
   const [price, setPrice] = useState("");
   const [qty, setQty] = useState("1");
+  const [sl, setSl] = useState("");
+  const [tp, setTp] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -229,10 +233,14 @@ function AddForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ ticker: picked.ticker, avgPrice: Number(price), quantity: Number(qty) }),
+        body: JSON.stringify({
+          ticker: picked.ticker, avgPrice: Number(price), quantity: Number(qty),
+          stopLoss: Number(sl) > 0 ? Number(sl) : null,
+          takeProfit: Number(tp) > 0 ? Number(tp) : null,
+        }),
       });
       if (!res.ok) throw new Error((await res.json())?.error ?? "추가 실패");
-      setPicked(null); setPrice(""); setQty("1");
+      setPicked(null); setPrice(""); setQty("1"); setSl(""); setTp("");
       mutate("/api/v1/portfolio");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "추가 실패");
@@ -264,6 +272,13 @@ function AddForm() {
           </button>
         </div>
       </div>
+      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-4">
+        <input type="number" value={sl} onChange={(e) => setSl(e.target.value)} placeholder="손절가 (선택, MTS 설정값)"
+          className="rounded-lg border border-hairline-md bg-surface px-3 py-2 text-sm tabular-nums md:col-span-2" />
+        <input type="number" value={tp} onChange={(e) => setTp(e.target.value)} placeholder="익절가 (선택, MTS 설정값)"
+          className="rounded-lg border border-hairline-md bg-surface px-3 py-2 text-sm tabular-nums md:col-span-2" />
+      </div>
+      <p className="mt-1 text-xs text-ink-3">손절/익절가는 선택 입력입니다. 비워두면 봇이 진입가+ATR로 자동 산출합니다.</p>
       {err && <p className="mt-2 text-sm text-loss">{err}</p>}
     </section>
   );
@@ -296,6 +311,26 @@ function Holdings() {
     const res = await fetch(`/api/v1/portfolio/${item.id}`, { method: "DELETE", credentials: "same-origin" });
     if (res.ok) mutate("/api/v1/portfolio");
   }
+  async function editStops(item: PortfolioItem) {
+    const label = item.name ?? item.ticker;
+    const slIn = prompt(`'${label}' 손절가 (원) — 비우면 해제(봇이 ATR 자동 산출)`, item.stopLoss != null ? String(item.stopLoss) : "");
+    if (slIn == null) return;
+    const tpIn = prompt(`'${label}' 익절가 (원) — 비우면 해제(봇이 ATR 자동 산출)`, item.takeProfit != null ? String(item.takeProfit) : "");
+    if (tpIn == null) return;
+    const body = {
+      stopLoss: slIn.trim() === "" ? null : Number(slIn),
+      takeProfit: tpIn.trim() === "" ? null : Number(tpIn),
+    };
+    if ((body.stopLoss != null && !(body.stopLoss > 0)) || (body.takeProfit != null && !(body.takeProfit > 0))) {
+      alert("손절가/익절가는 양수이거나 비워야 합니다."); return;
+    }
+    const res = await fetch(`/api/v1/portfolio/${item.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+      body: JSON.stringify(body),
+    });
+    if (res.ok) mutate("/api/v1/portfolio");
+    else alert((await res.json().catch(() => ({})))?.error ?? "손절/익절 수정 실패");
+  }
 
   if (isLoading) return <p className="text-sm text-ink-2">불러오는 중…</p>;
   if (!data || data.length === 0) return <p className="text-sm text-ink-2">보유 종목이 없습니다.</p>;
@@ -307,6 +342,7 @@ function Holdings() {
           <tr className="border-b border-hairline text-left text-xs text-ink-2">
             <th className="py-2 pr-4">종목</th><th className="py-2 pr-4 text-right">평균단가</th>
             <th className="py-2 pr-4 text-right">현재가</th><th className="py-2 pr-4 text-right">수량</th>
+            <th className="py-2 pr-4 text-right">손절/익절</th>
             <th className="py-2 pr-4 text-right">수익률</th><th className="py-2 text-right">관리</th>
           </tr>
         </thead>
@@ -317,10 +353,22 @@ function Holdings() {
               <td className="py-2 pr-4 text-right tnum text-ink">{fmtNum(it.avgPrice, 2)}</td>
               <td className="py-2 pr-4 text-right tnum text-ink">{it.currentPrice != null ? fmtNum(it.currentPrice, 2) : "—"}</td>
               <td className="py-2 pr-4 text-right tnum text-ink">{it.quantity}</td>
+              <td className="py-2 pr-4 text-right tnum text-xs">
+                {it.stopLoss != null || it.takeProfit != null ? (
+                  <span>
+                    <span className="text-loss">{it.stopLoss != null ? fmtNum(it.stopLoss, 0) : "—"}</span>
+                    <span className="text-ink-3"> / </span>
+                    <span className="text-gain">{it.takeProfit != null ? fmtNum(it.takeProfit, 0) : "—"}</span>
+                  </span>
+                ) : (
+                  <span className="text-ink-3">자동(ATR)</span>
+                )}
+              </td>
               <td className={`py-2 pr-4 text-right tnum font-semibold ${it.returnPct != null ? signClass(it.returnPct) : "text-ink-2"}`}>
                 {it.returnPct != null ? `${it.returnPct >= 0 ? "+" : ""}${it.returnPct.toFixed(2)}%` : "—"}
               </td>
-              <td className="py-2 text-right">
+              <td className="py-2 text-right whitespace-nowrap">
+                <button onClick={() => editStops(it)} className="mr-2 text-xs text-ink-2 hover:underline">손절/익절</button>
                 <button onClick={() => sell(it)} className="mr-2 text-xs text-accent hover:underline">매도</button>
                 <button onClick={() => remove(it)} className="text-xs text-loss hover:underline">삭제</button>
               </td>
@@ -529,6 +577,64 @@ function Tile({ label, value, tone, sub }: { label: string; value: string; tone:
       <div className={`tnum text-sm font-bold ${tone}`}>{value}</div>
       {sub && <div className="text-[0.6rem] text-term-muted">{sub}</div>}
     </div>
+  );
+}
+
+// 시그널 봇 알림 on/off — user_settings.alert_prefs (봇이 매 사이클 읽어 .env 위에 덮어씀)
+const ALERT_META: Record<AlertType, { label: string; desc: string }> = {
+  BUY:        { label: "🚨 매수 추천",   desc: "골든크로스 / 눌림목 신규 진입 신호" },
+  SELL_TP:    { label: "💵 익절 도달",   desc: "익절 목표가 도달" },
+  SELL_SL:    { label: "❌ 손절 이탈",   desc: "손절선 이탈" },
+  SELL_TS:    { label: "🎯 트레일링",    desc: "본전 방어선 상향 + 트레일링 청산" },
+  SELL_REBAL: { label: "♻️ 리밸런싱",    desc: "노출 45% 초과 부분매도 (풀매수 시 자주 뜸)" },
+};
+
+function AlertSettingsCard() {
+  const { data } = useSWR<AlertPrefsResponse>("/api/v1/settings/alerts", jfetch);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // 미설정 키는 기본 ON (REBAL은 노이즈라 기본 OFF) — 봇 .env 기본값과 일치
+  const enabled = (t: AlertType): boolean => data?.alertPrefs?.[t] ?? (t !== "SELL_REBAL");
+
+  async function toggle(t: AlertType) {
+    setBusy(true); setErr(null);
+    const next: AlertPrefs = {};
+    for (const a of ALERT_TYPES) next[a] = a === t ? !enabled(t) : enabled(a);
+    try {
+      const res = await fetch("/api/v1/settings/alerts", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+        body: JSON.stringify(next),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "저장 실패");
+      mutate("/api/v1/settings/alerts");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "저장 실패");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-card border border-hairline bg-surface p-4 shadow-card">
+      <h3 className="text-sm font-semibold text-ink">🔔 시그널 봇 알림 설정</h3>
+      <p className="mt-0.5 text-xs text-ink-2">텔레그램으로 받을 신호 종류를 켜고 끕니다. 봇이 다음 감시 주기에 자동 반영합니다.</p>
+      <div className="mt-3 space-y-1.5">
+        {ALERT_TYPES.map((t) => (
+          <label key={t} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-hairline-md/50 px-3 py-2">
+            <span>
+              <span className="text-sm font-medium text-ink">{ALERT_META[t].label}</span>
+              <span className="ml-2 text-xs text-ink-3">{ALERT_META[t].desc}</span>
+            </span>
+            <input
+              type="checkbox" checked={enabled(t)} disabled={busy}
+              onChange={() => toggle(t)}
+              className="h-4 w-4 shrink-0 accent-accent"
+            />
+          </label>
+        ))}
+      </div>
+      {err && <p className="mt-2 text-sm text-loss">{err}</p>}
+    </section>
   );
 }
 

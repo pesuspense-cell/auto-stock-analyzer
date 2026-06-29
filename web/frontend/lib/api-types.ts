@@ -67,6 +67,8 @@ export interface PortfolioItem {
   name: string | null;
   avgPrice: number;
   quantity: number;
+  stopLoss: number | null;   // 실제 MTS 손절가(원). null=봇이 ATR로 산출
+  takeProfit: number | null; // 실제 MTS 익절가(원). null=봇이 ATR로 산출
   addedAt: string;
   currentPrice: number | null;
   returnPct: number | null;
@@ -76,6 +78,12 @@ export interface PortfolioAddRequest {
   ticker: string;
   avgPrice: number;
   quantity?: number;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+}
+export interface PortfolioUpdateRequest {
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }
 export interface SellRequest {
   sellPrice: number;
@@ -107,6 +115,14 @@ export interface CashBalance {
 }
 export interface CashUpdateRequest {
   cashBalance: number;
+}
+
+// 시그널 봇 알림 on/off (웹 UI ↔ 봇 공유, user_settings.alert_prefs)
+export const ALERT_TYPES = ["BUY", "SELL_TP", "SELL_SL", "SELL_TS", "SELL_REBAL"] as const;
+export type AlertType = (typeof ALERT_TYPES)[number];
+export type AlertPrefs = Partial<Record<AlertType, boolean>>;
+export interface AlertPrefsResponse {
+  alertPrefs: AlertPrefs;
 }
 
 // ── 비동기 Job 큐 (ASA / 백테스트 / 분석·뉴스·펀더멘털) ──────────────

@@ -125,10 +125,16 @@ class SupabaseAccount:
         return names
 
     def load_holdings(self, user_id: str | None = None, email: str | None = None) -> dict:
-        """대상 계정의 예수금·보유종목을 시그널 봇 holdings 구조로 반환.
+        """대상 계정의 예수금·보유종목·알림설정을 시그널 봇 holdings 구조로 반환.
 
-        반환: {"cash": float, "positions": {ticker: {name, entry_price, quantity}}, "user_id": str}
-        sl/tp 는 여기서 채우지 않는다(봇이 진입가+현재ATR로 산출).
+        반환: {
+          "cash": float,
+          "positions": {ticker: {name, entry_price, quantity, [sl], [tp]}},
+          "alert_prefs": {신호종류: bool},   # 웹 UI 알림 on/off (없으면 빈 dict)
+          "user_id": str,
+        }
+        포지션의 sl/tp 는 portfolios 에 저장돼 있으면 채우고(실제 MTS 손절·익절가),
+        없으면(null) 키 자체를 넣지 않아 봇이 진입가+현재ATR로 산출하도록 한다.
         """
         if not self.enabled:
             raise RuntimeError("Supabase 자격(URL/secret key) 미설정 — .env 또는 web/frontend/.env.local 확인")
@@ -139,24 +145,46 @@ class SupabaseAccount:
             if not user_id:
                 raise RuntimeError(f"이메일 '{email}' 에 해당하는 계정을 찾을 수 없습니다.")
 
-        cs = self._get(f"rest/v1/user_settings?user_id=eq.{user_id}&select=cash_balance")
-        cash = float(cs[0]["cash_balance"]) if cs else 0.0
+        # 004 마이그레이션(alert_prefs / stop_loss·take_profit) 적용 전이면 확장 컬럼 select 가
+        # 실패하므로 기본 컬럼으로 폴백 — 마이그레이션 전후 모두 동작하도록.
+        try:
+            cs = self._get(
+                f"rest/v1/user_settings?user_id=eq.{user_id}&select=cash_balance,alert_prefs"
+            )
+        except Exception:
+            cs = self._get(f"rest/v1/user_settings?user_id=eq.{user_id}&select=cash_balance")
+        cash        = float(cs[0]["cash_balance"]) if cs else 0.0
+        alert_prefs = (cs[0].get("alert_prefs") if cs else None) or {}
 
-        rows = self._get(
-            f"rest/v1/portfolios?user_id=eq.{user_id}"
-            "&select=ticker,avg_price,quantity&order=added_at.desc"
-        )
+        try:
+            rows = self._get(
+                f"rest/v1/portfolios?user_id=eq.{user_id}"
+                "&select=ticker,avg_price,quantity,stop_loss,take_profit&order=added_at.desc"
+            )
+        except Exception:
+            rows = self._get(
+                f"rest/v1/portfolios?user_id=eq.{user_id}"
+                "&select=ticker,avg_price,quantity&order=added_at.desc"
+            )
         names = self._resolve_names([r["ticker"] for r in rows])
 
         positions: dict[str, dict] = {}
         for r in rows:
             t = r["ticker"]
-            positions[t] = {
+            pos = {
                 "name":        names.get(t, t),
                 "entry_price": float(r["avg_price"]),
                 "quantity":    float(r["quantity"]),
             }
-        return {"cash": cash, "positions": positions, "user_id": user_id}
+            if r.get("stop_loss") is not None:
+                pos["sl"] = float(r["stop_loss"])      # 실제 MTS 손절가
+            if r.get("take_profit") is not None:
+                pos["tp"] = float(r["take_profit"])    # 실제 MTS 익절가
+            positions[t] = pos
+        return {
+            "cash": cash, "positions": positions,
+            "alert_prefs": alert_prefs, "user_id": user_id,
+        }
 
 
 if __name__ == "__main__":

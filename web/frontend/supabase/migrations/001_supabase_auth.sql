@@ -36,6 +36,7 @@ create table if not exists public.user_settings (
   dart_api_key   text,
   watchlist      jsonb not null default '[]'::jsonb,
   cash_balance   double precision not null default 0,   -- 예수금(현금 잔고). 기존 인스턴스는 003 마이그레이션으로 추가
+  alert_prefs    jsonb not null default '{}'::jsonb,    -- 시그널 봇 알림 on/off. 기존 인스턴스는 004 마이그레이션으로 추가
   updated_at     timestamptz not null default now()
 );
 
@@ -45,6 +46,8 @@ create table if not exists public.portfolios (
   ticker      text not null,
   avg_price   double precision not null,
   quantity    double precision not null default 1,
+  stop_loss   double precision,                          -- 실제 MTS 손절가(원). null=봇이 ATR로 산출
+  take_profit double precision,                          -- 실제 MTS 익절가(원). null=봇이 ATR로 산출
   added_at    timestamptz not null default now(),
   unique (user_id, ticker)
 );

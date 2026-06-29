@@ -33,14 +33,14 @@ export interface Database {
         Relationships: [];
       };
       user_settings: {
-        Row: { user_id: string; gemini_api_key: string | null; groq_api_key: string | null; dart_api_key: string | null; watchlist: unknown; cash_balance: number; updated_at: string };
-        Insert: { user_id: string; gemini_api_key?: string | null; groq_api_key?: string | null; dart_api_key?: string | null; watchlist?: unknown; cash_balance?: number; updated_at?: string };
+        Row: { user_id: string; gemini_api_key: string | null; groq_api_key: string | null; dart_api_key: string | null; watchlist: unknown; cash_balance: number; alert_prefs: Record<string, boolean>; updated_at: string };
+        Insert: { user_id: string; gemini_api_key?: string | null; groq_api_key?: string | null; dart_api_key?: string | null; watchlist?: unknown; cash_balance?: number; alert_prefs?: Record<string, boolean>; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["user_settings"]["Insert"]>;
         Relationships: [];
       };
       portfolios: {
-        Row: { id: string; user_id: string; ticker: string; avg_price: number; quantity: number; added_at: string };
-        Insert: { user_id: string; ticker: string; avg_price: number; quantity?: number };
+        Row: { id: string; user_id: string; ticker: string; avg_price: number; quantity: number; stop_loss: number | null; take_profit: number | null; added_at: string };
+        Insert: { user_id: string; ticker: string; avg_price: number; quantity?: number; stop_loss?: number | null; take_profit?: number | null };
         Update: Partial<Database["public"]["Tables"]["portfolios"]["Insert"]>;
         Relationships: [];
       };

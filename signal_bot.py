@@ -118,6 +118,22 @@ def _disabled_types_label() -> str:
            if not SIGNAL_TYPE_ENABLED.get(k, True)]
     return ", ".join(off) if off else "없음(전부 ON)"
 
+
+def _apply_alert_prefs(prefs: dict) -> None:
+    """웹 UI 알림 설정(user_settings.alert_prefs)을 SIGNAL_TYPE_ENABLED 에 덮어쓴다.
+
+    명시된 키만 적용하므로(없는 키는 .env 기본값 유지) 웹 설정이 .env 보다 우선한다.
+    SELL_TS 키는 트레일링 발동(TS_ARM)에도 함께 적용된다.
+    """
+    if not prefs:
+        return
+    for key in ("BUY", "SELL_TP", "SELL_SL", "SELL_TS", "SELL_REBAL"):
+        if key in prefs:
+            val = bool(prefs[key])
+            SIGNAL_TYPE_ENABLED[key] = val
+            if key == "SELL_TS":
+                SIGNAL_TYPE_ENABLED["TS_ARM"] = val
+
 # 장 운영 시간(한국 KST). 09:00 ~ 15:30.
 MARKET_OPEN  = dtime(9, 0)
 MARKET_CLOSE = dtime(15, 30)
@@ -578,6 +594,7 @@ FORMATTERS = {
 def run_cycle(notifier: TelegramNotifier, state: dict) -> int:
     """1회 감시 사이클 — 청산 → 리밸런싱 → 매수 순으로 신호를 점검·발송."""
     holdings = load_account()
+    _apply_alert_prefs(holdings.get("alert_prefs") or {})   # 웹 UI 알림설정 반영(.env 위에 덮어씀)
     sent_count = 0
 
     # 보유 종목이 사라졌으면(매도 완료) 관련 런타임/중복키 정리
