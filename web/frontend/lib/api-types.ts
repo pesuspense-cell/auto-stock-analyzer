@@ -29,7 +29,8 @@ export interface EtfItem {
   tag: string;        // 테마 라벨 (이모지 포함)
   price: number;
   changePct: number;
-  isIndex: boolean;   // 지수형 ETF(정렬 우선)
+  isIndex: boolean;   // 지수형 ETF(📊 태그)
+  aum: number;        // 순자산 규모 — 국내 조원 / 미국 십억$ (정렬 기준, 근사치)
 }
 export interface EtfsSummary {
   up: number;

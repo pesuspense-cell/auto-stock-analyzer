@@ -20,7 +20,7 @@ export function SectorEtfTable() {
     <section className="rounded-card border border-hairline bg-surface p-5 shadow-card">
       <div className="mb-1 flex items-baseline justify-between">
         <h3 className="text-sm font-semibold text-ink">🗺️ 주요 섹터 ETF 등락 비교</h3>
-        <span className="text-[0.7rem] text-ink-2">미국 15 · 국내 20 · 10분 캐시</span>
+        <span className="text-[0.7rem] text-ink-2">미국 15 · 국내 21 · 규모순 · 10분 캐시</span>
       </div>
 
       {!data ? (
@@ -86,9 +86,9 @@ function EtfColumn({
   etfs: EtfItem[];
 }) {
   const benchChg = etfs.find((e) => e.ticker === benchTicker)?.changePct ?? null;
-  // 지수형 우선 → 등락률 내림차순
+  // 규모(순자산) 내림차순 → 동률 시 등락률 내림차순
   const sorted = [...items].sort(
-    (a, b) => Number(b.isIndex) - Number(a.isIndex) || b.changePct - a.changePct
+    (a, b) => (b.aum ?? 0) - (a.aum ?? 0) || b.changePct - a.changePct
   );
 
   if (sorted.length === 0) {
