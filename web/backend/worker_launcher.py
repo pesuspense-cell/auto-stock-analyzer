@@ -33,8 +33,26 @@ CHILDREN: dict[str, dict] = {
 RESTART_BACKOFF_SEC = 10   # 즉시 재크래시 루프 방지용 최소 재시작 간격
 
 
+def _check_env() -> None:
+    """시작 시 필수 env 존재 여부를 (값 노출 없이) 로그로 알려 진단을 돕는다."""
+    checks = {
+        "TELEGRAM_BOT_TOKEN":        bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+        "SUPABASE_URL":              bool(os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")),
+        "SUPABASE_SERVICE_ROLE_KEY": bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SECRET_KEY")),
+        "SUPABASE_DB_URL(jobs)":     bool(os.getenv("SUPABASE_DB_URL")),
+    }
+    print("[worker_launcher] env 점검: "
+          + ", ".join(f"{k}={'SET' if v else 'MISSING'}" for k, v in checks.items()), flush=True)
+    missing = [k for k, v in checks.items() if not v and not k.endswith("(jobs)")]
+    if missing:
+        print(f"[worker_launcher] ⚠️ 누락 env: {', '.join(missing)} — '이 서비스(asa-worker)'의 "
+              "Environment 에 값을 넣고 재배포하세요. 그때까지 signal_bot/telegram_link_bot 은 "
+              "재시작 루프를 돕니다(jobs_worker 는 SUPABASE_DB_URL 로 정상 동작).", flush=True)
+
+
 def main() -> None:
     print("[worker_launcher] 시작 — " + " + ".join(CHILDREN), flush=True)
+    _check_env()
     procs: dict[str, subprocess.Popen] = {}
     last_start: dict[str, float] = {}
     while True:
