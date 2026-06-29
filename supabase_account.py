@@ -89,6 +89,38 @@ class SupabaseAccount:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode())
 
+    def _patch(self, path: str, body: dict) -> None:
+        req = urllib.request.Request(
+            f"{self.url}/{path}", method="PATCH",
+            data=json.dumps(body).encode(),
+            headers={
+                "apikey": self.key, "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+
+    def link_telegram(self, token: str, chat_id: str) -> str | None:
+        """딥링크 토큰으로 사용자를 찾아 chat_id 저장 + 알림 ON + 토큰 소거.
+
+        연동된 user_id 반환(토큰 무효/만료면 None). bot.py·telegram_link_bot.py 공용.
+        """
+        if not (self.enabled and token):
+            return None
+        rows = self._get(
+            f"rest/v1/user_settings?telegram_link_token=eq.{urllib.parse.quote(token)}&select=user_id"
+        )
+        if not rows:
+            return None
+        uid = rows[0]["user_id"]
+        self._patch(f"rest/v1/user_settings?user_id=eq.{uid}", {
+            "telegram_chat_id": str(chat_id),
+            "telegram_enabled": True,
+            "telegram_link_token": None,
+        })
+        return uid
+
     def list_notify_users(self) -> list[dict]:
         """텔레그램 연동(chat_id 등록) + 수신 ON 사용자 목록 [{user_id, chat_id}].
 

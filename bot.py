@@ -478,6 +478,35 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 # ── 핸들러: /도움 ─────────────────────────────────────────────────────────────
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """딥링크 계정 연동 처리: /start <token>.
+
+    신규 사용자도 연동해야 하므로 _is_allowed 게이트를 적용하지 않는다. 토큰이 없으면
+    일반 /start 로 보고 도움말을 보여준다. 토큰→사용자 매칭/저장은 supabase_account 공용.
+    """
+    args = context.args or []
+    if args and args[0].strip():
+        token   = args[0].strip()
+        chat_id = update.effective_chat.id
+        uid = None
+        try:
+            from supabase_account import SupabaseAccount
+            uid = SupabaseAccount().link_telegram(token, str(chat_id))
+        except Exception as e:
+            logger.error(f"텔레그램 연동 오류: {e}")
+        if uid:
+            await update.effective_message.reply_text(
+                "✅ <b>텔레그램 연동 완료!</b>\n이제 이 채팅으로 회원님 계좌 기준 매매 시그널을 보내드립니다.\n"
+                "<i>알림 on/off 는 웹 '시그널 봇 알림 설정'에서 바꿀 수 있습니다.</i>",
+                parse_mode=ParseMode.HTML)
+        else:
+            await update.effective_message.reply_text(
+                "⚠️ 유효하지 않거나 만료된 연동 링크입니다. 웹에서 '텔레그램 연동'을 다시 눌러 새 링크를 받아주세요.",
+                parse_mode=ParseMode.HTML)
+        return
+    await help_cmd(update, context)
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update):
         return
@@ -522,7 +551,8 @@ def main() -> None:
     app.add_handler(CommandHandler(["analyze", "a"], analyze_cmd))
     app.add_handler(CommandHandler(["watch",   "w"], watch_cmd))
     app.add_handler(CommandHandler(["status",  "s"], status_cmd))
-    app.add_handler(CommandHandler(["help", "start"], help_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("start", start_cmd))   # 딥링크 계정 연동 + 도움말
 
     logger.info("=" * 60)
     logger.info("  트레이딩 비서 봇 시작")

@@ -11,6 +11,11 @@ telegram_link_bot.py — 텔레그램 딥링크 계정 연동 리스너 (다중 
 
 실행:  python telegram_link_bot.py
 필요:  .env 의 TELEGRAM_BOT_TOKEN, Supabase 자격(루트 .env 또는 web/frontend/.env.local)
+
+⚠️ 이미 bot.py(트레이딩 비서 봇)를 실행 중이라면 이 리스너를 따로 띄우지 마세요.
+   같은 토큰을 둘이 동시에 롱폴링하면 텔레그램 409 Conflict 가 납니다. 연동 처리는
+   bot.py 의 /start <token> 핸들러에 이미 통합돼 있습니다. 이 스크립트는 bot.py 를
+   쓰지 않는 배포(시그널 봇만 운용)에서 연동만 따로 처리할 때 쓰는 단독 대안입니다.
 """
 from __future__ import annotations
 
@@ -71,33 +76,12 @@ class TelegramLinker:
         except Exception as e:
             logger.warning(f"답장 발송 실패(chat {chat_id}): {e}")
 
-    # ── Supabase REST (service_role) ──────────────────────────────────────────
-    def _sb(self, method: str, path: str, body: dict | None = None) -> list:
-        req = urllib.request.Request(
-            f"{self.acc.url}/{path}", method=method,
-            data=json.dumps(body).encode() if body is not None else None,
-            headers={
-                "apikey": self.acc.key, "Authorization": f"Bearer {self.acc.key}",
-                "Content-Type": "application/json", "Prefer": "return=representation",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=20) as r:
-            txt = r.read().decode()
-            return json.loads(txt) if txt else []
-
     def _link_user(self, token: str, chat_id: str) -> bool:
         """토큰→사용자 매칭 후 chat_id 저장 + 알림 ON + 토큰 소거. 성공 시 True."""
-        rows = self._sb("GET", f"rest/v1/user_settings?telegram_link_token=eq.{urllib.parse.quote(token)}&select=user_id")
-        if not rows:
-            return False
-        uid = rows[0]["user_id"]
-        self._sb("PATCH", f"rest/v1/user_settings?user_id=eq.{uid}", {
-            "telegram_chat_id": str(chat_id),
-            "telegram_enabled": True,
-            "telegram_link_token": None,
-        })
-        logger.info(f"연동 완료: user {uid[:8]}… ← chat {chat_id}")
-        return True
+        uid = self.acc.link_telegram(token, str(chat_id))
+        if uid:
+            logger.info(f"연동 완료: user {uid[:8]}… ← chat {chat_id}")
+        return uid is not None
 
     # ── 메시지 처리 ────────────────────────────────────────────────────────────
     def _handle(self, update: dict) -> None:
