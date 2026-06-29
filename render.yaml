@@ -44,22 +44,39 @@ services:
       - key: KRX_PW
         sync: false
 
-  # ── jobs 워커: ASA · 백테스트 (서버리스 불가 → 상시 프로세스) ────────────────
+  # ── 통합 워커: jobs(ASA·백테스트) + 시그널 봇(1:N) + 텔레그램 연동 ───────────
+  #   worker_launcher.py 가 worker.jobs_worker + signal_bot.py + telegram_link_bot.py 를
+  #   자식 프로세스로 띄우고 죽으면 자동 재시작. 별도 워커 분리 없이 한 인스턴스로 통합(비용 절감).
+  #   ⚠️ 텔레그램 폴러는 1개만 — 이 워커 가동 시 로컬 bot.py(start_all.bat)는 끄세요.
   - type: worker
     name: asa-worker
     runtime: python
     plan: starter                   # worker 는 free 불가 — 상시 실행 유료 플랜
     rootDir: web/backend
     buildCommand: pip install -r requirements.txt -r ../../requirements.txt
-    startCommand: python -m worker.jobs_worker
+    startCommand: python worker_launcher.py
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
-      - key: SUPABASE_DB_URL        # asa-api 와 동일 풀러 URL
+      - key: SUPABASE_DB_URL        # (jobs) asa-api 와 동일 풀러 URL
         sync: false
       - key: JOBS_POLL_INTERVAL
         value: "3"
+      # ── 시그널 봇/연동봇용 (REST: RLS 우회 읽기/쓰기) ──────────────────────────
+      - key: TELEGRAM_BOT_TOKEN     # BotFather 토큰
+        sync: false
+      - key: SUPABASE_URL           # 예: https://<ref>.supabase.co
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY   # secret 키(sb_secret_...)
+        sync: false
+      - key: SIGNAL_POLL_MIN        # 감시 주기(분)
+        value: "5"
+      - key: SIGNAL_UNIVERSE_N      # 매수 스크리닝 유니버스 상위 N
+        value: "100"
+      # (선택) 운영 알림용 관리자 chat — 봇 가동/장시작·마감 안내 수신
+      # - key: TELEGRAM_CHAT_ID
+      #   sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
@@ -70,32 +87,3 @@ services:
         sync: false
       - key: KRX_PW
         sync: false
-
-  # ── 시그널 봇 워커: 텔레그램 1:N 알림 + 딥링크 연동 (PC 없이 24/7) ────────────
-  #   worker_signal.py 가 signal_bot.py + telegram_link_bot.py 를 자식 프로세스로
-  #   띄우고 죽으면 자동 재시작. rootDir 가 레포 루트라 root requirements.txt 만 설치.
-  #   ⚠️ 이 워커를 띄우면 로컬 bot.py(start_all.bat)는 끄세요 — 텔레그램 폴러는 1개만 허용.
-  - type: worker
-    name: asa-signal-bot
-    runtime: python
-    plan: starter                   # worker 는 free 불가 — 상시 실행 유료 플랜
-    rootDir: .
-    buildCommand: pip install -r requirements.txt
-    startCommand: python worker_signal.py
-    autoDeploy: true
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.12.7"
-      - key: TELEGRAM_BOT_TOKEN     # BotFather 토큰
-        sync: false
-      - key: SUPABASE_URL           # 예: https://<ref>.supabase.co
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY   # secret 키(sb_secret_...) — RLS 우회 읽기/쓰기
-        sync: false
-      - key: SIGNAL_POLL_MIN        # 감시 주기(분)
-        value: "5"
-      - key: SIGNAL_UNIVERSE_N      # 매수 스크리닝 유니버스 상위 N
-        value: "100"
-      # (선택) 운영 알림용 관리자 chat — 봇 가동/장시작·마감 안내 수신
-      # - key: TELEGRAM_CHAT_ID
-      #   sync: false
