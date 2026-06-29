@@ -91,6 +91,33 @@ ACCOUNT_SOURCE  = os.getenv("SIGNAL_ACCOUNT_SOURCE", "supabase").lower()
 ACCOUNT_USER_ID = os.getenv("SIGNAL_ACCOUNT_USER_ID", "")
 ACCOUNT_EMAIL   = os.getenv("SIGNAL_ACCOUNT_EMAIL", "")
 
+
+# ── [알림 on/off] 신호 종류별 발송 토글 (.env, 기본 전부 ON) ─────────────────
+# 노이즈가 많은 신호(예: 풀매수 상태의 리밸런싱)를 종류별로 끌 수 있다. 꺼진 종류는
+# 신호를 만들지도·중복방지 키를 남기지도 않으므로, 나중에 다시 켜면 즉시 정상 발송된다.
+def _env_bool(name: str, default: bool = True) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on", "y")
+
+# 트레일링 발동(TS_ARM)·트레일링 청산(SELL_TS)은 SIGNAL_ENABLE_SELL_TS 하나로 묶어 제어.
+SIGNAL_TYPE_ENABLED: dict[str, bool] = {
+    "BUY":        _env_bool("SIGNAL_ENABLE_BUY",     True),
+    "SELL_TP":    _env_bool("SIGNAL_ENABLE_SELL_TP", True),
+    "SELL_SL":    _env_bool("SIGNAL_ENABLE_SELL_SL", True),
+    "TS_ARM":     _env_bool("SIGNAL_ENABLE_SELL_TS", True),
+    "SELL_TS":    _env_bool("SIGNAL_ENABLE_SELL_TS", True),
+    "SELL_REBAL": _env_bool("SIGNAL_ENABLE_REBAL",   True),
+}
+
+
+def _disabled_types_label() -> str:
+    """꺼진 신호 종류 요약(로그·시작 알림용). 대표 5종 기준."""
+    off = [k for k in ("BUY", "SELL_TP", "SELL_SL", "SELL_TS", "SELL_REBAL")
+           if not SIGNAL_TYPE_ENABLED.get(k, True)]
+    return ", ".join(off) if off else "없음(전부 ON)"
+
 # 장 운영 시간(한국 KST). 09:00 ~ 15:30.
 MARKET_OPEN  = dtime(9, 0)
 MARKET_CLOSE = dtime(15, 30)
@@ -324,7 +351,7 @@ def monitor_positions(holdings: dict, state: dict) -> tuple[list[dict], dict[str
         if not rt["trailing_active"] and high >= entry * (1.0 + TRAIL_ACTIVATE_PROFIT):
             rt["trailing_active"] = True
             sl = max(sl, breakeven_floor)
-            if not _dedup(state, f"{ticker}:TS_ARM"):
+            if SIGNAL_TYPE_ENABLED["TS_ARM"] and not _dedup(state, f"{ticker}:TS_ARM"):
                 signals.append({
                     "type": "TS_ARM", "ticker": ticker, "name": name,
                     "entry": entry, "current": close, "new_sl": sl,
@@ -351,7 +378,7 @@ def monitor_positions(holdings: dict, state: dict) -> tuple[list[dict], dict[str
             fill = max(fill, low)
             is_ts = rt["trailing_active"] and fill >= entry
             stype = "SELL_TS" if is_ts else "SELL_SL"
-            if not _dedup(state, f"{ticker}:{stype}"):
+            if SIGNAL_TYPE_ENABLED.get(stype, True) and not _dedup(state, f"{ticker}:{stype}"):
                 signals.append({
                     "type": stype, "ticker": ticker, "name": name,
                     "entry": entry, "current": close, "fill": fill,
@@ -364,7 +391,7 @@ def monitor_positions(holdings: dict, state: dict) -> tuple[list[dict], dict[str
         if tp > 0 and high >= tp:
             fill = open_ if open_ > tp else tp
             fill = min(fill, high)
-            if not _dedup(state, f"{ticker}:SELL_TP"):
+            if SIGNAL_TYPE_ENABLED["SELL_TP"] and not _dedup(state, f"{ticker}:SELL_TP"):
                 signals.append({
                     "type": "SELL_TP", "ticker": ticker, "name": name,
                     "entry": entry, "current": close, "fill": fill, "tp": tp,
@@ -566,19 +593,25 @@ def run_cycle(notifier: TelegramNotifier, state: dict) -> int:
     is_bear = market.is_bear_market()
     logger.info(f"장세: {'🐻 디펜스(하락장)' if is_bear else '🐂 야수(상승장)'}")
 
-    # ── 1) 청산 감시 (보유 종목) ─────────────────────────────────────────────
+    # ── 1) 청산 감시 (보유 종목) — 꺼진 청산 종류는 monitor 내부에서 스킵 ─────
     sell_signals, price_map = monitor_positions(holdings, state)
 
-    # ── 2) 리밸런싱 감시 ─────────────────────────────────────────────────────
-    rebal = check_rebalance(holdings, price_map, state)
-    if rebal:
-        sell_signals.append(rebal)
+    # ── 2) 리밸런싱 감시 (알림 켜진 경우만) ──────────────────────────────────
+    if SIGNAL_TYPE_ENABLED["SELL_REBAL"]:
+        rebal = check_rebalance(holdings, price_map, state)
+        if rebal:
+            sell_signals.append(rebal)
 
-    # ── 3) 매수 감시 (매수잠금 없을 때) ──────────────────────────────────────
-    buy_signals = screen_buys(holdings, price_map, is_bear, state)
+    # ── 3) 매수 감시 (알림 켜진 경우만 — 무거운 유니버스 스크리닝 절약) ───────
+    buy_signals = (
+        screen_buys(holdings, price_map, is_bear, state)
+        if SIGNAL_TYPE_ENABLED["BUY"] else []
+    )
 
-    # ── 발송 (청산·리밸런싱 우선, 그 다음 매수) ──────────────────────────────
+    # ── 발송 (청산·리밸런싱 우선, 그 다음 매수 / 꺼진 종류는 방어적 스킵) ─────
     for s in sell_signals + buy_signals:
+        if not SIGNAL_TYPE_ENABLED.get(s["type"], True):
+            continue
         msg = FORMATTERS[s["type"]](s)
         if notifier.send(msg):
             sent_count += 1
@@ -628,6 +661,7 @@ def main() -> None:
 
     notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
     state    = load_state()
+    logger.info(f"알림 설정 — 꺼진 신호: {_disabled_types_label()}")
 
     if args.test:
         ok = notifier.send(
@@ -651,6 +685,7 @@ def main() -> None:
     notifier.send(
         f"🤖 <b>시그널 봇 가동</b>\n"
         f"장중(09:00~15:30) {POLL_INTERVAL_MIN}분 주기로 v4 엔진 매매 시그널을 감시합니다.\n"
+        f"🔕 꺼진 알림: {_disabled_types_label()}\n"
         f"<i>자동 주문 없음 — 알림을 보고 직접 MTS로 매매하세요.</i>"
     )
     logger.info(f"스케줄러 시작 — {POLL_INTERVAL_MIN}분 주기, 장중 09:00~15:30 KST")
