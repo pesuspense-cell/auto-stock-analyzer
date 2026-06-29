@@ -89,6 +89,25 @@ class SupabaseAccount:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode())
 
+    def list_notify_users(self) -> list[dict]:
+        """텔레그램 연동(chat_id 등록) + 수신 ON 사용자 목록 [{user_id, chat_id}].
+
+        005 마이그레이션(telegram_* 컬럼) 적용 전이면 빈 목록을 반환해 봇이 env 폴백만
+        쓰도록 한다.
+        """
+        try:
+            rows = self._get(
+                "rest/v1/user_settings"
+                "?telegram_enabled=eq.true&telegram_chat_id=not.is.null"
+                "&select=user_id,telegram_chat_id"
+            )
+        except Exception:
+            return []
+        return [
+            {"user_id": r["user_id"], "chat_id": r["telegram_chat_id"]}
+            for r in rows if r.get("telegram_chat_id")
+        ]
+
     def resolve_user_id(self, email: str) -> str | None:
         """Auth Admin API로 이메일 → user_id 해석."""
         data = self._get("auth/v1/admin/users?per_page=200")

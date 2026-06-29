@@ -37,6 +37,9 @@ create table if not exists public.user_settings (
   watchlist      jsonb not null default '[]'::jsonb,
   cash_balance   double precision not null default 0,   -- 예수금(현금 잔고). 기존 인스턴스는 003 마이그레이션으로 추가
   alert_prefs    jsonb not null default '{}'::jsonb,    -- 시그널 봇 알림 on/off. 기존 인스턴스는 004 마이그레이션으로 추가
+  telegram_chat_id    text,                              -- 연동된 텔레그램 chat id (005)
+  telegram_enabled    boolean not null default false,    -- 알림 수신 동의 (005)
+  telegram_link_token text,                              -- 딥링크 일회용 연동 토큰 (005)
   updated_at     timestamptz not null default now()
 );
 

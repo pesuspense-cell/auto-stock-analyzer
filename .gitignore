@@ -37,6 +37,9 @@ stock_metadata.json
 # 시그널 봇 런타임 상태 (고점가·트레일링·중복발송 방지 키, 로컬 자동 재생성)
 signal_bot_state.json
 
+# 텔레그램 연동 리스너 getUpdates 오프셋 (로컬 자동 재생성)
+.telegram_offset
+
 # 로그
 logs/
 

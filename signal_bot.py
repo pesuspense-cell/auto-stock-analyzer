@@ -119,20 +119,27 @@ def _disabled_types_label() -> str:
     return ", ".join(off) if off else "없음(전부 ON)"
 
 
-def _apply_alert_prefs(prefs: dict) -> None:
-    """웹 UI 알림 설정(user_settings.alert_prefs)을 SIGNAL_TYPE_ENABLED 에 덮어쓴다.
+def resolve_enabled(prefs: dict | None) -> dict:
+    """이 사용자용 신호 on/off 맵을 만든다(.env 기본값 위에 user_settings.alert_prefs 덮어씀).
 
-    명시된 키만 적용하므로(없는 키는 .env 기본값 유지) 웹 설정이 .env 보다 우선한다.
+    SIGNAL_TYPE_ENABLED(전역)를 변형하지 않고 '복사본'을 반환하므로 다중 사용자에서
+    사용자별 설정이 서로 섞이지 않는다. 명시된 키만 덮어쓰고(없으면 .env 기본값 유지)
     SELL_TS 키는 트레일링 발동(TS_ARM)에도 함께 적용된다.
     """
-    if not prefs:
-        return
+    enabled = dict(SIGNAL_TYPE_ENABLED)
     for key in ("BUY", "SELL_TP", "SELL_SL", "SELL_TS", "SELL_REBAL"):
-        if key in prefs:
+        if prefs and key in prefs:
             val = bool(prefs[key])
-            SIGNAL_TYPE_ENABLED[key] = val
+            enabled[key] = val
             if key == "SELL_TS":
-                SIGNAL_TYPE_ENABLED["TS_ARM"] = val
+                enabled["TS_ARM"] = val
+    return enabled
+
+
+def _user_substate(state: dict, user_id: str) -> dict:
+    """사용자별 런타임/중복방지 상태 하위 dict(없으면 생성). 사용자 간 dedup 격리."""
+    users = state.setdefault("users", {})
+    return users.setdefault(user_id, {"runtime": {}, "sent": []})
 
 # 장 운영 시간(한국 KST). 09:00 ~ 15:30.
 MARKET_OPEN  = dtime(9, 0)
@@ -213,14 +220,14 @@ class TelegramNotifier:
     urllib HTTP 호출로 폴백한다(추가 의존성 없이도 동작).
     """
 
-    def __init__(self, token: str, chat_id: str, dry_run: bool = False):
+    def __init__(self, token: str, chat_id: str = "", dry_run: bool = False):
         self.token   = token
-        self.chat_id = chat_id
-        self.dry_run = dry_run or not (token and chat_id)
+        self.chat_id = chat_id                       # 기본(폴백) chat_id — 다중사용자에선 send(chat_id=)로 지정
+        self.dry_run = dry_run or not token          # 토큰만 있으면 발송 가능(수신자는 호출 시 지정)
         self._bot    = None
         self._loop   = None
         if self.dry_run:
-            logger.warning("⚠️ 텔레그램 미설정(DRY-RUN) — 메시지를 콘솔에만 출력합니다.")
+            logger.warning("⚠️ 텔레그램 토큰 미설정(DRY-RUN) — 메시지를 콘솔에만 출력합니다.")
             return
         try:
             import asyncio
@@ -233,9 +240,10 @@ class TelegramNotifier:
             self._mode = "http"
             logger.info(f"python-telegram-bot 미사용({e}) → HTTP 폴백 사용")
 
-    def send(self, text: str) -> bool:
-        if self.dry_run:
-            print("\n──────── [DRY-RUN 텔레그램 메시지] ────────")
+    def send(self, text: str, chat_id: str | None = None) -> bool:
+        target = chat_id or self.chat_id
+        if self.dry_run or not target:
+            print(f"\n──────── [DRY-RUN 텔레그램 메시지 → chat {target or '미지정'}] ────────")
             print(text.replace("<b>", "").replace("</b>", "")
                       .replace("<i>", "").replace("</i>", ""))
             print("────────────────────────────────────────\n")
@@ -244,23 +252,23 @@ class TelegramNotifier:
             if self._mode == "ptb":
                 self._loop.run_until_complete(
                     self._bot.send_message(
-                        chat_id=self.chat_id, text=text,
+                        chat_id=target, text=text,
                         parse_mode="HTML", disable_web_page_preview=True,
                     )
                 )
             else:
-                self._send_http(text)
+                self._send_http(text, target)
             return True
         except Exception as e:
-            logger.error(f"텔레그램 발송 실패: {e}")
+            logger.error(f"텔레그램 발송 실패(chat {target}): {e}")
             return False
 
-    def _send_http(self, text: str) -> None:
+    def _send_http(self, text: str, chat_id: str) -> None:
         import urllib.parse
         import urllib.request
         url  = f"https://api.telegram.org/bot{self.token}/sendMessage"
         data = urllib.parse.urlencode({
-            "chat_id": self.chat_id, "text": text,
+            "chat_id": chat_id, "text": text,
             "parse_mode": "HTML", "disable_web_page_preview": "true",
         }).encode()
         with urllib.request.urlopen(url, data=data, timeout=15) as r:
@@ -274,12 +282,16 @@ class TelegramNotifier:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_state() -> dict:
+    state: dict = {}
     if STATE_FILE.exists():
         try:
-            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except Exception:
             logger.warning("상태 파일 손상 — 새로 시작합니다.")
-    return {"runtime": {}, "sent": [], "session": {}}
+    # 다중사용자 구조 정규화: 사용자별 상태는 state["users"][user_id] = {runtime, sent}
+    state.setdefault("users", {})
+    state.setdefault("session", {})
+    return state
 
 
 def save_state(state: dict) -> None:
@@ -304,42 +316,54 @@ def _dedup(state: dict, key: str) -> bool:
 #  실시간 데이터 — 보유 종목 일봉+장중 형성봉
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_position_bar(ticker: str) -> dict | None:
-    """보유 종목의 최신 봉(장중이면 당일 형성봉) + ATR 을 반환."""
+def _fetch_position_bar(ticker: str, cache: dict | None = None) -> dict | None:
+    """보유 종목의 최신 봉(장중이면 당일 형성봉) + ATR 을 반환.
+
+    cache(사이클 단위) 제공 시 같은 종목을 여러 사용자가 보유해도 1회만 다운로드한다.
+    """
+    if cache is not None and ticker in cache:
+        return cache[ticker]
+    bar: dict | None = None
     try:
         raw = yf.download(ticker, period="40d", interval="1d",
                           auto_adjust=True, progress=False)
         df = _prepare_df(raw, ticker)        # SMA/RSI/ATR 부착 (live_screener 동일)
-        if df is None or df.empty:
-            return None
-        row = df.iloc[-1]
-        close = float(row["Close"])
-        atr   = float(row.get("ATR", np.nan))
-        return {
-            "close": close,
-            "high":  float(row.get("High", close)),
-            "low":   float(row.get("Low",  close)),
-            "open":  float(row.get("Open", close)),
-            "atr":   atr if (not np.isnan(atr) and atr > 0) else -1.0,
-        }
+        if df is not None and not df.empty:
+            row = df.iloc[-1]
+            close = float(row["Close"])
+            atr   = float(row.get("ATR", np.nan))
+            bar = {
+                "close": close,
+                "high":  float(row.get("High", close)),
+                "low":   float(row.get("Low",  close)),
+                "open":  float(row.get("Open", close)),
+                "atr":   atr if (not np.isnan(atr) and atr > 0) else -1.0,
+            }
     except Exception as e:
         logger.warning(f"  {ticker} 현재가 조회 실패: {e}")
-        return None
+    if cache is not None:
+        cache[ticker] = bar
+    return bar
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  청산 감시 (SELL_SL / SELL_TS / SELL_TP) — backtest._try_sell v4 로직 재현
 # ══════════════════════════════════════════════════════════════════════════════
 
-def monitor_positions(holdings: dict, state: dict) -> tuple[list[dict], dict[str, float]]:
-    """보유 종목별 청산 조건을 판정. (신호 리스트, 종목별 현재가맵)을 반환."""
+def monitor_positions(
+    holdings: dict, state: dict, enabled: dict, bar_cache: dict | None = None
+) -> tuple[list[dict], dict[str, float]]:
+    """보유 종목별 청산 조건을 판정. (신호 리스트, 종목별 현재가맵)을 반환.
+
+    enabled: 이 사용자용 신호 on/off 맵. bar_cache: 사이클 단위 시세 캐시(다중사용자 절약).
+    """
     positions = holdings.get("positions", {})
     signals:   list[dict] = []
     price_map: dict[str, float] = {}
     runtime = state["runtime"]
 
     for ticker, info in positions.items():
-        bar = _fetch_position_bar(ticker)
+        bar = _fetch_position_bar(ticker, bar_cache)
         if bar is None:
             continue
         price_map[ticker] = bar["close"]
@@ -367,7 +391,7 @@ def monitor_positions(holdings: dict, state: dict) -> tuple[list[dict], dict[str
         if not rt["trailing_active"] and high >= entry * (1.0 + TRAIL_ACTIVATE_PROFIT):
             rt["trailing_active"] = True
             sl = max(sl, breakeven_floor)
-            if SIGNAL_TYPE_ENABLED["TS_ARM"] and not _dedup(state, f"{ticker}:TS_ARM"):
+            if enabled["TS_ARM"] and not _dedup(state, f"{ticker}:TS_ARM"):
                 signals.append({
                     "type": "TS_ARM", "ticker": ticker, "name": name,
                     "entry": entry, "current": close, "new_sl": sl,
@@ -394,7 +418,7 @@ def monitor_positions(holdings: dict, state: dict) -> tuple[list[dict], dict[str
             fill = max(fill, low)
             is_ts = rt["trailing_active"] and fill >= entry
             stype = "SELL_TS" if is_ts else "SELL_SL"
-            if SIGNAL_TYPE_ENABLED.get(stype, True) and not _dedup(state, f"{ticker}:{stype}"):
+            if enabled.get(stype, True) and not _dedup(state, f"{ticker}:{stype}"):
                 signals.append({
                     "type": stype, "ticker": ticker, "name": name,
                     "entry": entry, "current": close, "fill": fill,
@@ -407,7 +431,7 @@ def monitor_positions(holdings: dict, state: dict) -> tuple[list[dict], dict[str
         if tp > 0 and high >= tp:
             fill = open_ if open_ > tp else tp
             fill = min(fill, high)
-            if SIGNAL_TYPE_ENABLED["SELL_TP"] and not _dedup(state, f"{ticker}:SELL_TP"):
+            if enabled["SELL_TP"] and not _dedup(state, f"{ticker}:SELL_TP"):
                 signals.append({
                     "type": "SELL_TP", "ticker": ticker, "name": name,
                     "entry": entry, "current": close, "fill": fill, "tp": tp,
@@ -464,9 +488,20 @@ def check_rebalance(holdings: dict, price_map: dict[str, float], state: dict) ->
 #  매수 감시 (BUY) — run_screening + calc_buy_plan 재사용
 # ══════════════════════════════════════════════════════════════════════════════
 
-def screen_buys(
-    holdings: dict, price_map: dict[str, float], is_bear: bool, state: dict
+def screen_candidates(is_bear: bool) -> list[dict]:
+    """매수 후보 스크리닝 — 사용자와 무관(유니버스 공통)하므로 사이클당 1회만 수행.
+
+    held_tickers 는 비워서 전체 후보를 뽑고, 보유 종목 제외·수량 계산은 사용자별로 처리한다.
+    """
+    universe = _build_universe(UNIVERSE_N)
+    return run_screening(universe, is_bear, held_tickers=set())
+
+
+def build_buy_signals(
+    candidates: list[dict], holdings: dict, price_map: dict[str, float],
+    is_bear: bool, state: dict,
 ) -> list[dict]:
+    """사용자 계좌(시드머니) 기준으로 매수 후보에 대한 맞춤 수량·예산을 계산한다."""
     positions     = holdings.get("positions", {})
     cash          = float(holdings.get("cash", 0))
     held_tickers  = set(positions.keys())
@@ -480,12 +515,11 @@ def screen_buys(
     if n_positions >= max_positions:
         return []
 
-    universe   = _build_universe(UNIVERSE_N)
-    candidates = run_screening(universe, is_bear, held_tickers)
-
     signals: list[dict] = []
     today   = _now_kst().strftime("%Y-%m-%d")
     for cand in candidates:
+        if cand["ticker"] in held_tickers:
+            continue
         if n_positions + len(signals) >= max_positions:
             break
         if _dedup(state, f"{today}:BUY:{cand['ticker']}"):
@@ -591,52 +625,101 @@ FORMATTERS = {
 #  1회 점검 사이클
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _notify_targets() -> list[dict]:
+    """알림 발송 대상 [{user_id, chat_id}].
+
+    ① Supabase에서 텔레그램 연동·수신 ON 사용자(list_notify_users) 전체.
+    ② env 폴백: 소유자가 웹 연동을 안 했어도 SIGNAL_ACCOUNT_USER_ID→TELEGRAM_CHAT_ID 로 발송
+       (로컬 단독 운용 호환).
+    """
+    global _account
+    if _account is None:
+        try:
+            _account = SupabaseAccount()
+        except Exception:
+            _account = None
+
+    targets: list[dict] = []
+    seen: set[str] = set()
+    if _account and _account.enabled:
+        try:
+            for u in _account.list_notify_users():
+                uid, chat = u.get("user_id"), u.get("chat_id")
+                if uid and chat and uid not in seen:
+                    targets.append({"user_id": uid, "chat_id": str(chat)})
+                    seen.add(uid)
+        except Exception as e:
+            logger.error(f"알림 대상 조회 실패: {e}")
+    if ACCOUNT_USER_ID and TELEGRAM_CHAT_ID and ACCOUNT_USER_ID not in seen:
+        targets.append({"user_id": ACCOUNT_USER_ID, "chat_id": TELEGRAM_CHAT_ID})
+    return targets
+
+
 def run_cycle(notifier: TelegramNotifier, state: dict) -> int:
-    """1회 감시 사이클 — 청산 → 리밸런싱 → 매수 순으로 신호를 점검·발송."""
-    holdings = load_account()
-    _apply_alert_prefs(holdings.get("alert_prefs") or {})   # 웹 UI 알림설정 반영(.env 위에 덮어씀)
-    sent_count = 0
+    """1회 감시 사이클 (1:N) — 장세·매수후보는 공통 1회, 청산/리밸런싱/매수는 사용자별 발송.
 
-    # 보유 종목이 사라졌으면(매도 완료) 관련 런타임/중복키 정리
-    held = set(holdings.get("positions", {}).keys())
-    for t in list(state["runtime"].keys()):
-        if t not in held:
-            state["runtime"].pop(t, None)
-            state["sent"] = [k for k in state["sent"] if not k.startswith(f"{t}:")]
+    각 사용자는 자신의 보유종목·예수금(시드머니)·알림설정으로 맞춤 계산되어, 자신의
+    텔레그램 chat 으로만 알림을 받는다. 중복방지·고점추적 상태는 사용자별로 격리된다.
+    """
+    global _account
+    targets = _notify_targets()
+    if not targets:
+        logger.info("  알림 대상 사용자 없음(텔레그램 연동·수신 ON 사용자 0명)")
+        return 0
 
-    # ── 장세 판별 ───────────────────────────────────────────────────────────
+    # ── 공통 1회: 장세 판별 + 매수 후보 스크리닝(유니버스는 사용자 무관) ──────
     market = MarketAnalyzer()
     market.load()
     is_bear = market.is_bear_market()
-    logger.info(f"장세: {'🐻 디펜스(하락장)' if is_bear else '🐂 야수(상승장)'}")
+    logger.info(f"장세: {'🐻 디펜스(하락장)' if is_bear else '🐂 야수(상승장)'} · 알림대상 {len(targets)}명")
+    candidates = screen_candidates(is_bear)
 
-    # ── 1) 청산 감시 (보유 종목) — 꺼진 청산 종류는 monitor 내부에서 스킵 ─────
-    sell_signals, price_map = monitor_positions(holdings, state)
+    bar_cache: dict = {}        # 사이클 단위 시세 캐시(여러 사용자가 같은 종목 보유 시 1회만 다운로드)
+    sent_count = 0
+    use_supabase = bool(_account and _account.enabled)
 
-    # ── 2) 리밸런싱 감시 (알림 켜진 경우만) ──────────────────────────────────
-    if SIGNAL_TYPE_ENABLED["SELL_REBAL"]:
-        rebal = check_rebalance(holdings, price_map, state)
-        if rebal:
-            sell_signals.append(rebal)
-
-    # ── 3) 매수 감시 (알림 켜진 경우만 — 무거운 유니버스 스크리닝 절약) ───────
-    buy_signals = (
-        screen_buys(holdings, price_map, is_bear, state)
-        if SIGNAL_TYPE_ENABLED["BUY"] else []
-    )
-
-    # ── 발송 (청산·리밸런싱 우선, 그 다음 매수 / 꺼진 종류는 방어적 스킵) ─────
-    for s in sell_signals + buy_signals:
-        if not SIGNAL_TYPE_ENABLED.get(s["type"], True):
+    for tgt in targets:
+        uid, chat_id = tgt["user_id"], tgt["chat_id"]
+        try:
+            holdings = _account.load_holdings(user_id=uid) if use_supabase else load_account()
+        except Exception as e:
+            logger.error(f"  [{uid[:8]}] 계좌 로드 실패 — 건너뜀: {e}")
             continue
-        msg = FORMATTERS[s["type"]](s)
-        if notifier.send(msg):
-            sent_count += 1
-            logger.info(f"  📤 {s['type']} 발송: {s.get('name', s.get('ticker'))}")
+
+        enabled = resolve_enabled(holdings.get("alert_prefs") or {})
+        ustate  = _user_substate(state, uid)
+
+        # 매도 완료 종목의 런타임/중복키 정리 (사용자별)
+        held = set(holdings.get("positions", {}).keys())
+        for t in list(ustate["runtime"].keys()):
+            if t not in held:
+                ustate["runtime"].pop(t, None)
+                ustate["sent"] = [k for k in ustate["sent"] if not k.startswith(f"{t}:")]
+
+        # 1) 청산 감시  2) 리밸런싱  3) 매수(사용자 시드머니 기준 맞춤 수량)
+        sell_signals, price_map = monitor_positions(holdings, ustate, enabled, bar_cache)
+        if enabled["SELL_REBAL"]:
+            rebal = check_rebalance(holdings, price_map, ustate)
+            if rebal:
+                sell_signals.append(rebal)
+        buy_signals = (
+            build_buy_signals(candidates, holdings, price_map, is_bear, ustate)
+            if enabled["BUY"] else []
+        )
+
+        # 발송 — 이 사용자의 chat 으로만 (청산·리밸런싱 우선, 그 다음 매수)
+        user_sent = 0
+        for s in sell_signals + buy_signals:
+            if not enabled.get(s["type"], True):
+                continue
+            if notifier.send(FORMATTERS[s["type"]](s), chat_id=chat_id):
+                user_sent += 1
+                sent_count += 1
+                logger.info(f"  📤 [{uid[:8]}] {s['type']}: {s.get('name', s.get('ticker'))}")
+        if user_sent == 0:
+            logger.info(f"  [{uid[:8]}] 신규 신호 없음")
 
     save_state(state)
-    if sent_count == 0:
-        logger.info("  포착된 신규 신호 없음")
     return sent_count
 
 

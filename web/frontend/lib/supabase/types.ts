@@ -33,8 +33,8 @@ export interface Database {
         Relationships: [];
       };
       user_settings: {
-        Row: { user_id: string; gemini_api_key: string | null; groq_api_key: string | null; dart_api_key: string | null; watchlist: unknown; cash_balance: number; alert_prefs: Record<string, boolean>; updated_at: string };
-        Insert: { user_id: string; gemini_api_key?: string | null; groq_api_key?: string | null; dart_api_key?: string | null; watchlist?: unknown; cash_balance?: number; alert_prefs?: Record<string, boolean>; updated_at?: string };
+        Row: { user_id: string; gemini_api_key: string | null; groq_api_key: string | null; dart_api_key: string | null; watchlist: unknown; cash_balance: number; alert_prefs: Record<string, boolean>; telegram_chat_id: string | null; telegram_enabled: boolean; telegram_link_token: string | null; updated_at: string };
+        Insert: { user_id: string; gemini_api_key?: string | null; groq_api_key?: string | null; dart_api_key?: string | null; watchlist?: unknown; cash_balance?: number; alert_prefs?: Record<string, boolean>; telegram_chat_id?: string | null; telegram_enabled?: boolean; telegram_link_token?: string | null; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["user_settings"]["Insert"]>;
         Relationships: [];
       };

@@ -7,7 +7,7 @@ import { AuthGate, UserMenu } from "@/components/AuthGate";
 import { useJob } from "@/hooks/useJob";
 import { fmtNum, signClass } from "@/lib/format";
 import { ALERT_TYPES } from "@/lib/api-types";
-import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation, PfHolding, PfOverall, PfActionLevel, CashBalance, AlertPrefs, AlertPrefsResponse, AlertType } from "@/lib/api-types";
+import type { PortfolioItem, TradeItem, StockHit, PortfolioAnalysis, PfRecommendation, PfHolding, PfOverall, PfActionLevel, CashBalance, AlertPrefs, AlertPrefsResponse, AlertType, TelegramStatus, TelegramLinkResponse } from "@/lib/api-types";
 import { StockSearch } from "@/components/StockSearch";
 
 // 쿠키 세션 기반 동일 출처 fetch (Supabase Auth 쿠키 자동 포함)
@@ -31,6 +31,7 @@ export function PortfolioTab() {
           <AddForm />
           <Holdings />
           <PortfolioAnalysisCard />
+          <TelegramLinkCard />
           <AlertSettingsCard />
           <Trades />
           <p className="text-xs text-ink-3">로그인: {user.email}</p>
@@ -577,6 +578,88 @@ function Tile({ label, value, tone, sub }: { label: string; value: string; tone:
       <div className={`tnum text-sm font-bold ${tone}`}>{value}</div>
       {sub && <div className="text-[0.6rem] text-term-muted">{sub}</div>}
     </div>
+  );
+}
+
+// 📲 사용자별 텔레그램 연동 (딥링크) — 각자 자기 텔레그램으로 알림 수신
+function TelegramLinkCard() {
+  const { data } = useSWR<TelegramStatus>("/api/v1/telegram/status", jfetch);
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function startLink() {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/v1/telegram/link", { method: "POST", credentials: "same-origin" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "연동 시작 실패");
+      const j = (await res.json()) as TelegramLinkResponse;
+      setLink(j.deepLink);
+      window.open(j.deepLink, "_blank", "noopener");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "연동 시작 실패");
+    } finally { setBusy(false); }
+  }
+  async function toggle(enabled: boolean) {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/v1/telegram/status", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "변경 실패");
+      mutate("/api/v1/telegram/status");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "변경 실패");
+    } finally { setBusy(false); }
+  }
+  async function unlink() {
+    if (!confirm("텔레그램 연동을 해제하시겠습니까? 알림이 중지됩니다.")) return;
+    setBusy(true); setErr(null);
+    const res = await fetch("/api/v1/telegram/link", { method: "DELETE", credentials: "same-origin" });
+    if (res.ok) { setLink(null); mutate("/api/v1/telegram/status"); }
+    else setErr((await res.json().catch(() => ({})))?.error ?? "해제 실패");
+    setBusy(false);
+  }
+
+  const linked = data?.linked;
+  return (
+    <section className="rounded-card border border-hairline bg-surface p-4 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">📲 텔레그램 알림 연동</h3>
+          <p className="mt-0.5 text-xs text-ink-2">
+            {linked
+              ? `연동됨 (${data?.chatId}) — 내 계좌 기준 시그널을 내 텔레그램으로 받습니다.`
+              : "내 텔레그램 계정을 연동하면, 봇이 내 보유종목·예수금 기준으로 맞춤 시그널을 보냅니다."}
+          </p>
+        </div>
+        {linked ? (
+          <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+              <input type="checkbox" checked={!!data?.enabled} disabled={busy}
+                onChange={(e) => toggle(e.target.checked)} className="h-4 w-4 accent-accent" />
+              알림 수신
+            </label>
+            <button onClick={unlink} disabled={busy} className="rounded-lg border border-hairline-md px-3 py-1.5 text-xs text-loss hover:bg-loss/10">
+              연동 해제
+            </button>
+          </div>
+        ) : (
+          <button onClick={startLink} disabled={busy} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-40">
+            {busy ? "준비 중…" : "텔레그램 연동하기"}
+          </button>
+        )}
+      </div>
+      {!linked && link && (
+        <div className="mt-3 rounded-lg border border-hairline-md/60 bg-black/10 p-3 text-xs text-ink-2">
+          <p>텔레그램 앱이 열리지 않으면 아래 링크를 누르고 봇 채팅에서 <b>[시작]</b>을 눌러주세요:</p>
+          <a href={link} target="_blank" rel="noopener noreferrer" className="mt-1 block break-all text-accent hover:underline">{link}</a>
+          <button onClick={() => mutate("/api/v1/telegram/status")} className="mt-2 text-ink-3 hover:underline">연동 완료 후 새로고침</button>
+        </div>
+      )}
+      {err && <p className="mt-2 text-sm text-loss">{err}</p>}
+    </section>
   );
 }
 

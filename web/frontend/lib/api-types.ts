@@ -125,6 +125,18 @@ export interface AlertPrefsResponse {
   alertPrefs: AlertPrefs;
 }
 
+// 사용자별 텔레그램 알림 연동 (딥링크)
+export interface TelegramStatus {
+  linked: boolean;        // chat_id 등록됨
+  enabled: boolean;       // 알림 수신 on/off
+  chatId: string | null;  // 마스킹된 chat id (표시용)
+}
+export interface TelegramLinkResponse {
+  token: string;
+  botUsername: string;
+  deepLink: string;       // https://t.me/<bot>?start=<token>
+}
+
 // ── 비동기 Job 큐 (ASA / 백테스트 / 분석·뉴스·펀더멘털) ──────────────
 export type JobKind =
   | "asa"
