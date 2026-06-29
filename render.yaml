@@ -70,3 +70,32 @@ services:
         sync: false
       - key: KRX_PW
         sync: false
+
+  # ── 시그널 봇 워커: 텔레그램 1:N 알림 + 딥링크 연동 (PC 없이 24/7) ────────────
+  #   worker_signal.py 가 signal_bot.py + telegram_link_bot.py 를 자식 프로세스로
+  #   띄우고 죽으면 자동 재시작. rootDir 가 레포 루트라 root requirements.txt 만 설치.
+  #   ⚠️ 이 워커를 띄우면 로컬 bot.py(start_all.bat)는 끄세요 — 텔레그램 폴러는 1개만 허용.
+  - type: worker
+    name: asa-signal-bot
+    runtime: python
+    plan: starter                   # worker 는 free 불가 — 상시 실행 유료 플랜
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: python worker_signal.py
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: TELEGRAM_BOT_TOKEN     # BotFather 토큰
+        sync: false
+      - key: SUPABASE_URL           # 예: https://<ref>.supabase.co
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY   # secret 키(sb_secret_...) — RLS 우회 읽기/쓰기
+        sync: false
+      - key: SIGNAL_POLL_MIN        # 감시 주기(분)
+        value: "5"
+      - key: SIGNAL_UNIVERSE_N      # 매수 스크리닝 유니버스 상위 N
+        value: "100"
+      # (선택) 운영 알림용 관리자 chat — 봇 가동/장시작·마감 안내 수신
+      # - key: TELEGRAM_CHAT_ID
+      #   sync: false
