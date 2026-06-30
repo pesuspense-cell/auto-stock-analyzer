@@ -55,7 +55,12 @@ services:
     rootDir: web/backend
     buildCommand: pip install -r requirements.txt -r ../../requirements.txt
     startCommand: python worker_launcher.py
-    autoDeploy: true
+    # ⚠️ 워커는 수동 배포 — autoDeploy 를 끄는 이유: 재배포는 SIGTERM 으로 워커를 내리는데,
+    #    그 순간 진행 중이던 무거운 작업(분석·백테스트, 80~140s)이 끊겨 'processing' 고아가 됐다.
+    #    push 마다 재배포되면 작업 중 사망이 잦아진다. 코드 변경 후 작업이 한산할 때 대시보드에서
+    #    Manual Deploy 로 올린다. (종료 시 _requeue_inflight 가 미완료분을 pending 으로 되돌리고,
+    #    리퍼가 10분 안전망으로 회수하지만, 끊김 자체를 줄이려 수동 배포로 둔다.)
+    autoDeploy: false
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"

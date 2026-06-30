@@ -53,16 +53,34 @@ logging.basicConfig(
 logger = logging.getLogger("jobs_worker")
 
 POLL_INTERVAL = float(os.getenv("JOBS_POLL_INTERVAL", "1"))
+# 고아 작업 회수 임계값(초). 워커가 작업을 'processing' 으로 클레임한 뒤 재시작·OOM 등으로
+# 죽으면 그 작업은 영원히 'processing' 에 남아 프론트가 무한 폴링한다(스피너가 끝나지 않음).
+# 정상 작업의 최대 소요는 ~140s(AI 리포트) 수준이므로, 이 값보다 오래 'processing' 인 작업은
+# 고아로 간주해 'error' 로 회수한다(→ UI 에 에러+다시시도 노출). 기본 10분.
+STALE_PROCESSING_SEC = int(os.getenv("JOBS_STALE_SEC", "600"))
+# 리퍼 점검 주기(초).
+REAPER_INTERVAL = float(os.getenv("JOBS_REAPER_INTERVAL", "60"))
+_STALE_ERROR_MSG = "작업이 제한 시간 내 완료되지 않았습니다 (워커 재시작 추정). 다시 시도해 주세요."
 # 인터랙티브 동시 처리 스레드 수. 분석/뉴스 작업은 대부분 네트워크(yfinance·LLM) 대기라
 # 스레드 동시성이 지연을 실질적으로 줄인다. 다만 동시 pandas 연산은 메모리를 먹으므로
 # Render starter(512MB)에선 2가 안전. 메모리 여유가 있으면 환경변수로 올린다.
 INTERACTIVE_CONCURRENCY = max(1, int(os.getenv("JOBS_INTERACTIVE_CONCURRENCY", "2")))
+
+# 종료(SIGTERM) 시 진행 중 작업이 끝날 때까지 기다리는 graceful drain 시간(초).
+# Render 재배포는 SIGTERM 을 보낸다. 짧은 작업(뉴스·펀더멘털 ~수초)은 이 시간 안에 끝나
+# 정상 완료되고, 그래도 안 끝난 무거운 작업(분석·백테스트)은 _requeue_inflight 가 pending 으로
+# 되돌려 다음 인스턴스가 재처리한다. 기본 90초.
+DRAIN_TIMEOUT = float(os.getenv("JOBS_DRAIN_TIMEOUT", "90"))
 
 # 레인 정의 — kind → 레인. 배치는 1스레드, 인터랙티브는 N스레드.
 BATCH_KINDS = ("backtest", "asa")
 INTERACTIVE_KINDS = ("analysis", "news", "fundamental", "fundamental_ai", "portfolio_analysis", "investors")
 
 _running = True
+
+# 현재 각 레인이 잡고 처리 중인 job id (lane → job_id). 종료 시 미완료분을 pending 으로 되돌리는 데 쓴다.
+_inflight: dict[str, str] = {}
+_inflight_lock = threading.Lock()
 
 
 def _db_url() -> str:
@@ -324,6 +342,66 @@ def _finish(conn, job_id, *, result: dict | None = None, error: str | None = Non
     conn.commit()
 
 
+# ── 고아 작업 리퍼 ────────────────────────────────────────────────────────────
+
+def _reap_stale(conn) -> int:
+    """STALE_PROCESSING_SEC 보다 오래 'processing' 에 갇힌 고아 작업을 'error' 로 회수.
+
+    워커가 작업을 클레임(processing)한 직후 죽으면(OOM·재배포 등) 그 작업을 완료/실패로
+    옮길 주체가 사라져 프론트가 무한 폴링한다. 클레임 시점에 updated_at 을 now() 로 찍으므로
+    (_claim_one), 그 뒤로 오래 갱신이 없으면 진행 중 죽은 고아로 판단할 수 있다.
+    반환: 회수한 작업 수."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE public.jobs
+               SET status='error', error=%s, updated_at=now()
+             WHERE status='processing'
+               AND updated_at < now() - make_interval(secs => %s)
+            RETURNING id
+            """,
+            (_STALE_ERROR_MSG, STALE_PROCESSING_SEC),
+        )
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
+def _reaper_loop() -> None:
+    """독립 커넥션으로 주기적으로 고아 작업을 회수한다(기동 시 1회 + REAPER_INTERVAL 마다)."""
+    conn = psycopg2.connect(dsn=_db_url(), connect_timeout=10)
+    conn.autocommit = False
+    logger.info("[reaper] 시작 — 임계값 %ds, 점검주기 %.0fs", STALE_PROCESSING_SEC, REAPER_INTERVAL)
+    try:
+        while _running:
+            try:
+                n = _reap_stale(conn)
+                if n:
+                    logger.warning("[reaper] 고아 작업 %d건 회수(error 처리)", n)
+            except psycopg2.OperationalError as e:
+                logger.warning("[reaper] DB 연결 오류 — 재연결: %s", e)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = psycopg2.connect(dsn=_db_url(), connect_timeout=10)
+                conn.autocommit = False
+            except Exception:
+                conn.rollback()
+                logger.exception("[reaper] 회수 중 오류")
+            # REAPER_INTERVAL 동안 대기하되, 종료 신호에 빠르게 반응하도록 잘게 나눠 잔다.
+            slept = 0.0
+            while _running and slept < REAPER_INTERVAL:
+                time.sleep(min(1.0, REAPER_INTERVAL - slept))
+                slept += 1.0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        logger.info("[reaper] 정지.")
+
+
 # ── 레인 워커 루프 ────────────────────────────────────────────────────────────
 
 def _lane_loop(lane: str, kinds: tuple[str, ...]) -> None:
@@ -351,6 +429,8 @@ def _lane_loop(lane: str, kinds: tuple[str, ...]) -> None:
                 continue
 
             jid = job["id"]
+            with _inflight_lock:
+                _inflight[lane] = jid
             logger.info("[%s] 작업 클레임: %s (%s)", lane, jid, job["kind"])
             t0 = time.time()
             try:
@@ -365,6 +445,9 @@ def _lane_loop(lane: str, kinds: tuple[str, ...]) -> None:
                     _finish(conn, jid, error=str(e))
                 except Exception:
                     logger.exception("[%s] 실패 상태 기록조차 실패: %s", lane, jid)
+            finally:
+                with _inflight_lock:
+                    _inflight.pop(lane, None)
     finally:
         try:
             conn.close()
@@ -378,7 +461,35 @@ def _lane_loop(lane: str, kinds: tuple[str, ...]) -> None:
 def _stop(*_):
     global _running
     _running = False
-    logger.info("종료 신호 수신 — 현재 작업 완료 후 정지합니다.")
+    logger.info("종료 신호 수신 — 진행 중 작업을 %ds 까지 기다린 뒤 미완료분은 재큐합니다.", int(DRAIN_TIMEOUT))
+
+
+def _requeue_inflight() -> None:
+    """graceful drain 후에도 끝나지 않은 in-flight 작업을 'processing'→'pending' 으로 되돌린다.
+
+    재배포(SIGTERM)로 워커가 내려갈 때, 잡고 있던 무거운 작업을 잃지 않고 새 인스턴스가 즉시
+    다시 집게 한다(리퍼의 10분 안전망보다 빠른 능동 회수). 이미 완료된 작업은 status 조건으로 건너뛴다."""
+    with _inflight_lock:
+        ids = list({v for v in _inflight.values()})
+    if not ids:
+        return
+    try:
+        conn = psycopg2.connect(dsn=_db_url(), connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE public.jobs SET status='pending', updated_at=now() "
+                    "WHERE id = ANY(%s) AND status='processing'",
+                    (ids,),
+                )
+                n = cur.rowcount
+            conn.commit()
+            if n:
+                logger.info("[shutdown] 미완료 in-flight %d건을 pending 으로 재큐", n)
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("[shutdown] in-flight 재큐 실패 — 리퍼가 추후 회수")
 
 
 def main() -> None:
@@ -393,9 +504,11 @@ def main() -> None:
         threads.append(
             threading.Thread(target=_lane_loop, args=(f"interactive-{i + 1}", INTERACTIVE_KINDS), daemon=True)
         )
+    # 고아 작업 리퍼 1스레드 — 죽은 워커가 남긴 'processing' 고아를 회수해 무한 폴링 방지.
+    threads.append(threading.Thread(target=_reaper_loop, daemon=True))
 
     logger.info(
-        "워커 시작 — batch 1 + interactive %d 스레드 (poll=%.1fs)",
+        "워커 시작 — batch 1 + interactive %d + reaper 1 스레드 (poll=%.1fs)",
         INTERACTIVE_CONCURRENCY, POLL_INTERVAL,
     )
     for t in threads:
@@ -408,8 +521,12 @@ def main() -> None:
     except KeyboardInterrupt:
         _stop()
 
+    # graceful drain — 공통 deadline 안에서 각 스레드가 진행 중 작업을 끝내도록 기다린다.
+    deadline = time.time() + DRAIN_TIMEOUT
     for t in threads:
-        t.join(timeout=30)
+        t.join(timeout=max(0.1, deadline - time.time()))
+    # drain 후에도 남은 미완료 작업은 pending 으로 되돌려 다음 인스턴스가 재처리.
+    _requeue_inflight()
     logger.info("워커 정지 완료.")
 
 
