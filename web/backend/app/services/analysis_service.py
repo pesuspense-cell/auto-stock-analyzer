@@ -119,6 +119,31 @@ def _naver_realtime(ticker: str) -> dict | None:
         return None
 
 
+def _fdr_last_price(ticker: str) -> dict | None:
+    """FDR 최근 종가 — yfinance 차단 환경(Render)에서 미국 종목 등의 현재가 폴백.
+
+    데이터센터 IP 에서 yf 가 막힐 때, FDR(Stooq/Naver 등)로 최근 일봉 종가를 받는다.
+    실시간(분봉)은 아니지만 기존 yf.download(2d) 폴백과 같은 '최근 종가' 의미를 빠르게 제공.
+    """
+    try:
+        import FinanceDataReader as fdr
+        from datetime import timedelta as _td
+        code = ticker.split(".")[0] if ticker.endswith((".KS", ".KQ")) else ticker
+        start = (datetime.now() - _td(days=14)).strftime("%Y-%m-%d")
+        d = fdr.DataReader(code, start)
+        if d is not None and not d.empty and "Close" in d.columns:
+            s = d["Close"].dropna()
+            if not s.empty:
+                p = float(s.iloc[-1])
+                if p > 0:
+                    return {"price": p, "ts": _now_kst().strftime("%H:%M:%S"),
+                            "is_realtime": False, "stale": True,
+                            "stale_msg": "최근 종가입니다."}
+    except Exception as e:
+        logger.warning("[fdr-price] %s: %s", ticker, e)
+    return None
+
+
 @ttl_cache(ttl=60)
 def realtime_price(ticker: str) -> dict:
     """app.py _realtime_price_1m 의 핵심 로직 이식. 국내는 네이버 실시간 우선."""
@@ -126,11 +151,19 @@ def realtime_price(ticker: str) -> dict:
     ts = now_k.strftime("%H:%M:%S")
     is_kr = ticker.endswith((".KS", ".KQ"))
 
-    # 국내(.KS/.KQ)는 네이버 실시간(지연 0) 우선 — 실패 시 아래 yfinance 폴백.
+    # 국내(.KS/.KQ)는 네이버 실시간(지연 0) 우선 — 실패 시 아래 폴백.
     if is_kr:
         nv = _naver_realtime(ticker)
         if nv:
             return nv
+
+    # yfinance 차단 환경: 아래 yf 3연속 호출이 전부 타임아웃까지 헛대기(미국 종목 분석 지연의
+    # 핵심)하므로, FDR 최근 종가로 직행한다. (KR 은 위 네이버가 이미 처리, 실패 시에도 FDR 폴백)
+    if _YF_DISABLED:
+        fp = _fdr_last_price(ticker)
+        if fp:
+            return fp
+        return {"price": 0.0, "ts": ts, "is_realtime": False, "stale": False, "stale_msg": ""}
 
     after_close = is_kr and (now_k.hour * 60 + now_k.minute) >= (15 * 60 + 30)
 
