@@ -1,5 +1,64 @@
 """
-backtest.py — 듀얼 모드(야수 모드 + 디펜스 모드) 백테스팅 통합 엔진
+backtest.py — 듀얼 모드(야수 + 디펜스) 백테스팅 엔진 [라이브 엔진 = v4.6 검증본]
+
+  ※ 본 파일은 backtest_v4_6.py(2구간 동일세션 검증으로 v5 baseline 대비 우월 확인)를
+    라이브 엔진으로 승격한 것이다. 라이브(backtest_service.run_backtest)는 start/end/deposit 을
+    인자로 직접 주입하므로 아래 모듈 상수는 독립 실행(python backtest.py) 전용 기본값이다.
+
+================================================================================
+[v4.6 변경점 — 6대 스펙 (base: backtest_v5.py 전체 사본)]
+  v5(지수5일선필터·야수커트라인·모드별 노출캡)를 그대로 계승하고 아래 6가지를 추가/강화한다.
+  v5 원본은 baseline 비교용으로 보존한다(같은 세션·날짜에 둘 다 돌려 같은 유니버스로 비교).
+
+  [v4.6-1] 지수(Market Index) 5일선 매수 필터  ─ (v5에서 이미 구현, 계승)
+    매수 시그널 당일 소속 지수(KOSPI/KOSDAQ) 종가가 5일선(SMA_5) 아래면 신규 매수 Skip.
+    차단 횟수는 self._index_filter_pass_count 로 집계 → 성적표 "[지수필터 매수패스]"에 표기.
+
+  [v4.6-2] 본전 보호(트레일링) 발동 마진 상향  +12% → +18%
+    TRAIL_ACTIVATE_PROFIT = 0.18. 큰 추세를 더 길게 추종하도록 트레일링 ON 시점을 늦춘다.
+
+  [v4.6-3 철회] 고정 손절선(SL) 폭 축소(-8.5%)  ─ 사용자 철회, 미적용
+    과거 통제 백테스트에서 손절폭 하드컷(-9.5%)이 휩쏘·MDD 악화(-20%→-37%)로 기각된 이력을
+    수용해 본 스펙은 철회한다. v5의 손절선 판정 로직(ATR×3.0, 야수 하한 -12%)을 그대로 유지하고,
+    진입 초기 데미지는 아래 신규 방어 스펙(Spec 5 서킷브레이커, Spec 6 휩소 가드)으로 제어한다.
+
+  [v4.6-4] 디펜스 모드 시 물타기(REBUY) + 눌림목 신규매수 전면 금지
+    · 디펜스 모드 중 추가 분할매수(REBUY) 100% 비활성화 → self._defense_rebuy_block_count 집계.
+    · 디펜스 모드 중 DRY_VOLUME_NULIM 신규 매수도 전면 차단(매수 단계 자체를 야수 모드로 한정).
+
+  [v4.6-5] 당일 최대 손절 종목 수 제한 = 1개 (계좌 서킷브레이커)
+    하루에 SELL_SL(진짜 손절)로 청산 가능한 종목 수를 MAX_DAILY_SL(1)로 제한.
+    이미 1종목이 손절됐으면 당일 타 종목의 손절 집행을 보류(보유 지속, 익일 종가 재판정).
+    트레일링 익절(SELL_TS)·고정익절(SELL_TP)·리밸런싱은 제한 없음. 대폭락일 동시다발 손절 차단.
+
+  [v4.6-6] 진입 초기 휩소(Whipsaw) 방어  ─ 당일 포함 T+1(2거래일)
+    진입 후 2거래일 이내(bars_held ≤ WHIPSAW_GUARD_BARS=1)에는 장중 저가(Low) 흔들림으로
+    손절선이 터지지 않도록 실시간 손절을 유예하고 '종가(Close)' 기준으로만 손절 여부를 판정한다.
+
+  ── 이하 v5 계승 사항 ──
+  본 파일은 backtest_v5.py 의 완전한 사본에서 위 규칙만 강화한 버전이다.
+
+  [v5-1] 지수(Market Index) Top-Down 매수 필터
+    개별 종목 매수 조건이 충족돼도, 그 종목이 속한 시장 지수(KOSPI/KOSDAQ)의
+    당일 종가가 '지수 5일 이동평균선(SMA_5)' 아래면 신규 매수를 원천 차단(Skip).
+    .KS → KOSPI, .KQ → KOSDAQ 로 종목의 소속 지수를 판별한다.
+    로그: "[PASS] 지수 5일선 하회로 인한 매수 잠금 (시장 리스크 방어)"
+    패스 횟수는 self._index_filter_pass_count 로 집계해 성적표에 표기.
+
+  [v5-2] 야수 모드 진입 조건/판정 기준 강화 (Market Score 커트라인 도입)
+    v4의 'KOSPI·KOSDAQ 중 하나라도 SMA_60 위면 무조건 야수'(98% 야수 과다) 판정을
+    폐기하고, 두 지수의 정렬·추세 상태를 0~100점 Market Score 로 환산해
+    평균 점수 >= MARKET_SCORE_BULL_CUTLINE(85pt)일 때만 야수 모드로 진입한다.
+    커트라인 미만이면 즉시 디펜스 모드:
+      · 종목당 투입 비중 캡 <= MAX_POSITION_PCT(15%)
+      · 총 주식노출 캡을 MAX_GROSS_EXPOSURE_BEAR(30%)로 강제 축소 → 현금 70% 확보.
+
+  [v5-3] 포트폴리오 노출 상한 상향(45%→55%) + 리밸런싱 단순화
+    · 야수 모드 총노출 상한 MAX_GROSS_EXPOSURE_BULL = 55%(기존 45% 대비 상향).
+    · 노출 상한 도달 시에도 '당일 상승 중'인 종목은 기계적 부분매도(SELL_REBAL)를
+      유예하고 온전히 홀딩 → 우상향 추세주(리츠 등)가 일일 분할매도로 깎이는 현상 방지.
+      청산은 익절(TP)·트레일링스톱(TS)·손절(SL) 신호로만 수행. 비상승 종목만 트림.
+================================================================================
 
 [야수 모드 - 상승장]  벤치마크 지수 SMA_60 위 (KOSPI·KOSDAQ 모두)
   → SMA_GOLDEN_CROSS: 거래대금 3배+ 폭발 + 5일선 20일선 돌파 → 추격 돌파 매매
@@ -72,6 +131,7 @@ SCREEN_UNIVERSE_N = 200
 VOLUME_TOP_N      = 100
 NEWS_CANDIDATE_N  = 15
 
+# 독립 실행(python backtest.py) 기본 구간 — 장기 스모크 테스트용(라이브는 인자로 주입).
 START_DATE = "2020-01-01"
 END_DATE   = "2024-12-31"
 
@@ -173,6 +233,7 @@ class PositionState:
     signal_tag:      str   = ""
     allocated_pct:   float = 0.0
     trailing_active: bool  = False   # [v2-1] +15% 도달 후에만 True
+    entry_idx:       int   = -1      # [v4.6-6] 진입 시점 df 인덱스 위치(휩소 가드 보유일수 계산용)
 
     def reset(self) -> None:
         self.in_position   = False
@@ -184,6 +245,7 @@ class PositionState:
         self.signal_tag      = ""
         self.allocated_pct   = 0.0
         self.trailing_active = False
+        self.entry_idx       = -1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -229,8 +291,18 @@ class BacktestEngine:
     # 손절로 돌변하는 케이스가 남았다. → 활성화 시점을 +12%로 앞당기고(지연 방지),
     # 활성화 즉시 손절선을 '진입가 본전 + 0.5%(수수료 보전선)'으로 끌어올려 수익
     # 보존을 강제한다. 일단 +12% 수익을 준 종목이 손실로 돌변하는 경로를 원천 차단.
-    TRAIL_ACTIVATE_PROFIT = 0.12  # 수익률 +12% 최초 도달 시 트레일링 즉시 ON
+    # [v4.6-2] 본전 보호(트레일링) 발동 마진 상향: +12% → +18% (큰 추세 추종 강화)
+    TRAIL_ACTIVATE_PROFIT = 0.18  # 수익률 +18% 최초 도달 시 트레일링 즉시 ON
     TRAIL_BREAKEVEN_PCT   = 0.005 # 활성화 시 손절선을 본전 +0.5%(수수료 보전선)로 상향
+
+    # [v4.6-3 철회] 고정 손절선 -8.5% 축소 스펙은 사용자가 철회(과거 백테스트 기각 이력 수용).
+    # → v5의 손절선 판정 로직(ATR×3.0 + 야수 하한 -12%)을 그대로 유지한다. 상수 미도입.
+
+    # [v4.6-5] 계좌 서킷브레이커: 하루에 SELL_SL(진짜 손절)로 청산 가능한 최대 종목 수.
+    MAX_DAILY_SL = 1              # 당일 1종목 손절 후 타 종목 손절 집행 보류(동시다발 손절 차단)
+
+    # [v4.6-6] 진입 초기 휩소 방어 윈도: 진입 후 이 바 수 이내는 종가 기준으로만 손절 판정.
+    WHIPSAW_GUARD_BARS = 1        # bars_held ≤ 1 → 당일 포함 T+1(2거래일) 장중 손절 유예
 
     # ── [v2-2] RSI 하드 필터: 이 값 이상이면 신규 진입 전면 금지 ─────────────
     RSI_HARD_LIMIT       = 70.0
@@ -243,8 +315,18 @@ class BacktestEngine:
     #   ② 전고점 대비 낙폭이 DD_BUY_LOCK 초과 시 '신규 매수만' 잠금
     #      (보유분은 강제청산하지 않고 ATR손절·트레일링·익절로만 정상 청산 → edge 보존)
     # 로 MDD를 비례 축소한다. 전고점(HWM) 추적은 낙폭 매수잠금 판정용.
-    MAX_GROSS_EXPOSURE = 0.45   # 총 주식 평가액 ≤ 총자산의 45% — 초과 시 부분매도로 리밸런싱(실현 노출 통제)
+    # [v5-3] 노출 상한 상향: 야수장 45%→55%. 디펜스장은 30%로 더 조여 현금을 강제 확보한다.
+    #   야수(상승) 모드  → MAX_GROSS_EXPOSURE_BULL = 0.55
+    #   디펜스(하락) 모드 → MAX_GROSS_EXPOSURE_BEAR = 0.30 (현금 70% 확보, [v5-2] 연동)
+    # 일별 모드(self._current_is_bear)에 따라 _gross_exposure_pct() 가 둘 중 하나를 반환.
+    MAX_GROSS_EXPOSURE_BULL = 0.55
+    MAX_GROSS_EXPOSURE_BEAR = 0.30
+    MAX_GROSS_EXPOSURE = MAX_GROSS_EXPOSURE_BULL  # 하위호환(리포트 라벨·정적 참조용 기본값)
     DD_BUY_LOCK        = 1.00   # 전고점 대비 낙폭 매수잠금 (1.00=사실상 OFF; 노출상한이 주 방어)
+
+    # [v5-2] 야수 모드 진입 커트라인 — 두 지수 Market Score 평균이 이 값 이상이어야 야수.
+    # (v4의 'SMA_60 위 하나라도 → 야수' 대비 보수적. 미만이면 즉시 디펜스 모드)
+    MARKET_SCORE_BULL_CUTLINE = 85.0
 
     # ── [v3.1] 데이터 글리치 방어: 단일봉 비정상 가격점프 필터 ────────────────
     # 한국주식 일일 등락 제한은 ±30% → 단일봉 2.5배↑/0.4배↓ 변동은 데이터 오류로 간주하고
@@ -297,6 +379,15 @@ class BacktestEngine:
         self._last_raw_close:    dict[str, float] = {}
         # [v4] 손절 직후 재진입 쿨다운: 종목 → 마지막 SELL_SL 일자
         self._sl_block:          dict[str, pd.Timestamp] = {}
+        # [v5] 당일 모드 캐시(하루 1회 평가) — 노출상한·캡 산정이 일관되게 같은 모드를 참조하도록.
+        self._current_is_bear:   bool = True
+        # [v5-1] 지수 5일선 하회로 매수가 패스된 누적 횟수(성적표 표기용)
+        self._index_filter_pass_count: int = 0
+        # [v4.6-4] 디펜스 모드로 차단된 물타기(REBUY) 누적 횟수(성적표 표기용)
+        self._defense_rebuy_block_count: int = 0
+        # [v4.6-5] 당일 손절 종목 수(서킷브레이커) — 매일 0으로 리셋 / 누적 차단 횟수
+        self._daily_sl_count: int = 0
+        self._daily_sl_blocked_count: int = 0
 
     # ── 데이터 로드 ──────────────────────────────────────────────────────────
 
@@ -399,31 +490,57 @@ class BacktestEngine:
 
     # ── 장세 판별 ─────────────────────────────────────────────────────────────
 
-    def _is_bear_market(self, date: pd.Timestamp) -> bool:
-        """KOSPI, KOSDAQ 중 '하나라도' 60일선 위에 있으면 상승장(False)으로 적극 판정"""
-        if not self._market_index_dfs:
-            return False
+    # ── [v5-2] 지수별 Market Score (0~100pt) ──────────────────────────────────
 
-        valid_count = 0
-        bear_count  = 0
+    @staticmethod
+    def _score_single_index(row: pd.Series) -> float | None:
+        """단일 지수의 정렬·추세 상태를 0~100점으로 환산. 산출 불가 시 None.
 
+        배점(합 100): 종가>5일선 25 / 종가>20일선 25 / 종가>60일선 30 / 5일선>20일선 20.
+        → 완전 정배열·전 이평선 위 = 100점. 단기 약세부터 점수가 즉시 깎인다.
+        """
+        close = float(row.get("Close",  np.nan))
+        sma5  = float(row.get("SMA_5",  np.nan))
+        sma20 = float(row.get("SMA_20", np.nan))
+        sma60 = float(row.get("SMA_60", np.nan))
+        if any(np.isnan(v) for v in (close, sma5, sma20, sma60)):
+            return None
+        score = 0.0
+        if close > sma5:
+            score += 25.0
+        if close > sma20:
+            score += 25.0
+        if close > sma60:
+            score += 30.0
+        if sma5 > sma20:
+            score += 20.0
+        return score
+
+    def _compute_market_score(self, date: pd.Timestamp) -> float:
+        """추적 중인 모든 지수(KOSPI·KOSDAQ) Market Score 의 '평균'.
+
+        v4의 'OR(하나라도 위)' 낙관 판정과 달리 평균을 쓰므로, 한 지수만 강해도
+        다른 지수가 약하면 점수가 끌어내려져 보수적으로 디펜스 전환된다.
+        유효 지수가 없으면 0.0(=디펜스) 반환.
+        """
+        scores: list[float] = []
         for _, df in self._market_index_dfs.items():
             idx_loc = df.index.get_indexer([date], method="ffill")[0]
             if idx_loc < 0:
                 continue
-            row   = df.iloc[idx_loc]
-            close = float(row.get("Close", np.nan))
-            sma60 = float(row.get("SMA_60", np.nan))
-            if np.isnan(close) or np.isnan(sma60):
-                continue
-            valid_count += 1
-            if close < sma60:
-                bear_count += 1
+            s = self._score_single_index(df.iloc[idx_loc])
+            if s is not None:
+                scores.append(s)
+        return sum(scores) / len(scores) if scores else 0.0
 
-        # 모든 시장이 전멸한 게 아니라면(하나라도 60일선 위면) 무조건 상승장 야수 모드 기동
-        if valid_count > 0 and bear_count < valid_count:
-            return False  # 하락장이 아니다 = 상승장이다
-        return True
+    def _is_bear_market(self, date: pd.Timestamp) -> bool:
+        """[v5-2] Market Score 평균 < 커트라인(85pt)이면 디펜스(하락장, True).
+
+        지수 데이터가 아예 없으면 보수적으로 디펜스(True)로 본다.
+        """
+        if not self._market_index_dfs:
+            return True
+        return self._compute_market_score(date) < self.MARKET_SCORE_BULL_CUTLINE
 
     def _get_max_positions(self, date: pd.Timestamp) -> int:
         """장세별 동적 최대 보유 종목 수: 상승장 8 / 하락장 3"""
@@ -520,35 +637,90 @@ class BacktestEngine:
             for t in self.positions
         )
 
+    # ── [v5] 모드별 총노출 상한 비율 ──────────────────────────────────────────
+
+    def _gross_exposure_pct(self) -> float:
+        """[v5-2/3] 당일 모드별 총 주식노출 상한 비율.
+        디펜스(하락) → 30%(현금 70% 강제 확보) / 야수(상승) → 55%."""
+        return (
+            self.MAX_GROSS_EXPOSURE_BEAR if self._current_is_bear
+            else self.MAX_GROSS_EXPOSURE_BULL
+        )
+
+    # ── [v5-1] 지수 5일선 Top-Down 매수 필터 ──────────────────────────────────
+
+    @staticmethod
+    def _market_of(ticker: str) -> str | None:
+        """종목 코드 접미사로 소속 지수 판별: .KS→KOSPI, .KQ→KOSDAQ, 그 외 None."""
+        if ticker.endswith(".KS"):
+            return "KOSPI"
+        if ticker.endswith(".KQ"):
+            return "KOSDAQ"
+        return None
+
+    def _index_below_sma5(self, market: str, date: pd.Timestamp) -> bool:
+        """[v5-1] 해당 시장 지수의 당일 종가가 5일선(SMA_5) 아래인가.
+
+        지수 데이터가 없으면 보수적으로 True(매수 차단)로 본다.
+        시장 미상(None)일 땐 필터 적용 불가 → False(통과)."""
+        df = self._market_index_dfs.get(market)
+        if df is None:
+            return True
+        idx_loc = df.index.get_indexer([date], method="ffill")[0]
+        if idx_loc < 0:
+            return True
+        row   = df.iloc[idx_loc]
+        close = float(row.get("Close", np.nan))
+        sma5  = float(row.get("SMA_5", np.nan))
+        if np.isnan(close) or np.isnan(sma5):
+            return True
+        return close < sma5
+
     def _exposure_cap_live(self, prices: dict[str, float]) -> float:
-        """실시간 노출 상한 평가액 = MAX_GROSS_EXPOSURE × 현재 총자산.
+        """실시간 노출 상한 평가액 = (모드별 노출비율) × 현재 총자산.
         체결 직전마다 라이브로 재계산 → 같은 날 여러 매수가 누적돼도 상한 불침범 보장."""
-        return self.MAX_GROSS_EXPOSURE * self.simulator.get_total_asset(prices)
+        return self._gross_exposure_pct() * self.simulator.get_total_asset(prices)
 
     def _exposure_room(self, prices: dict[str, float]) -> float:
         """추가 매수 가능 금액(원) = 노출상한 − 현재 주식 평가액 (음수면 0).
         모든 매수 경로(_try_buy·물타기)가 통과해야 하는 하드 게이트의 단일 기준."""
         return max(0.0, self._exposure_cap_live(prices) - self._gross_invested(prices))
 
+    def _is_rising_today(
+        self, ticker: str, date: pd.Timestamp, ticker_data: dict[str, pd.DataFrame]
+    ) -> bool:
+        """[v5-3] 당일 종가가 전일 종가보다 높은가(상승 추세 중인가). 판정 불가 시 False."""
+        df = ticker_data.get(ticker)
+        if df is None or date not in df.index:
+            return False
+        idx = df.index.get_loc(date)
+        if idx < 1:
+            return False
+        close = float(df.iloc[idx]["Close"])
+        prev  = float(df.iloc[idx - 1]["Close"])
+        if not (np.isfinite(close) and np.isfinite(prev) and prev > 0):
+            return False
+        return close > prev
+
     def _update_risk_state(
         self, date: pd.Timestamp, date_str: str, total_asset: float,
-        prices: dict[str, float],
+        prices: dict[str, float], ticker_data: dict[str, pd.DataFrame] | None = None,
     ) -> None:
-        """[v3] 전고점(HWM) 추적 + 노출상한 리밸런싱 + 낙폭 매수잠금.
+        """[v3+v5] 전고점(HWM) 추적 + (모드별)노출상한 리밸런싱 + 낙폭 매수잠금.
 
-        - _exposure_cap_value = MAX_GROSS_EXPOSURE × 총자산.
-        - 총 주식노출이 상한을 넘으면(주로 보유 승자 상승으로 비중 표류 시) 초과분을
-          평가액 큰 종목부터 '부분 매도'로 리밸런싱 → 실현 노출을 상한에 고정.
-          이는 상승 구간의 '고점 익절 리밸런싱'이라 바닥 sell-low 휩쏘와 무관(종가 체결).
+        - _exposure_cap_value = (모드별 노출비율) × 총자산. [v5-2/3] 야수 55% / 디펜스 30%.
+        - 총 주식노출이 상한을 넘으면 초과분을 평가액 큰 종목부터 '부분 매도'로 리밸런싱.
+          단 [v5-3] '당일 상승 중'인 종목은 트림 유예 → 우상향 추세주를 일일 분할매도로
+          깎지 않는다(청산은 TP/TS/SL 신호로만). 비상승 종목부터만 노출을 줄인다.
         - 전고점 대비 낙폭 > DD_BUY_LOCK 이면 신규 매수 잠금(보유분은 스톱으로만 청산).
         """
         if total_asset > self._peak_asset:
             self._peak_asset = total_asset
         dd = (self._peak_asset - total_asset) / self._peak_asset if self._peak_asset > 0 else 0.0
-        cap = self.MAX_GROSS_EXPOSURE * total_asset
+        cap = self._gross_exposure_pct() * total_asset
         self._exposure_cap_value = cap
 
-        # ── 노출 상한 초과분 부분 매도 리밸런싱 ─────────────────────────────────
+        # ── 노출 상한 초과분 부분 매도 리밸런싱 ([v5-3] 상승 종목은 유예) ────────
         invested = self._gross_invested(prices)
         if invested > cap:
             over = invested - cap
@@ -559,6 +731,9 @@ class BacktestEngine:
             ):
                 if over <= 0:
                     break
+                # [v5-3] 당일 상승 중인 추세주는 기계적 부분매도 유예(온전히 홀딩)
+                if ticker_data is not None and self._is_rising_today(ticker, date, ticker_data):
+                    continue
                 price = prices.get(ticker)
                 held  = self.simulator.portfolio.get(ticker, 0)
                 if not price or held <= 0:
@@ -570,7 +745,7 @@ class BacktestEngine:
                 if self.simulator.execute_sell(ticker, price, sell_qty):
                     self._log_trade(
                         date_str, ticker, "SELL_REBAL", price, sell_qty,
-                        f"노출상한({self.MAX_GROSS_EXPOSURE:.0%}) 리밸런싱 부분매도",
+                        f"노출상한({self._gross_exposure_pct():.0%}) 리밸런싱 부분매도(비상승 종목)",
                         entry_price=pos.entry_price, signal_tag=pos.signal_tag,
                     )
                     if self.simulator.portfolio.get(ticker, 0) <= 0:
@@ -850,7 +1025,7 @@ class BacktestEngine:
         if np.isnan(atr) or atr <= 0:
             atr = -1.0
 
-        # [v4] 트레일링 스톱 즉시 활성화 — 수익률 +12%(TRAIL_ACTIVATE_PROFIT) 최초 도달 시 ON(지연 방지).
+        # [v4.6-2] 트레일링 스톱 활성화 — 수익률 +18%(TRAIL_ACTIVATE_PROFIT) 최초 도달 시 ON(큰 추세 추종).
         # 활성화 전에는 고정 익절(TP)·ATR 손절(SL)만으로 판단 → 흔들림 조기 약손실 청산 차단.
         # 활성화되는 순간 손절선 자체를 '본전 +0.5%(수수료 보전선)'으로 즉시 상향한다 →
         # 10%대 수익을 줬던 종목이 마이너스 손절로 돌변하는 경로를 ATR 유무와 무관하게 원천 차단.
@@ -877,31 +1052,51 @@ class BacktestEngine:
         # ── [개편 4] 손절/트레일링 우선 체크 — 보수적 체결 ─────────────────────
         # 일봉 저가(Low)가 손절선을 터치했다면 종가가 아니라 '손절선 -1% 슬리피지'로
         # 당일 즉시 청산. 갭하락으로 시초가가 손절선보다 더 낮으면 시초가로 체결.
-        if effective_sl > float("-inf") and low <= effective_sl:
-            fill = effective_sl * (1.0 - self.SL_SLIPPAGE_PCT)
-            if open_ < effective_sl:          # 갭하락: 시초가가 손절선 하회
-                fill = min(fill, open_)
-            fill = max(fill, low)             # 당일 최저가 밑으로는 체결 불가
-            qty  = self.simulator.portfolio.get(ticker, 0)
+        #
+        # [v4.6-6] 진입 초기 휩소 방어: 진입 후 T+1(2거래일) 이내(bars_held ≤ 1)에는
+        # 장중 저가(Low) 흔들림으로 손절선이 터지는 것을 유예하고 '종가(Close)'로만 손절 판정.
+        # → 트리거 기준가를 윈도 내에서는 low 대신 close 로 사용하고, 체결도 종가로 한다.
+        bars_held        = idx - pos.entry_idx if pos.entry_idx >= 0 else self.WHIPSAW_GUARD_BARS + 1
+        in_whipsaw_guard = 0 <= bars_held <= self.WHIPSAW_GUARD_BARS
+        sl_trigger       = close if in_whipsaw_guard else low
+        if effective_sl > float("-inf") and sl_trigger <= effective_sl:
+            if in_whipsaw_guard:
+                fill = close                          # 휩소 가드: 종가 기준 청산
+            else:
+                fill = effective_sl * (1.0 - self.SL_SLIPPAGE_PCT)
+                if open_ < effective_sl:              # 갭하락: 시초가가 손절선 하회
+                    fill = min(fill, open_)
+                fill = max(fill, low)                 # 당일 최저가 밑으로는 체결 불가
+            # [v4] 트레일링 활성화(손절선이 본전 위로 상향됨) 후 끊긴 청산은 본전 이상에서
+            # 체결되므로 이익보호(SELL_TS)로 분류. 그 외는 진짜 손절(SELL_SL).
+            action = "SELL_TS" if (pos.trailing_active and fill >= pos.entry_price) else "SELL_SL"
+
+            # [v4.6-5] 계좌 서킷브레이커: 당일 진짜 손절(SELL_SL)은 MAX_DAILY_SL(1)종목까지만.
+            # 이미 한도 도달이면 타 종목의 손절 집행을 당일 보류(보유 지속, 익일 종가 재판정).
+            # 이익보호(SELL_TS)는 제한 대상이 아니다.
+            if action == "SELL_SL" and self._daily_sl_count >= self.MAX_DAILY_SL:
+                self._daily_sl_blocked_count += 1
+                pos.peak_price = max(pos.peak_price, high)   # 트레일링 추적용 peak 만 갱신
+                return
+
+            qty = self.simulator.portfolio.get(ticker, 0)
             if qty and self.simulator.execute_sell(ticker, fill, qty):
                 pnl_pct    = (fill - pos.entry_price) / pos.entry_price * 100
-                # [v4] 트레일링 활성화(+12% 도달, 손절선이 본전 위로 상향됨) 후 끊긴 청산은
-                # 본전 이상에서 체결되므로 이익보호(SELL_TS)로 분류 — ATR 유무와 무관.
-                # 그 외(활성화 전 ATR 손절·하드컷)는 진짜 손절(SELL_SL).
-                action     = "SELL_TS" if (pos.trailing_active and fill >= pos.entry_price) else "SELL_SL"
                 reason_txt = (
                     f"트레일링스톱 작동 (선: {effective_sl:,.0f})"
                     if action == "SELL_TS"
-                    else f"손절선 이탈 ({pos.stop_loss:,.0f})"
+                    else (f"[휩소가드 종가청산] 손절 ({pos.stop_loss:,.0f})" if in_whipsaw_guard
+                          else f"손절선 이탈 ({pos.stop_loss:,.0f})")
                 )
                 self._log_trade(
                     date_str, ticker, action, fill, qty,
                     f"{reason_txt} [체결 {fill:,.0f} / 손익: {pnl_pct:+.1f}%]",
                     entry_price=pos.entry_price, signal_tag=pos.signal_tag,
                 )
-                # [v4] 진짜 손절(SELL_SL)만 재진입 쿨다운 등록 — 트레일링 익절(SELL_TS)은 제외
+                # [v4] 진짜 손절(SELL_SL)만 재진입 쿨다운 등록 + [v4.6-5] 당일 손절 카운트 증가
                 if action == "SELL_SL":
                     self._sl_block[ticker] = pd.Timestamp(date_str)
+                    self._daily_sl_count += 1
                 del self.positions[ticker]
             return
 
@@ -930,14 +1125,20 @@ class BacktestEngine:
         if pos.signal_tag == "SMA_GOLDEN_CROSS":
             return
 
-        # [v4] 디펜스(하락장) 모드에서는 어떤 종목도 물타기 금지 — 하락장 추가매수가
-        # 반등 실패 후 손절될 때 비중 누적 타격이 크다. 최초 1회 단발 진입만 허용.
-        # (야수 모드로 전환된 상태라면 아래 분할매수 로직이 정상 동작)
-        if self._is_bear_market(pd.Timestamp(date_str)):
+        rebuy_ready = (
+            pos.rebuy_count < self.MAX_REBUY_COUNT
+            and self.strategy.is_rebuy_signal(close, pos.entry_price, pos.rebuy_count)
+        )
+
+        # [v4.6-4] 디펜스(하락장) 모드에서는 물타기(REBUY) 100% 비활성화 — 하락장 추가매수가
+        # 반등 실패 후 손절될 때 비중 누적 타격이 크다. 실제 물타기 신호가 떴는데 차단된 경우만
+        # _defense_rebuy_block_count 로 집계해 성적표에 표기한다(당일 확정 모드 _current_is_bear 참조).
+        if self._current_is_bear:
+            if rebuy_ready:
+                self._defense_rebuy_block_count += 1
             return
 
-        if (pos.rebuy_count < self.MAX_REBUY_COUNT
-                and self.strategy.is_rebuy_signal(close, pos.entry_price, pos.rebuy_count)):
+        if rebuy_ready:
             # [개편 1 + v3-hard] 물타기도 ① 종목 비중 상한(MAX_POSITION_PCT)과
             # ② 총노출 상한(MAX_GROSS_EXPOSURE)을 동시에 만족해야 한다. 둘 중 더 빡빡한
             # 여력만큼만 추가 매수 → 물타기로 총노출이 45%를 넘던 누수 경로 차단.
@@ -976,6 +1177,11 @@ class BacktestEngine:
         if np.isnan(atr) or atr <= 0:
             atr = -1.0
 
+        # [v4.6-4] 디펜스(하락장) 모드에서는 신규 매수(DRY_VOLUME_NULIM 포함) 전면 차단.
+        # 매수 단계는 메인 루프에서도 야수 모드로 한정하지만, 안전을 위해 여기서도 이중 차단한다.
+        if self._current_is_bear:
+            return
+
         # [안전장치 1] 동적 보유 수 상한 제어
         if len(self.positions) >= max_positions:
             return
@@ -1003,6 +1209,17 @@ class BacktestEngine:
         if signal_tag == "SMA_GOLDEN_CROSS":
             if self._get_market_rsi(pd.Timestamp(date_str)) >= self.RSI_HARD_LIMIT:
                 return
+
+        # ── [v5-1] 지수 5일선 Top-Down 필터 — 시장 리스크 방어 ──────────────────
+        # 개별 종목 조건이 충족돼도, 소속 지수(KOSPI/KOSDAQ) 종가가 5일선 아래면 진입 금지.
+        market = self._market_of(ticker)
+        if market is not None and self._index_below_sma5(market, pd.Timestamp(date_str)):
+            self._index_filter_pass_count += 1
+            print(
+                f"  🚫 [PASS] 지수 5일선 하회로 인한 매수 잠금 (시장 리스크 방어) "
+                f"[{date_str}] {self._ticker_names.get(ticker, ticker)} ({market})"
+            )
+            return
 
         # ── [개편 1] 손절가 먼저 산정 → ATR 기반 고정 리스크 포지션 사이징 ──────
         sl = self._resolve_stop_loss(price, atr, signal_tag)
@@ -1047,6 +1264,7 @@ class BacktestEngine:
         pos.take_profit    = tp
         pos.stop_loss      = sl
         pos.signal_tag     = signal_tag
+        pos.entry_idx      = idx          # [v4.6-6] 휩소 가드 보유일수 계산 기준점
         # 실제 투입 비중(%) 기록 — 배정 로직이 아니라 사후 참고/물타기 캡 계산용
         pos.allocated_pct  = (price * qty) / total_asset if total_asset > 0 else 0.0
         self.positions[ticker] = pos
@@ -1123,6 +1341,10 @@ class BacktestEngine:
 
         for date in trading_dates:
             date_str = date.strftime("%Y-%m-%d")
+            # [v5] 당일 모드를 하루 1회 확정 — 노출상한·캡·물타기가 같은 모드를 일관 참조.
+            self._current_is_bear = self._is_bear_market(date)
+            # [v4.6-5] 계좌 서킷브레이커: 당일 손절 종목 카운터를 매일 0으로 리셋.
+            self._daily_sl_count = 0
             # [v2] 시가평가 보정 — 당일 바 없는 보유종목은 직전가로 평가 (허수 폭락 방지)
             current_prices = self._mark_to_market(date, ticker_data)
 
@@ -1143,11 +1365,13 @@ class BacktestEngine:
                     )
 
             # [v3] 매도 정산 후 위험 상태 갱신 (전고점·노출상한 리밸런싱·매수잠금)
+            # [v5-3] ticker_data 전달 → 당일 상승 종목 리밸런싱 유예 판정에 사용
             total_asset = self.simulator.get_total_asset(current_prices)
-            self._update_risk_state(date, date_str, total_asset, current_prices)
+            self._update_risk_state(date, date_str, total_asset, current_prices, ticker_data)
 
             # 스크리닝 및 매수 집행 (낙폭 매수잠금 아닐 때만, 노출은 55% 상한 내에서)
-            if not self._buy_locked:
+            # [v4.6-4] 디펜스(하락장) 모드에서는 신규 매수 전면 차단 — 매수 단계를 야수 모드로 한정.
+            if not self._buy_locked and not self._current_is_bear:
                 candidates = self._screen_daily(date, ticker_data)
                 for buy_ticker, (signal_tag, score) in candidates.items():
                     if buy_ticker in self.positions:
@@ -1164,8 +1388,8 @@ class BacktestEngine:
                             signal_tag, score, max_pos,
                         )
 
-            # 자산 곡선 기록 (mode 컬럼 — 매수잠금 여부 병기)
-            bear      = self._is_bear_market(date)
+            # 자산 곡선 기록 (mode 컬럼 — 매수잠금 여부 병기) — [v5] 당일 확정 모드 사용
+            bear      = self._current_is_bear
             base_mode = "BEAR" if bear else "BULL"
             lock_suffix = "_BUYLOCK" if self._buy_locked else ""
             total_asset = self.simulator.get_total_asset(current_prices)
@@ -1214,26 +1438,40 @@ class BacktestEngine:
         sl_count     = sum(1 for t in self.trade_log if t["action"] == "SELL_SL")
         ts_count     = sum(1 for t in self.trade_log if t["action"] == "SELL_TS")
         tp_count     = sum(1 for t in self.trade_log if t["action"] == "SELL_TP")
+        rebal_count  = sum(1 for t in self.trade_log if t["action"] == "SELL_REBAL")
+        idx_pass     = self._index_filter_pass_count   # [v5-1] 지수 5일선 하회 매수 패스 횟수
+        reb_block    = self._defense_rebuy_block_count # [v4.6-4] 디펜스 모드 물타기 차단 횟수
+        sl_cb_block  = self._daily_sl_blocked_count    # [v4.6-5] 당일 손절한도 초과로 보류된 횟수
 
         mdd_flag = "✅ 목표(-20%) 이내" if mdd <= 20.0 else "⚠️ 목표(-20%) 초과"
+        # [v5] 승률 목표 40% 방어 달성 여부 직관 표기
+        wr_flag  = "✅ 목표(40%) 달성" if win_rate >= 40.0 else "⚠️ 목표(40%) 미달"
 
         print("\n" + "=" * 70)
-        print(f"  [최종] 백테스트 성적표 v4 (손익비 튜닝) — 트레일링+{self.TRAIL_ACTIVATE_PROFIT:.0%}"
-              f"즉시본전보호 | 야수캡{self.MAX_POSITION_PCT_BULL:.0%}"
-              f"/디펜스캡{self.MAX_POSITION_PCT:.0%} + 노출{self.MAX_GROSS_EXPOSURE:.0%}상한 "
-              f"+ 디펜스물타기OFF + 손절쿨다운{self.REENTRY_COOLDOWN_DAYS}일")
+        print(f"  [최종] 백테스트 성적표 v4.6 (장기생존·수익극대화) — 지수5일선필터 + "
+              f"본전보호+{self.TRAIL_ACTIVATE_PROFIT:.0%} + 디펜스물타기금지 + "
+              f"당일손절{self.MAX_DAILY_SL}종목 + 휩소가드T+{self.WHIPSAW_GUARD_BARS}")
+        print(f"         (검증기간 {ec[0]['date']} ~ {ec[-1]['date']})")
         print("=" * 70)
-        print(f"  총 투자 원금    : {last['invested']:>15,.0f} 원")
-        print(f"  최종 자산       : {last['total_asset']:>15,.0f} 원")
-        print(f"  현금 잔고       : {last['cash']:>15,.0f} 원")
-        print(f"  펀드 수익률     : {last['return_pct']:>+14.2f} %")
-        print(f"  CAGR            : {cagr:>+14.2f} %")
-        print(f"  최대 낙폭(MDD)  : {-mdd:>+14.2f} %  {mdd_flag}")
-        print(f"  승률            : {win_rate:>14.1f} %  (총 청산 {len(sells)}회)")
-        print(f"  야수 모드 기간  : {bull_days:>5}일 ({bull_days / total_days * 100:.1f}%)")
-        print(f"  디펜스 모드 기간: {bear_days:>5}일 ({bear_days / total_days * 100:.1f}%)")
-        print(f"  청산 내역       : 익절 {tp_count}회 / 트레일링 {ts_count}회 / 손절 {sl_count}회")
-        print(f"  낙폭 매수잠금   : {buylock_days}일 (신규매수 중단 일수) / 노출상한 {self.MAX_GROSS_EXPOSURE:.0%}")
+        print(f"  총 투자 원금       : {last['invested']:>15,.0f} 원")
+        print(f"  최종 자산          : {last['total_asset']:>15,.0f} 원")
+        print(f"  현금 잔고          : {last['cash']:>15,.0f} 원")
+        print(f"  펀드 수익률        : {last['return_pct']:>+14.2f} %")
+        print(f"  CAGR               : {cagr:>+14.2f} %")
+        print(f"  최대 낙폭(MDD)     : {-mdd:>+14.2f} %  {mdd_flag}")
+        print(f"  승률               : {win_rate:>14.1f} %  {wr_flag}  (총 청산 {len(sells)}회)")
+        print("  " + "-" * 66)
+        print(f"  🚫 지수필터 매수패스: {idx_pass:>5}회  (지수 5일선 하회 → 시장 리스크 방어)")
+        print(f"  ⛔ 디펜스 물타기차단 : {reb_block:>5}회  (디펜스 모드 중 REBUY 신호 → 100% 비활성화)")
+        print(f"  🧯 당일손절한도 보류 : {sl_cb_block:>5}회  (계좌 서킷브레이커 — 당일 {self.MAX_DAILY_SL}종목 초과 손절 유예)")
+        print(f"  🛡️ 디펜스 모드 작동 : {bear_days:>5}일 ({bear_days / total_days * 100:.1f}%)  "
+              f"[노출캡 {self.MAX_GROSS_EXPOSURE_BEAR:.0%}·현금강제확보·신규매수금지]")
+        print(f"  ⚔️ 야수 모드 기간   : {bull_days:>5}일 ({bull_days / total_days * 100:.1f}%)  "
+              f"[노출캡 {self.MAX_GROSS_EXPOSURE_BULL:.0%}]")
+        print("  " + "-" * 66)
+        print(f"  청산 내역          : 익절 {tp_count}회 / 트레일링 {ts_count}회 / 손절 {sl_count}회")
+        print(f"  리밸런싱 부분매도   : {rebal_count}회 (비상승 종목만 / 상승종목은 홀딩 유예)")
+        print(f"  낙폭 매수잠금       : {buylock_days}일 (신규매수 중단 일수)")
         print("=" * 70)
         self._print_signal_report()
 
