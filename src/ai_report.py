@@ -315,15 +315,22 @@ def _build_prompt(data_block: str, company_name: str, as_of: str) -> str:
 # ─── LLM 호출 ─────────────────────────────────────────────────────────────────
 
 def _call_gemini(prompt: str, api_key: str) -> str:
+    # gemini-2.5-flash 는 thinking(추론) 모델이라 추론 토큰이 max_output_tokens 를
+    # 함께 소모한다. 한도를 넉넉히 주되, 그래도 한도에 걸려 잘리면(finish_reason=MAX_TOKENS)
+    # 예외를 던져 Groq 폴백으로 넘긴다 (잘린 partial 리포트를 그대로 노출하지 않기 위함).
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_core.messages import HumanMessage
     llm = ChatGoogleGenerativeAI(
         model=_GEMINI_MODEL,
         google_api_key=api_key,
         temperature=0.2,
-        max_output_tokens=4096,
+        max_output_tokens=8192,
     )
-    return llm.invoke([HumanMessage(content=prompt)]).content.strip()
+    msg = llm.invoke([HumanMessage(content=prompt)])
+    finish = str((msg.response_metadata or {}).get("finish_reason", "")).upper()
+    if finish in ("MAX_TOKENS", "LENGTH"):
+        raise RuntimeError(f"Gemini 응답이 토큰 한도로 잘림 (finish_reason={finish})")
+    return (msg.content or "").strip()
 
 
 def _call_groq(prompt: str, api_key: str) -> str:
@@ -332,10 +339,13 @@ def _call_groq(prompt: str, api_key: str) -> str:
     resp = client.chat.completions.create(
         model=_GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=4096,
+        max_tokens=8192,
         temperature=0.2,
     )
-    return resp.choices[0].message.content.strip()
+    choice = resp.choices[0]
+    if choice.finish_reason == "length":
+        raise RuntimeError("Groq 응답이 토큰 한도로 잘림 (finish_reason=length)")
+    return (choice.message.content or "").strip()
 
 
 # ─── 공개 API ─────────────────────────────────────────────────────────────────
