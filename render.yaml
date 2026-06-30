@@ -29,6 +29,10 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
+      # Render IP 에서 yfinance(429 차단)는 타임아웃까지 헛대기 → 차트분석 cold 가 ~73s.
+      # 켜면 막힐 yf 호출을 건너뛰고 FDR/네이버로 직행(검증: 005930 73s→6s).
+      - key: ASA_DISABLE_YFINANCE
+        value: "1"
       - key: SUPABASE_DB_URL        # 풀러 URL (aws-1-ap-northeast-1.pooler...)
         sync: false
       - key: CORS_ORIGINS           # 예: https://<your-app>.vercel.app
@@ -64,6 +68,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
+      - key: ASA_DISABLE_YFINANCE    # 워커가 analysis 잡을 처리 → 동일하게 yf 차단(차트분석 속도)
+        value: "1"
       - key: SUPABASE_DB_URL        # (jobs) asa-api 와 동일 풀러 URL
         sync: false
       - key: JOBS_POLL_INTERVAL

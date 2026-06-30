@@ -29,6 +29,11 @@ import re as _re_global
 from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings('ignore')
 
+# yfinance 차단 환경(Render 등) 게이트. 1/true 면 막힐 게 뻔한 yf 호출을 건너뛰고
+# FDR/네이버로 직행해 cold 분석 지연(yf 타임아웃 헛대기 ~30s/호출)을 제거한다.
+# 로컬·개발 기본 off(미설정) → 동작 변화 없음. Render asa-api/asa-worker 에 =1 설정.
+_YF_DISABLED = os.getenv("ASA_DISABLE_YFINANCE", "").strip().lower() in ("1", "true", "yes", "on")
+
 try:
     from bs4 import BeautifulSoup
     HAS_BS4 = True
@@ -538,15 +543,20 @@ def _fdr_ohlc(ticker: str, period: str) -> pd.DataFrame:
 
 def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     """주식 데이터 로드 및 기술적 지표 계산. 지표 계산은 _add_indicators()에 위임."""
-    try:
-        data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
-    except Exception:
-        # yfinance 레이트리밋(YFRateLimitError)·차단 등은 예외를 raise 하므로
-        # 빈 DataFrame 으로 치환해 아래 FDR 폴백을 타게 한다.
-        data = pd.DataFrame()
-    if data is None or data.empty or len(data) < 20:
-        # yfinance 차단/레이트리밋/빈 데이터(클라우드 IP 등) → FinanceDataReader 폴백
+    if _YF_DISABLED:
+        # Render 등 yfinance 가 차단(429)된 환경 — 막힐 게 뻔한 yf 호출은 타임아웃까지
+        # 헛대기(분석 cold 시 ~30s 낭비)하므로 건너뛰고 FDR 로 직행한다(차트분석 지연의 핵심).
         data = _fdr_ohlc(ticker, period)
+    else:
+        try:
+            data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+        except Exception:
+            # yfinance 레이트리밋(YFRateLimitError)·차단 등은 예외를 raise 하므로
+            # 빈 DataFrame 으로 치환해 아래 FDR 폴백을 타게 한다.
+            data = pd.DataFrame()
+        if data is None or data.empty or len(data) < 20:
+            # yfinance 차단/레이트리밋/빈 데이터(클라우드 IP 등) → FinanceDataReader 폴백
+            data = _fdr_ohlc(ticker, period)
     if data is None or data.empty or len(data) < 20:
         return data if data is not None else pd.DataFrame()
     data = _flatten_columns(data)

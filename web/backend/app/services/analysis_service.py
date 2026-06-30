@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import os
+import time
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -35,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
 
+# yfinance 차단 환경(Render) 게이트 — stock_ai._YF_DISABLED 와 동일 의미.
+# 켜지면 bench_returns 가 막힐 yf 호출 대신 FDR 로 지수를 받아 cold 분석 지연을 줄인다.
+_YF_DISABLED = os.getenv("ASA_DISABLE_YFINANCE", "").strip().lower() in ("1", "true", "yes", "on")
+
 
 def _now_kst() -> datetime:
     return datetime.now(_KST)
@@ -59,7 +65,21 @@ def dead_time(ticker: str) -> dict:
 
 @ttl_cache(ttl=3600)
 def bench_returns(ticker: str) -> pd.Series:
-    sym = "^KS11" if ticker.endswith((".KS", ".KQ")) else "^GSPC"
+    is_kr = ticker.endswith((".KS", ".KQ"))
+    # yfinance 차단 환경: ^KS11/^GSPC yf.download 가 타임아웃까지 헛대기하므로 FDR 로 직행.
+    if _YF_DISABLED:
+        code = "KS11" if is_kr else "US500"   # FDR 지수 코드(KOSPI / S&P500)
+        try:
+            import FinanceDataReader as fdr
+            from datetime import timedelta as _td
+            start = (datetime.now() - _td(days=240)).strftime("%Y-%m-%d")
+            d = fdr.DataReader(code, start)
+            if d is not None and not d.empty and "Close" in d.columns:
+                return d["Close"].pct_change().dropna()
+        except Exception as e:
+            logger.warning("[bench] FDR %s 실패: %s", code, e)
+        return pd.Series(dtype=float)
+    sym = "^KS11" if is_kr else "^GSPC"
     try:
         d = _flatten_columns(yf.download(sym, period="6mo", auto_adjust=True, progress=False))
         return d["Close"].pct_change().dropna()
@@ -201,8 +221,21 @@ def _news_sentiment(ticker: str, use_llm: bool, gemini: str, groq: str) -> dict:
 def analyze(ticker: str, period: str, use_llm: bool = False,
             gemini: str = "", groq: str = "", sname: str = "") -> dict:
     """동기 종합 분석. 라우터에서 run_in_threadpool 로 호출."""
+    # 단계별 소요시간 진단 — cold 분석이 느린 지점을 워커 로그로 못박는다(t_* 초). 캐시 warm 이면
+    # 각 단계가 0초에 가깝다(@ttl_cache 적중). 비정상적으로 큰 단계가 그 시점의 병목.
+    _t = time.perf_counter()
+    _timings: dict[str, float] = {}
+
+    def _lap(name: str) -> None:
+        nonlocal _t
+        now = time.perf_counter()
+        _timings[name] = now - _t
+        _t = now
+
     data = stock_data(ticker, period)
+    _lap("stock_data")
     fund_info = fundamental(ticker)
+    _lap("fundamental")
 
     if data is None or data.empty or "Close" not in data.columns:
         raise ValueError(f"'{ticker}' 데이터를 불러올 수 없습니다.")
@@ -233,11 +266,13 @@ def analyze(ticker: str, period: str, use_llm: bool = False,
         f_news = pool.submit(_news_sentiment, ticker, use_llm, gemini, groq)
         vol_anomaly, signals, advanced, expected, fund_score_data = f_comp.result()
         news_result = f_news.result()
+    _lap("compute+news")
 
     news_score = news_result.get("score", 0.0) if isinstance(news_result, dict) else 0.0
     tech_score = signals.get("score", 0) if isinstance(signals, dict) else 0
     dt = dead_time(ticker)
     breakout = check_breakout_signal(data)
+    _lap("deadtime+breakout")
 
     # 점수 정규화 (app.py 와 동일)
     tech5 = max(-5, min(5, round(tech_score / 2)))
@@ -264,6 +299,15 @@ def analyze(ticker: str, period: str, use_llm: bool = False,
                 hybrid["label"], hybrid["badge"] = "주의", "🟡"
 
     risk_adj = adjust_risk_conservative(expected) if expected else {}
+    realtime = realtime_price(ticker)
+    _lap("hybrid+realtime")
+
+    total = sum(_timings.values())
+    logger.info(
+        "[analyze] %s %s total=%.1fs | %s",
+        ticker, period, total,
+        " ".join(f"{k}={v:.1f}" for k, v in _timings.items()),
+    )
 
     return {
         "ticker": ticker,
@@ -272,7 +316,7 @@ def analyze(ticker: str, period: str, use_llm: bool = False,
         "data_ready": True,
         "signals": signals,
         "hybrid": hybrid,
-        "realtime": realtime_price(ticker),
+        "realtime": realtime,
         "advanced": advanced or _empty_advanced(),
         "expected": expected or None,
         "risk_adj": risk_adj,
