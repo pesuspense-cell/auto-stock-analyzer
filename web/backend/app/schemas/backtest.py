@@ -17,6 +17,8 @@ class BacktestRequest(BaseModel):
     deposit_schedule: dict[str, float] = {}
     benchmark_ticker: str | None = "^KS11"
     benchmark_label: str = "^KS11 (KOSPI)"
+    # 매매 위험성향: "safe"(안전형 v4.6, 기본) | "aggressive"(위험형 v5.5)
+    risk_profile: str = "safe"
 
 
 class BacktestJobStarted(BaseModel):

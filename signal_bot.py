@@ -62,6 +62,7 @@ from live_screener import (
     MY_CURRENT_BALANCE,
     MAX_POS_BULL, MAX_POS_BEAR, MAX_GROSS_EXPOSURE, SL_SLIPPAGE_PCT,
     ATR_SL_MULT_BULL, BULL_SL_FLOOR_PCT, SL_FALLBACK_PCT,
+    RiskConfig, risk_config, RISK_SAFE,
 )
 from strategy import TradingStrategy
 from supabase_account import SupabaseAccount
@@ -148,8 +149,9 @@ KST_TZ       = "Asia/Seoul"
 
 STATE_FILE = Path(__file__).parent / "signal_bot_state.json"
 
-# ── [v4] 트레일링 스톱 파라미터 (backtest.py 와 동일) ────────────────────────
-TRAIL_ACTIVATE_PROFIT = 0.12   # 수익 +12% 최초 도달 시 트레일링 즉시 ON
+# ── 트레일링 스톱 파라미터 — 발동 마진은 위험성향(RiskConfig.trail_activate_profit)이
+#    결정한다. 아래 상수는 cfg 미전달 시 폴백(안전형 v4.6 = +18%).
+TRAIL_ACTIVATE_PROFIT = 0.18   # (폴백) 수익 +18% 최초 도달 시 트레일링 ON
 TRAIL_BREAKEVEN_PCT   = 0.005  # 활성화 시 손절선을 본전 +0.5%(수수료 보전선)로 상향
 
 _strategy = TradingStrategy()
@@ -351,16 +353,25 @@ def _fetch_position_bar(ticker: str, cache: dict | None = None) -> dict | None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def monitor_positions(
-    holdings: dict, state: dict, enabled: dict, bar_cache: dict | None = None
+    holdings: dict, state: dict, enabled: dict, bar_cache: dict | None = None,
+    cfg: RiskConfig | None = None,
 ) -> tuple[list[dict], dict[str, float]]:
     """보유 종목별 청산 조건을 판정. (신호 리스트, 종목별 현재가맵)을 반환.
 
     enabled: 이 사용자용 신호 on/off 맵. bar_cache: 사이클 단위 시세 캐시(다중사용자 절약).
+    cfg: 위험성향(트레일링 발동 마진·휩소가드·당일 손절 서킷브레이커 분기). 미지정 시 안전형.
     """
+    cfg = cfg or RISK_SAFE
     positions = holdings.get("positions", {})
     signals:   list[dict] = []
     price_map: dict[str, float] = {}
     runtime = state["runtime"]
+    today   = _now_kst().strftime("%Y-%m-%d")
+    # [v4.6-5] 당일 SELL_SL 카운터(사용자별) — 새 날이면 리셋
+    sl_day = state.setdefault("sl_day", {})
+    if today not in sl_day:
+        sl_day.clear()
+        sl_day[today] = 0
 
     for ticker, info in positions.items():
         bar = _fetch_position_bar(ticker, bar_cache)
@@ -385,10 +396,12 @@ def monitor_positions(
 
         rt = runtime.setdefault(ticker, {"peak": entry, "trailing_active": False})
         rt["peak"] = max(float(rt.get("peak", entry)), high)
+        # [v4.6-6] 휩소 가드용 최초 관측일(≈진입 인지일) 기록
+        rt.setdefault("first_seen", today)
 
-        # ── [v4] 트레일링 활성화 — 수익 +12% 최초 도달 시 손절선 본전+0.5%로 상향 ──
+        # ── 트레일링 활성화 — 수익 +18%(cfg) 최초 도달 시 손절선 본전+0.5%로 상향 ──
         breakeven_floor = entry * (1.0 + TRAIL_BREAKEVEN_PCT) / (1.0 - SL_SLIPPAGE_PCT)
-        if not rt["trailing_active"] and high >= entry * (1.0 + TRAIL_ACTIVATE_PROFIT):
+        if not rt["trailing_active"] and high >= entry * (1.0 + cfg.trail_activate_profit):
             rt["trailing_active"] = True
             sl = max(sl, breakeven_floor)
             if enabled["TS_ARM"] and not _dedup(state, f"{ticker}:TS_ARM"):
@@ -410,14 +423,26 @@ def monitor_positions(
         ts_val       = trailing_sl if trailing_sl > 0 else float("-inf")
         effective_sl = max(hard_sl, ts_val)
 
-        # ── 손절/트레일링 우선 (보수적 체결: 손절선 -1% 슬리피지, 갭하락 시 시초가) ──
-        if effective_sl > float("-inf") and low <= effective_sl:
-            fill = effective_sl * (1.0 - SL_SLIPPAGE_PCT)
-            if open_ < effective_sl:
-                fill = min(fill, open_)
-            fill = max(fill, low)
+        # ── 손절/트레일링 우선 ────────────────────────────────────────────────
+        # [v4.6-6] 휩소 가드: 진입 후 cfg.whipsaw_guard_days 거래일 이내는 장중 저가(low)
+        # 흔들림으로 손절선이 터지지 않도록 '종가(close)' 기준으로만 손절 판정한다.
+        guard_bars = int(np.busday_count(rt.get("first_seen", today), today))
+        in_whipsaw = 0 <= guard_bars <= cfg.whipsaw_guard_days
+        sl_trigger = close if in_whipsaw else low
+        if effective_sl > float("-inf") and sl_trigger <= effective_sl:
+            if in_whipsaw:
+                fill = close                          # 휩소 가드: 종가 기준 청산
+            else:
+                fill = effective_sl * (1.0 - SL_SLIPPAGE_PCT)
+                if open_ < effective_sl:
+                    fill = min(fill, open_)
+                fill = max(fill, low)
             is_ts = rt["trailing_active"] and fill >= entry
             stype = "SELL_TS" if is_ts else "SELL_SL"
+            # [v4.6-5] 당일 SELL_SL 서킷브레이커 — 한도 초과 시 발송 보류(보유 지속, 익일 재판정).
+            # 이익보호(SELL_TS)는 제한 대상이 아니다.
+            if stype == "SELL_SL" and sl_day[today] >= cfg.max_daily_sl:
+                continue
             if enabled.get(stype, True) and not _dedup(state, f"{ticker}:{stype}"):
                 signals.append({
                     "type": stype, "ticker": ticker, "name": name,
@@ -425,6 +450,8 @@ def monitor_positions(
                     "stop": effective_sl, "pnl": (fill - entry) / entry * 100,
                     "qty": int(info.get("quantity", 0)),
                 })
+                if stype == "SELL_SL":
+                    sl_day[today] = sl_day[today] + 1
             continue
 
         # ── 익절 목표가 도달 ─────────────────────────────────────────────────
@@ -442,8 +469,12 @@ def monitor_positions(
     return signals, price_map
 
 
-def check_rebalance(holdings: dict, price_map: dict[str, float], state: dict) -> dict | None:
-    """총 주식노출이 총자산의 45%를 초과하면 최대 평가종목 부분매도 리밸런싱 권고."""
+def check_rebalance(
+    holdings: dict, price_map: dict[str, float], state: dict,
+    cfg: RiskConfig | None = None, is_bear: bool = False,
+) -> dict | None:
+    """총 주식노출이 모드별 상한(야수 55%/디펜스 30%)을 초과하면 부분매도 리밸런싱 권고."""
+    cfg = cfg or RISK_SAFE
     positions = holdings.get("positions", {})
     cash      = float(holdings.get("cash", 0))
     invested  = sum(
@@ -453,7 +484,8 @@ def check_rebalance(holdings: dict, price_map: dict[str, float], state: dict) ->
     total_asset = cash + invested
     if total_asset <= 0:
         return None
-    cap = MAX_GROSS_EXPOSURE * total_asset
+    gross_pct = cfg.max_gross_exposure_bear if is_bear else cfg.max_gross_exposure_bull
+    cap = gross_pct * total_asset
     if invested <= cap:
         return None
 
@@ -488,20 +520,24 @@ def check_rebalance(holdings: dict, price_map: dict[str, float], state: dict) ->
 #  매수 감시 (BUY) — run_screening + calc_buy_plan 재사용
 # ══════════════════════════════════════════════════════════════════════════════
 
-def screen_candidates(is_bear: bool) -> list[dict]:
-    """매수 후보 스크리닝 — 사용자와 무관(유니버스 공통)하므로 사이클당 1회만 수행.
+def screen_candidates(
+    is_bear: bool, cfg: RiskConfig | None = None, market: MarketAnalyzer | None = None,
+) -> list[dict]:
+    """매수 후보 스크리닝 — 같은 위험성향(프로파일) 안에선 유저 공통이라 프로파일당 1회 수행.
 
     held_tickers 는 비워서 전체 후보를 뽑고, 보유 종목 제외·수량 계산은 사용자별로 처리한다.
+    cfg/market 로 디펜스 눌림목 정책(v4.6-4)과 지수 5일선 필터(v5-1)를 적용한다.
     """
     universe = _build_universe(UNIVERSE_N)
-    return run_screening(universe, is_bear, held_tickers=set())
+    return run_screening(universe, is_bear, held_tickers=set(), cfg=cfg, market=market)
 
 
 def build_buy_signals(
     candidates: list[dict], holdings: dict, price_map: dict[str, float],
-    is_bear: bool, state: dict,
+    is_bear: bool, state: dict, cfg: RiskConfig | None = None,
 ) -> list[dict]:
     """사용자 계좌(시드머니) 기준으로 매수 후보에 대한 맞춤 수량·예산을 계산한다."""
+    cfg = cfg or RISK_SAFE
     positions     = holdings.get("positions", {})
     cash          = float(holdings.get("cash", 0))
     held_tickers  = set(positions.keys())
@@ -527,7 +563,7 @@ def build_buy_signals(
         plan = calc_buy_plan(
             cand, cash=cash, total_asset=total_asset,
             current_invested=invested, n_positions=n_positions + len(signals),
-            max_positions=max_positions,
+            max_positions=max_positions, cfg=cfg, is_bear=is_bear,
         )
         if plan is None or plan["qty"] <= 0:
             continue
@@ -646,12 +682,18 @@ def _notify_targets() -> list[dict]:
             for u in _account.list_notify_users():
                 uid, chat = u.get("user_id"), u.get("chat_id")
                 if uid and chat and uid not in seen:
-                    targets.append({"user_id": uid, "chat_id": str(chat)})
+                    targets.append({
+                        "user_id": uid, "chat_id": str(chat),
+                        "risk_profile": u.get("risk_profile") or "safe",
+                    })
                     seen.add(uid)
         except Exception as e:
             logger.error(f"알림 대상 조회 실패: {e}")
     if ACCOUNT_USER_ID and TELEGRAM_CHAT_ID and ACCOUNT_USER_ID not in seen:
-        targets.append({"user_id": ACCOUNT_USER_ID, "chat_id": TELEGRAM_CHAT_ID})
+        targets.append({
+            "user_id": ACCOUNT_USER_ID, "chat_id": TELEGRAM_CHAT_ID,
+            "risk_profile": os.getenv("SIGNAL_ACCOUNT_RISK_PROFILE", "safe"),
+        })
     return targets
 
 
@@ -667,12 +709,27 @@ def run_cycle(notifier: TelegramNotifier, state: dict) -> int:
         logger.info("  알림 대상 사용자 없음(텔레그램 연동·수신 ON 사용자 0명)")
         return 0
 
-    # ── 공통 1회: 장세 판별 + 매수 후보 스크리닝(유니버스는 사용자 무관) ──────
+    # ── 지수 데이터 1회 로드 → 위험성향(safe/aggressive)별로 장세·후보 1회씩 계산 ──
+    # 같은 프로파일 유저는 장세·매수후보를 공유하므로 프로파일당 최대 1회만 스크리닝한다.
     market = MarketAnalyzer()
     market.load()
-    is_bear = market.is_bear_market()
-    logger.info(f"장세: {'🐻 디펜스(하락장)' if is_bear else '🐂 야수(상승장)'} · 알림대상 {len(targets)}명")
-    candidates = screen_candidates(is_bear)
+
+    from collections import defaultdict
+    by_profile: dict[str, list[dict]] = defaultdict(list)
+    for tgt in targets:
+        by_profile[str(tgt.get("risk_profile") or "safe").lower()].append(tgt)
+
+    # profile → (cfg, is_bear, candidates)
+    screen_cache: dict[str, tuple] = {}
+    for profile, plist in by_profile.items():
+        cfg     = risk_config(profile)
+        is_bear = market.is_bear_market(cfg)
+        candidates = screen_candidates(is_bear, cfg, market)
+        screen_cache[profile] = (cfg, is_bear, candidates)
+        logger.info(
+            f"[{cfg.name}] 장세: {'🐻 디펜스(하락장)' if is_bear else '🐂 야수(상승장)'} "
+            f"(스코어커트 {cfg.market_score_cutline:.0f}pt) · 대상 {len(plist)}명 · 후보 {len(candidates)}개"
+        )
 
     bar_cache: dict = {}        # 사이클 단위 시세 캐시(여러 사용자가 같은 종목 보유 시 1회만 다운로드)
     sent_count = 0
@@ -680,6 +737,7 @@ def run_cycle(notifier: TelegramNotifier, state: dict) -> int:
 
     for tgt in targets:
         uid, chat_id = tgt["user_id"], tgt["chat_id"]
+        cfg, is_bear, candidates = screen_cache[str(tgt.get("risk_profile") or "safe").lower()]
         try:
             holdings = _account.load_holdings(user_id=uid) if use_supabase else load_account()
         except Exception as e:
@@ -696,14 +754,14 @@ def run_cycle(notifier: TelegramNotifier, state: dict) -> int:
                 ustate["runtime"].pop(t, None)
                 ustate["sent"] = [k for k in ustate["sent"] if not k.startswith(f"{t}:")]
 
-        # 1) 청산 감시  2) 리밸런싱  3) 매수(사용자 시드머니 기준 맞춤 수량)
-        sell_signals, price_map = monitor_positions(holdings, ustate, enabled, bar_cache)
+        # 1) 청산 감시  2) 리밸런싱  3) 매수(사용자 시드머니 기준 맞춤 수량) — 모두 cfg 반영
+        sell_signals, price_map = monitor_positions(holdings, ustate, enabled, bar_cache, cfg)
         if enabled["SELL_REBAL"]:
-            rebal = check_rebalance(holdings, price_map, ustate)
+            rebal = check_rebalance(holdings, price_map, ustate, cfg, is_bear)
             if rebal:
                 sell_signals.append(rebal)
         buy_signals = (
-            build_buy_signals(candidates, holdings, price_map, is_bear, ustate)
+            build_buy_signals(candidates, holdings, price_map, is_bear, ustate, cfg)
             if enabled["BUY"] else []
         )
 

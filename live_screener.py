@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
@@ -83,6 +84,71 @@ BENCHMARK_SYMBOLS: dict[str, str] = {
     "KOSPI":  "^KS11",
     "KOSDAQ": "^KQ11",
 }
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  위험성향(Risk Profile) — 라이브 시그널을 백테스트 엔진(v4.6/v5.5)과 완전 정렬
+#
+#  유저가 '내 포트폴리오' 탭에서 고른 성향(user_settings.risk_profile)에 따라 시장모드
+#  커트라인·종목캡·노출캡·디펜스 눌림목 정책·당일 손절 한도·휩소가드·트레일링 발동을
+#  한 번에 분기한다. 두 프리셋은 backtest.py(safe=v4.6) / backtest_v5_5_active.py
+#  (aggressive=v5.5) 의 상수와 1:1로 일치한다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class RiskConfig:
+    name:                    str
+    market_score_cutline:    float   # 야수(상승장) 진입 커트라인(Market Score 평균, pt)
+    pos_pct_bull:            float   # 야수 단일종목 평가액 상한(총자산 비율)
+    pos_pct_defense_nulim:   float   # 디펜스 눌림목 단일종목 상한(총자산 비율)
+    allow_defense_nulim_buy: bool    # 디펜스(하락장) 눌림목 신규매수 허용 여부
+    max_gross_exposure_bull: float   # 야수 총 주식노출 상한
+    max_gross_exposure_bear: float   # 디펜스 총 주식노출 상한
+    max_daily_sl:            int     # 하루 SELL_SL(진짜 손절) 신호 최대 종목 수(서킷브레이커)
+    whipsaw_guard_days:      int     # 진입 후 이 거래일 이내는 종가 기준으로만 손절 판정
+    trail_activate_profit:   float   # 트레일링 스톱 발동 수익률(본전 보호 마진)
+
+
+# safe = 안전투자형 v4.6 (backtest.py 상수와 일치)
+RISK_SAFE = RiskConfig(
+    name="safe",
+    market_score_cutline=85.0,
+    pos_pct_bull=0.22,
+    pos_pct_defense_nulim=0.15,
+    allow_defense_nulim_buy=False,   # 디펜스 신규매수 전면 차단
+    max_gross_exposure_bull=0.55,
+    max_gross_exposure_bear=0.30,
+    max_daily_sl=1,
+    whipsaw_guard_days=1,
+    trail_activate_profit=0.18,
+)
+
+# aggressive = 위험감수형 v5.5 (backtest_v5_5_active.py 상수와 일치)
+RISK_AGGRESSIVE = RiskConfig(
+    name="aggressive",
+    market_score_cutline=70.0,
+    pos_pct_bull=0.33,
+    pos_pct_defense_nulim=0.10,
+    allow_defense_nulim_buy=True,    # 디펜스 눌림목 10% 캡 허용
+    max_gross_exposure_bull=0.55,
+    max_gross_exposure_bear=0.30,
+    max_daily_sl=2,
+    whipsaw_guard_days=1,
+    trail_activate_profit=0.18,
+)
+
+
+def risk_config(profile: str | None) -> RiskConfig:
+    """user_settings.risk_profile 문자열 → RiskConfig. 미지정/미상은 안전형."""
+    return RISK_AGGRESSIVE if str(profile or "").lower() == "aggressive" else RISK_SAFE
+
+
+def _market_of(ticker: str) -> str | None:
+    """종목 코드 접미사로 소속 지수 판별: .KS→KOSPI, .KQ→KOSDAQ, 그 외 None."""
+    if ticker.endswith(".KS"):
+        return "KOSPI"
+    if ticker.endswith(".KQ"):
+        return "KOSDAQ"
+    return None
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  내부 지표 계산 유틸리티 (backtest.py 로직 동일)
@@ -180,25 +246,63 @@ class MarketAnalyzer:
             except Exception as e:
                 print(f"    ⚠️ {mkt} 로드 실패: {e}")
 
-    def is_bear_market(self) -> bool:
-        """KOSPI·KOSDAQ 중 하나라도 SMA_60 위에 있으면 상승장(야수 모드) — backtest.py 동일"""
-        if not self._index_dfs:
-            return False
-        valid = bear = 0
+    @staticmethod
+    def _score_single_index(row: pd.Series) -> float | None:
+        """[v5-2] 단일 지수의 정렬·추세 상태를 0~100점으로 환산(backtest.py 동일).
+
+        배점(합 100): 종가>5일선 25 / 종가>20일선 25 / 종가>60일선 30 / 5일선>20일선 20.
+        """
+        close = float(row.get("Close",  np.nan))
+        sma5  = float(row.get("SMA_5",  np.nan))
+        sma20 = float(row.get("SMA_20", np.nan))
+        sma60 = float(row.get("SMA_60", np.nan))
+        if any(np.isnan(v) for v in (close, sma5, sma20, sma60)):
+            return None
+        score = 0.0
+        if close > sma5:  score += 25.0
+        if close > sma20: score += 25.0
+        if close > sma60: score += 30.0
+        if sma5 > sma20:  score += 20.0
+        return score
+
+    def market_score(self) -> float:
+        """추적 중인 모든 지수(KOSPI·KOSDAQ) Market Score 의 평균(0~100). 유효 지수 없으면 0."""
+        scores: list[float] = []
         for df in self._index_dfs.values():
             if df.empty:
                 continue
-            row   = df.iloc[-1]
-            close = float(row.get("Close", np.nan))
-            sma60 = float(row.get("SMA_60", np.nan))
-            if np.isnan(close) or np.isnan(sma60):
-                continue
-            valid += 1
-            if close < sma60:
-                bear += 1
-        if valid > 0 and bear < valid:
+            s = self._score_single_index(df.iloc[-1])
+            if s is not None:
+                scores.append(s)
+        return sum(scores) / len(scores) if scores else 0.0
+
+    def is_bear_market(self, cfg: RiskConfig | None = None) -> bool:
+        """[v5-2] Market Score 평균 < 커트라인이면 디펜스(하락장, True).
+
+        cfg 미지정 시 안전형(85pt) 기준. 지수 데이터가 없으면 보수적으로 디펜스(True).
+        """
+        cfg = cfg or RISK_SAFE
+        if not self._index_dfs:
+            return True
+        return self.market_score() < cfg.market_score_cutline
+
+    def index_below_sma5(self, ticker: str) -> bool:
+        """[v5-1] 종목이 속한 지수(KOSPI/KOSDAQ)의 종가가 5일선 아래인가.
+
+        지수 데이터가 없으면 보수적으로 True(매수 차단). 시장 미상(None)은 False(통과).
+        """
+        market = _market_of(ticker)
+        if market is None:
             return False
-        return True
+        df = self._index_dfs.get(market)
+        if df is None or df.empty:
+            return True
+        row   = df.iloc[-1]
+        close = float(row.get("Close", np.nan))
+        sma5  = float(row.get("SMA_5", np.nan))
+        if np.isnan(close) or np.isnan(sma5):
+            return True
+        return close < sma5
 
     def get_market_rsi(self) -> float:
         """복수 지수 중 최댓값 — 가장 과열된 지수 기준으로 브레이크 판정"""
@@ -510,8 +614,19 @@ def run_screening(
     universe:   list[tuple[str, str]],
     is_bear:    bool,
     held_tickers: set[str],
+    cfg:        RiskConfig | None = None,
+    market:     "MarketAnalyzer | None" = None,
 ) -> list[dict]:
-    """유니버스 전체를 청크 단위로 다운로드하고 오늘 자 신호를 스크리닝한다."""
+    """유니버스 전체를 청크 단위로 다운로드하고 오늘 자 신호를 스크리닝한다.
+
+    cfg   : 위험성향(디펜스 눌림목 허용 여부 분기). 미지정 시 안전형.
+    market: 지수 5일선 필터(v5-1) 판정용 MarketAnalyzer. None 이면 지수 필터 미적용.
+    """
+    cfg = cfg or RISK_SAFE
+    # [v4.6-4] 디펜스(하락장) 모드 신규매수 정책:
+    #   안전형(allow=False) → 눌림목 신규매수 전면 차단(후보 0). 위험형(True) → 눌림목 허용.
+    if is_bear and not cfg.allow_defense_nulim_buy:
+        return []
     CHUNK = 30
     candidates: list[dict] = []
 
@@ -548,6 +663,9 @@ def run_screening(
                     stock_rsi = float(row.get("RSI_14", np.nan))
                     if not np.isnan(stock_rsi) and stock_rsi >= RSI_HARD_LIMIT:
                         continue
+                    # [v5-1] 지수 5일선 Top-Down 필터 — 소속 지수 종가가 5일선 아래면 진입 차단
+                    if market is not None and market.index_below_sma5(ticker):
+                        continue
                     close = float(row["Close"])
                     atr   = float(row.get("ATR", np.nan))
                     candidates.append({
@@ -583,6 +701,8 @@ def calc_buy_plan(
     current_invested: float,
     n_positions:      int,
     max_positions:    int,
+    cfg:              RiskConfig | None = None,
+    is_bear:          bool = False,
 ) -> dict | None:
     """[개편1] ATR 손절 기반 고정 리스크 배정으로 매수 수량·SL·TP를 계산한다.
 
@@ -616,14 +736,24 @@ def calc_buy_plan(
     if sl <= 0 or sl >= close:
         return None
 
-    # ── ATR 고정 리스크 포지션 사이징 ───────────────────────────────────────
+    # ── ATR 고정 리스크 포지션 사이징 (위험성향별 캡) ───────────────────────
+    cfg = cfg or RISK_SAFE
+    # 단일종목 캡: 야수 pos_pct_bull / 디펜스 눌림목 pos_pct_defense_nulim / 그 외 15%
+    if signal == "SMA_GOLDEN_CROSS":
+        pos_pct = cfg.pos_pct_bull
+    elif is_bear:
+        pos_pct = cfg.pos_pct_defense_nulim
+    else:
+        pos_pct = MAX_POSITION_PCT
+    gross_cap = cfg.max_gross_exposure_bear if is_bear else cfg.max_gross_exposure_bull
+
     risk_per_share = close - sl
     risk_budget    = total_asset * MAX_RISK_PER_TRADE
     qty = int(risk_budget / risk_per_share)
-    qty = min(qty, int((total_asset * MAX_POSITION_PCT) / close))   # 종목 비중 상한 캡
+    qty = min(qty, int((total_asset * pos_pct) / close))           # 종목 비중 상한 캡(모드별)
     qty = min(qty, int((cash * 0.95) / close))                     # 현금 하드캡
-    # [v3] 총노출 45% 상한 — (현재 주식평가액 + 신규매수) ≤ 총자산×MAX_GROSS_EXPOSURE
-    room = MAX_GROSS_EXPOSURE * total_asset - current_invested
+    # [v5] 총노출 상한 — (현재 주식평가액 + 신규매수) ≤ 총자산×gross_cap (야수 55%/디펜스 30%)
+    room = gross_cap * total_asset - current_invested
     if room < close:
         return None
     qty = min(qty, int(room / close))

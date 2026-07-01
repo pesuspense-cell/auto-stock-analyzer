@@ -18,6 +18,7 @@ interface BacktestParams {
   deposit_schedule: Record<string, number>;
   benchmark_ticker: string | null;
   benchmark_label: string;
+  risk_profile: "safe" | "aggressive";
 }
 
 export async function POST(req: Request): Promise<NextResponse<JobEnqueued | ApiError>> {
@@ -25,6 +26,15 @@ export async function POST(req: Request): Promise<NextResponse<JobEnqueued | Api
   try {
     const user = await requireUser(supabase);
     const p = (await req.json()) as Partial<BacktestParams>;
+
+    // 매매 엔진은 유저가 '내 포트폴리오' 탭에서 저장한 위험성향을 따른다(미설정 시 안전형).
+    const { data: settings } = await supabase
+      .from("user_settings")
+      .select("risk_profile")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const risk_profile: "safe" | "aggressive" =
+      settings?.risk_profile === "aggressive" ? "aggressive" : "safe";
 
     const params: BacktestParams = {
       markets: p.markets ?? ["KOSPI", "KOSDAQ"],
@@ -36,6 +46,7 @@ export async function POST(req: Request): Promise<NextResponse<JobEnqueued | Api
       deposit_schedule: p.deposit_schedule ?? {},
       benchmark_ticker: p.benchmark_ticker ?? "^KS11",
       benchmark_label: p.benchmark_label ?? "^KS11 (KOSPI)",
+      risk_profile,
     };
     if (!params.markets.length) {
       return NextResponse.json({ error: "마켓을 하나 이상 선택하세요." }, { status: 400 });

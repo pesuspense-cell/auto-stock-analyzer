@@ -27,6 +27,7 @@ export function PortfolioTab() {
             <UserMenu />
           </div>
           <SummaryDashboard />
+          <RiskProfileCard />
           <CashCard />
           <AddForm />
           <Holdings />
@@ -658,6 +659,75 @@ function TelegramLinkCard() {
           <button onClick={() => mutate("/api/v1/telegram/status")} className="mt-2 text-ink-3 hover:underline">연동 완료 후 새로고침</button>
         </div>
       )}
+      {err && <p className="mt-2 text-sm text-loss">{err}</p>}
+    </section>
+  );
+}
+
+// 매매 위험성향 — user_settings.risk_profile. 백테스트 엔진과 라이브 시그널봇이 함께 분기한다.
+type RiskProfile = "safe" | "aggressive";
+interface RiskProfileResponse { riskProfile: RiskProfile; }
+
+const RISK_META: Record<RiskProfile, { label: string; tag: string; desc: string }> = {
+  safe: {
+    label: "🛡️ 안전투자형",
+    tag: "v4.6",
+    desc: "강한 방어. 하락장엔 신규매수·물타기 중단, 당일 손절 1종목 제한, 본전보호 +18%. 장기 생존 우선.",
+  },
+  aggressive: {
+    label: "⚔️ 위험감수형",
+    tag: "v5.5",
+    desc: "회전율·집중도 ↑. 야수 진입 70pt·종목캡 33%·당일 손절 2종목 허용·하락장 눌림목 10% 매수. 변동성 정면 돌파.",
+  },
+};
+
+function RiskProfileCard() {
+  const { data } = useSWR<RiskProfileResponse>("/api/v1/settings/risk-profile", jfetch);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const current: RiskProfile = data?.riskProfile === "aggressive" ? "aggressive" : "safe";
+
+  async function pick(next: RiskProfile) {
+    if (next === current || busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/v1/settings/risk-profile", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+        body: JSON.stringify({ riskProfile: next }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "저장 실패");
+      mutate("/api/v1/settings/risk-profile");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "저장 실패");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-card border border-hairline bg-surface p-4 shadow-card">
+      <h3 className="text-sm font-semibold text-ink">🎚️ 매매 위험성향</h3>
+      <p className="mt-0.5 text-xs text-ink-2">백테스트 엔진과 라이브 시그널 모두 이 성향을 따릅니다. 변경은 다음 감시 주기에 자동 반영됩니다.</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {(["safe", "aggressive"] as RiskProfile[]).map((p) => {
+          const active = current === p;
+          return (
+            <button
+              key={p} type="button" disabled={busy} onClick={() => pick(p)}
+              className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                active ? "border-accent bg-accent/10 ring-1 ring-accent" : "border-hairline-md/50 hover:border-hairline-md"
+              } ${busy ? "opacity-60" : ""}`}
+            >
+              <span className="flex items-center gap-1.5">
+                <span className="text-sm font-medium text-ink">{RISK_META[p].label}</span>
+                <span className="rounded bg-ink/10 px-1 text-[10px] font-semibold text-ink-2">{RISK_META[p].tag}</span>
+                {active && <span className="ml-auto text-xs font-semibold text-accent">선택됨</span>}
+              </span>
+              <span className="mt-1 block text-xs leading-relaxed text-ink-3">{RISK_META[p].desc}</span>
+            </button>
+          );
+        })}
+      </div>
       {err && <p className="mt-2 text-sm text-loss">{err}</p>}
     </section>
   );

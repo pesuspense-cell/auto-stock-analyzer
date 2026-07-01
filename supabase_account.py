@@ -127,16 +127,28 @@ class SupabaseAccount:
         005 마이그레이션(telegram_* 컬럼) 적용 전이면 빈 목록을 반환해 봇이 env 폴백만
         쓰도록 한다.
         """
+        # 006 마이그레이션(risk_profile) 적용 전이면 확장 select 가 실패하므로 폴백.
         try:
             rows = self._get(
                 "rest/v1/user_settings"
                 "?telegram_enabled=eq.true&telegram_chat_id=not.is.null"
-                "&select=user_id,telegram_chat_id"
+                "&select=user_id,telegram_chat_id,risk_profile"
             )
         except Exception:
-            return []
+            try:
+                rows = self._get(
+                    "rest/v1/user_settings"
+                    "?telegram_enabled=eq.true&telegram_chat_id=not.is.null"
+                    "&select=user_id,telegram_chat_id"
+                )
+            except Exception:
+                return []
         return [
-            {"user_id": r["user_id"], "chat_id": r["telegram_chat_id"]}
+            {
+                "user_id": r["user_id"],
+                "chat_id": r["telegram_chat_id"],
+                "risk_profile": r.get("risk_profile") or "safe",
+            }
             for r in rows if r.get("telegram_chat_id")
         ]
 

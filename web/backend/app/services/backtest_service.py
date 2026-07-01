@@ -81,8 +81,17 @@ def run_backtest(params: dict) -> dict:
 
     순수 실행 함수 — jobs 워커(Supabase)와 FastAPI 인메모리 잡이 공용한다.
     스크리닝 통과 종목이 없으면 ValueError.
+
+    [위험성향 분기] params["risk_profile"] 로 매매 엔진을 선택한다.
+      · "aggressive" → backtest_v5_5_active (위험감수형 v5.5)
+      · 그 외/미지정  → backtest (안전투자형 v4.6, 기본값)
+    StockScreener 는 두 모듈에서 동일하므로 선택된 엔진 모듈의 것을 함께 사용한다.
     """
-    from backtest import BacktestEngine, StockScreener
+    profile = str(params.get("risk_profile") or "safe").lower()
+    if profile == "aggressive":
+        from backtest_v5_5_active import BacktestEngine, StockScreener
+    else:
+        from backtest import BacktestEngine, StockScreener
 
     screener = StockScreener(universe_per_market=params["universe_n"])
     selected = screener.screen(markets=params["markets"], top_n=params["top_n"]) or []
