@@ -153,6 +153,70 @@ _METADATA_CACHE_PATH     = os.path.join(os.path.dirname(__file__), "stock_metada
 _METADATA_CACHE_TTL_DAYS = 7
 _STOCK_META_CACHE: "dict | None" = None  # 모듈 레벨 싱글턴
 
+# [메타데이터 DB 캐시] Render 등 휘발성 디스크에서는 재시작마다 stock_metadata.json 이 사라져
+# 매번 FDR StockListing(2794+3927종목)으로 재빌드(콜드 ~25s)한다. 이를 없애기 위해 기존
+# 범용 KV 테이블 public.market_cache(scope PK) 에 메타데이터 블롭을 저장/조회한다(신규 마이그레이션 없음).
+# SUPABASE_DB_URL 미설정(로컬 단독)·오류 시 조용히 비활성 → 기존 파일 캐시/재빌드로 폴백.
+_METADATA_DB_SCOPE = "stock_metadata:v1"
+
+
+def _meta_db_load() -> "dict | None":
+    """market_cache 에서 종목 메타데이터 로드. 없거나 TTL 초과·오류 시 None."""
+    dsn = os.getenv("SUPABASE_DB_URL", "").strip()
+    if not dsn:
+        return None
+    con = None
+    try:
+        import psycopg2
+        con = psycopg2.connect(dsn=dsn, connect_timeout=10)
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT payload, fetched_at FROM public.market_cache WHERE scope=%s",
+                (_METADATA_DB_SCOPE,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        payload, fetched_at = row
+        try:
+            age_days = (datetime.now(fetched_at.tzinfo) - fetched_at).days if fetched_at else 999
+        except Exception:
+            age_days = 999
+        if age_days >= _METADATA_CACHE_TTL_DAYS:
+            return None
+        stocks = payload.get("stocks") if isinstance(payload, dict) else None
+        return stocks or None
+    except Exception:
+        return None
+    finally:
+        if con is not None:
+            con.close()
+
+
+def _meta_db_save(stocks: dict) -> None:
+    """종목 메타데이터를 market_cache 에 upsert(다음 재시작/타 인스턴스가 재빌드 없이 재사용)."""
+    dsn = os.getenv("SUPABASE_DB_URL", "").strip()
+    if not dsn or not stocks:
+        return
+    con = None
+    try:
+        import psycopg2
+        import psycopg2.extras
+        con = psycopg2.connect(dsn=dsn, connect_timeout=10)
+        with con.cursor() as cur:
+            cur.execute(
+                "INSERT INTO public.market_cache (scope, payload, fetched_at) "
+                "VALUES (%s, %s, now()) "
+                "ON CONFLICT (scope) DO UPDATE SET payload=EXCLUDED.payload, fetched_at=now()",
+                (_METADATA_DB_SCOPE, psycopg2.extras.Json({"stocks": stocks})),
+            )
+        con.commit()
+    except Exception:
+        pass
+    finally:
+        if con is not None:
+            con.close()
+
 
 def _load_all_stock_metadata(force_refresh: bool = False) -> dict:
     """
@@ -178,6 +242,19 @@ def _load_all_stock_metadata(force_refresh: bool = False) -> dict:
                 return _STOCK_META_CACHE
         except Exception:
             pass
+
+    # ── DB 캐시(Supabase market_cache) 확인 — Render 재시작 후에도 즉시 로드(콜드 재빌드 제거) ──
+    if not force_refresh:
+        _db_stocks = _meta_db_load()
+        if _db_stocks:
+            _STOCK_META_CACHE = _db_stocks
+            # 같은 컨테이너 내 재호출 가속을 위해 로컬 파일에도 기록(실패 무시)
+            try:
+                with open(_METADATA_CACHE_PATH, "w", encoding="utf-8") as _fw:
+                    json.dump({"generated_at": datetime.now().isoformat(), "stocks": _db_stocks}, _fw, ensure_ascii=False)
+            except Exception:
+                pass
+            return _STOCK_META_CACHE
 
     stocks: dict = {}
 
@@ -255,6 +332,9 @@ def _load_all_stock_metadata(force_refresh: bool = False) -> dict:
             json.dump(_payload, _fw, ensure_ascii=False)
     except Exception:
         pass
+
+    # ── DB 캐시 저장 — 다음 재시작/다른 인스턴스가 재빌드 없이 재사용(콜드 제거) ──
+    _meta_db_save(stocks)
 
     _STOCK_META_CACHE = stocks
     return stocks
