@@ -96,6 +96,7 @@ backtest.py — 듀얼 모드(야수 + 디펜스) 백테스팅 엔진 [라이브
 """
 from __future__ import annotations
 
+import gc
 import logging
 import sys
 from dataclasses import dataclass
@@ -254,6 +255,11 @@ class PositionState:
 
 class BacktestEngine:
     WARMUP_DAYS     = 300
+    # [메모리] 로드 후 종목 DataFrame 에서 이 컬럼만 보존(나머지 지표는 엔진 미사용 → 즉시 폐기).
+    _ENGINE_COLS = (
+        "Open", "High", "Low", "Close", "Volume",
+        "SMA_5", "SMA_20", "SMA_60", "ATR", "RSI_14",
+    )
     MAX_POS_BULL    = 8    # 야수 모드(상승장): 최대 8종목
     MAX_POS_BEAR    = 3    # 디펜스 모드(하락장): 최대 3종목
     MAX_REBUY_COUNT = 2    # 물타기 최대 허용 횟수 (DRY_VOLUME_NULIM 전용)
@@ -449,10 +455,22 @@ class BacktestEngine:
                     # stock_ai 의 SMA식 RSI(컬럼명 "RSI")와 별개로 일관된 Wilder 방식 사용
                     df["RSI_14"] = self._calc_rsi(df["Close"], period=14)
 
+                    # [메모리 최적화] Render 512MB OOM 방지 — _add_indicators 는 지표 ~35개
+                    # (MACD·볼린저·ADX·일목·Z-Score 등)를 붙이지만 백테스트 엔진은 아래 컬럼만
+                    # 참조한다. 최대 400종목 DataFrame 을 통째로 상주시키므로, 불필요 컬럼을 즉시
+                    # 버리고 float64→float32 로 다운캐스트해 종목당 메모리를 ~5배 줄인다.
+                    keep = [c for c in self._ENGINE_COLS if c in df.columns]
+                    df = df[keep].copy()
+                    for c in df.columns:
+                        if df[c].dtype == "float64":
+                            df[c] = df[c].astype("float32")
+
                     ticker_data[ticker] = df
                 except Exception:
                     continue
 
+            del raw
+            gc.collect()
             print(f"누적 {len(ticker_data)}개 성공")
 
         return ticker_data
