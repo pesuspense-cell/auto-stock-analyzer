@@ -640,7 +640,15 @@ def get_stock_data(ticker: str, period: str = "3mo") -> pd.DataFrame:
     if data is None or data.empty or len(data) < 20:
         return data if data is not None else pd.DataFrame()
     data = _flatten_columns(data)
-    return _add_indicators(data)
+    data = _add_indicators(data)
+    # [메모리] 지표 컬럼(float64)을 float32 로 다운캐스트 — 분석 DF 메모리 ~절반(Render 512MB
+    # OOM 방지). 인터랙티브 분석은 백테스트와 달리 컬럼 프루닝은 못 하지만(다수 지표 사용),
+    # 다운캐스트는 신호·점수 계산에 무해하다(_finalize_ticker_df 와 동일 기법). Volume 등 int
+    # 컬럼은 대상 아님(dtype 조건).
+    for c in data.columns:
+        if data[c].dtype == "float64":
+            data[c] = data[c].astype("float32")
+    return data
 
 
 # ─── 매매 신호 알고리즘 ───────────────────────────────────────────────────────

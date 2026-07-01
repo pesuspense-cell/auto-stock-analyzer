@@ -48,7 +48,10 @@ def _now_kst() -> datetime:
 
 # ── 캐시 래퍼 (app.py @st.cache_data 대응) ──────────────────────────
 
-@ttl_cache(ttl=3600)
+# [메모리] maxsize 를 256→32 로 축소 — 캐시가 종목별 지표 DataFrame 을 최대 개수만큼
+# 1시간 상주시키므로, 인터랙티브 탭에 과한 256개는 상시 baseline 메모리를 키운다(512MB OOM).
+# 32개면 연속 조회 히트율은 유지하면서 상주 메모리를 크게 줄인다.
+@ttl_cache(ttl=3600, maxsize=32)
 def stock_data(ticker: str, period: str) -> pd.DataFrame:
     return get_stock_data(ticker, period)
 
