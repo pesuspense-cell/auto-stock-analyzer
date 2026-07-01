@@ -22,6 +22,9 @@
 """
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import gc
 import json
 import logging
 import math
@@ -88,6 +91,39 @@ def _db_url() -> str:
     if not url:
         raise RuntimeError("SUPABASE_DB_URL 환경변수가 필요합니다.")
     return url
+
+
+# glibc(Linux)의 malloc_trim(0) 핸들 — 없으면(비glibc/윈도우) None.
+# pandas 무거운 작업 뒤 free() 된 메모리를 glibc 는 아레나에 캐시로 붙잡아 OS 에 안 돌려준다
+# (RSS 가 최고점에 눌러앉아 512MB OOM). 작업 종료마다 이를 강제로 OS 에 반환한다.
+def _load_malloc_trim():
+    if os.name != "posix":
+        return None
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+        fn = libc.malloc_trim
+        fn.argtypes = [ctypes.c_size_t]
+        fn.restype = ctypes.c_int
+        return fn
+    except Exception:
+        return None
+
+
+_MALLOC_TRIM = _load_malloc_trim()
+
+
+def _release_memory() -> None:
+    """작업 1건 처리 후 파이썬 가비지 수거 + glibc 힙을 OS 에 반환.
+
+    gc.collect() 는 순환 참조로 남은 DataFrame 등을 즉시 회수하고, malloc_trim(0) 은
+    glibc 아레나에 캐시된 빈 페이지를 OS 로 되돌려 RSS 최고점이 누적되지 않게 한다.
+    MALLOC_ARENA_MAX=2(render.yaml)와 함께 동작해야 효과가 크다. 실패해도 무해(무시)."""
+    try:
+        gc.collect()
+        if _MALLOC_TRIM is not None:
+            _MALLOC_TRIM(0)
+    except Exception:
+        pass
 
 
 def _json_default(o):
@@ -448,6 +484,8 @@ def _lane_loop(lane: str, kinds: tuple[str, ...]) -> None:
             finally:
                 with _inflight_lock:
                     _inflight.pop(lane, None)
+                # 작업당 메모리 봉우리를 즉시 OS 로 반환 — 512MB OOM 방지의 핵심.
+                _release_memory()
     finally:
         try:
             conn.close()
