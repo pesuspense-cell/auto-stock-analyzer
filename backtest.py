@@ -98,6 +98,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,6 +123,10 @@ logging.basicConfig(
     level=logging.WARNING,
 )
 logger = logging.getLogger("backtest")
+
+# [Render] yfinance 가 클라우드 IP 에서 429 로 차단되는 환경 플래그(analysis 경로와 동일 규약).
+# 켜지면 막힐 게 뻔한 yf 호출을 건너뛰고 FinanceDataReader(FDR)로 직행해 헛대기·차단을 회피한다.
+_YF_DISABLED = os.getenv("ASA_DISABLE_YFINANCE", "").strip().lower() in ("1", "true", "yes", "on")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 글로벌 설정
@@ -412,8 +417,23 @@ class BacktestEngine:
             print(f"  유니버스 크기: {len(all_tickers)}개 종목 자동 구축 완료")
 
         ticker_data: dict[str, pd.DataFrame] = {}
-        CHUNK = 50
+        s_str = load_start.strftime("%Y-%m-%d")
+        e_str = load_end.strftime("%Y-%m-%d")
 
+        # [Render] yfinance 차단 환경 → 막힐 게 뻔한 yf 를 건너뛰고 FDR 직행(종목별, 헛대기 제거).
+        if _YF_DISABLED:
+            print(f"  ⚙️  ASA_DISABLE_YFINANCE=1 — FDR(FinanceDataReader)로 시세 로드 (종목별)")
+            for n, ticker in enumerate(all_tickers, 1):
+                fdf = self._finalize_ticker_df(self._fetch_fdr_range(ticker, s_str, e_str))
+                if fdf is not None:
+                    ticker_data[ticker] = fdf
+                if n % 50 == 0 or n == len(all_tickers):
+                    gc.collect()
+                    print(f"  [FDR {n}/{len(all_tickers)}] 누적 {len(ticker_data)}개 성공")
+            return ticker_data
+
+        # 로컬 등 yfinance 정상 환경 — 50종목 배치 다운로드(빠름) + 실패 종목만 FDR 폴백.
+        CHUNK = 50
         for i in range(0, len(all_tickers), CHUNK):
             chunk = all_tickers[i: i + CHUNK]
             hi = min(i + CHUNK, len(all_tickers))
@@ -421,90 +441,130 @@ class BacktestEngine:
             try:
                 raw = yf.download(
                     chunk if len(chunk) > 1 else chunk[0],
-                    start=load_start.strftime("%Y-%m-%d"),
-                    end=load_end.strftime("%Y-%m-%d"),
-                    auto_adjust=True,
-                    progress=False,
+                    start=s_str, end=e_str, auto_adjust=True, progress=False,
                 )
-            except Exception as e:
-                print(f"오류: {e}")
-                continue
+            except Exception:
+                raw = None
 
-            if raw.empty:
-                print("데이터 없음")
-                continue
-
-            for ticker in chunk:
-                try:
-                    if isinstance(raw.columns, pd.MultiIndex):
-                        df = raw.xs(ticker, axis=1, level=1).dropna(how="all")
-                    else:
-                        df = raw.dropna(how="all")
-
-                    if df.empty or len(df) < 60:
+            got: set[str] = set()
+            if raw is not None and not raw.empty:
+                for ticker in chunk:
+                    try:
+                        if isinstance(raw.columns, pd.MultiIndex):
+                            df = raw.xs(ticker, axis=1, level=1).dropna(how="all")
+                        else:
+                            df = raw.dropna(how="all")
+                        fdf = self._finalize_ticker_df(df)
+                        if fdf is not None:
+                            ticker_data[ticker] = fdf
+                            got.add(ticker)
+                    except Exception:
                         continue
 
-                    df = _flatten_columns(df)
-                    df = _add_indicators(df)
-
-                    # SMA_5 보정: stock_ai._add_indicators 미포함 시 인라인 계산
-                    if "SMA_5" not in df.columns:
-                        df["SMA_5"] = df["Close"].rolling(5).mean()
-
-                    # [개편 2] 종목별 Wilder RSI_14 — 진입 직전 과열 하드필터용
-                    # stock_ai 의 SMA식 RSI(컬럼명 "RSI")와 별개로 일관된 Wilder 방식 사용
-                    df["RSI_14"] = self._calc_rsi(df["Close"], period=14)
-
-                    # [메모리 최적화] Render 512MB OOM 방지 — _add_indicators 는 지표 ~35개
-                    # (MACD·볼린저·ADX·일목·Z-Score 등)를 붙이지만 백테스트 엔진은 아래 컬럼만
-                    # 참조한다. 최대 400종목 DataFrame 을 통째로 상주시키므로, 불필요 컬럼을 즉시
-                    # 버리고 float64→float32 로 다운캐스트해 종목당 메모리를 ~5배 줄인다.
-                    keep = [c for c in self._ENGINE_COLS if c in df.columns]
-                    df = df[keep].copy()
-                    for c in df.columns:
-                        if df[c].dtype == "float64":
-                            df[c] = df[c].astype("float32")
-
-                    ticker_data[ticker] = df
-                except Exception:
+            # yf 배치에서 못 받은 종목(차단·결측)만 FDR 로 보강
+            for ticker in chunk:
+                if ticker in got:
                     continue
+                fdf = self._finalize_ticker_df(self._fetch_fdr_range(ticker, s_str, e_str))
+                if fdf is not None:
+                    ticker_data[ticker] = fdf
 
-            del raw
+            raw = None
             gc.collect()
             print(f"누적 {len(ticker_data)}개 성공")
 
         return ticker_data
 
+    def _finalize_ticker_df(self, df: pd.DataFrame | None) -> pd.DataFrame | None:
+        """원시 OHLCV → 지표 계산 + 엔진 컬럼만 보존 + float32 다운캐스트(메모리 최적화).
+
+        yfinance/FDR 어느 소스로 받았든 동일하게 후처리한다. 60행 미만·오류는 None.
+        [메모리] _add_indicators 는 지표 ~35개를 붙이지만 엔진은 _ENGINE_COLS(10개)만 쓰므로
+        즉시 프루닝 + float64→float32 로 종목당 메모리를 ~5배 줄인다(Render 512MB OOM 방지).
+        """
+        if df is None or df.empty or len(df) < 60:
+            return None
+        try:
+            df = _flatten_columns(df)
+            df = _add_indicators(df)
+            if "SMA_5" not in df.columns:
+                df["SMA_5"] = df["Close"].rolling(5).mean()
+            df["RSI_14"] = self._calc_rsi(df["Close"], period=14)
+            keep = [c for c in self._ENGINE_COLS if c in df.columns]
+            df = df[keep].copy()
+            for c in df.columns:
+                if df[c].dtype == "float64":
+                    df[c] = df[c].astype("float32")
+            return df
+        except Exception:
+            return None
+
+    @staticmethod
+    def _fetch_fdr_range(ticker: str, start: str, end: str) -> pd.DataFrame:
+        """FinanceDataReader 날짜범위 OHLCV — yfinance 차단(Render) 시 폴백.
+
+        KRX/Naver/Stooq 기반이라 데이터센터 IP 에서도 동작한다. .KS/.KQ 접미사는 코드로 변환.
+        """
+        try:
+            import FinanceDataReader as fdr
+            code = ticker.split(".")[0] if ticker.endswith((".KS", ".KQ")) else ticker
+            df = fdr.DataReader(code, start, end)
+            if df is None or df.empty:
+                return pd.DataFrame()
+            cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+            return df[cols].dropna(how="all")
+        except Exception:
+            return pd.DataFrame()
+
+    @staticmethod
+    def _fetch_fdr_index(market: str, start: str, end: str) -> pd.DataFrame:
+        """벤치마크 지수 FDR 폴백 — KOSPI→KS11 / KOSDAQ→KQ11 / S&P500→US500 / NASDAQ→IXIC."""
+        sym = {"KOSPI": "KS11", "KOSDAQ": "KQ11", "S&P500": "US500", "NASDAQ": "IXIC"}.get(market)
+        if not sym:
+            return pd.DataFrame()
+        try:
+            import FinanceDataReader as fdr
+            df = fdr.DataReader(sym, start, end)
+            if df is None or df.empty:
+                return pd.DataFrame()
+            cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+            return df[cols].dropna(how="all")
+        except Exception:
+            return pd.DataFrame()
+
     def _load_benchmark_indices(self) -> None:
         load_start = self.start_date - pd.Timedelta(days=self.WARMUP_DAYS)
         load_end   = self.end_date   + pd.Timedelta(days=2)
+
+        s_str = load_start.strftime("%Y-%m-%d")
+        e_str = load_end.strftime("%Y-%m-%d")
 
         for mkt in self.markets:
             idx_symbol = self.BENCHMARK_INDEXMAP.get(mkt)
             if not idx_symbol:
                 continue
             print(f"  📊 {mkt} 벤치마크 지수({idx_symbol}) 로드 중...", end=" ", flush=True)
-            try:
-                raw = yf.download(
-                    idx_symbol,
-                    start=load_start.strftime("%Y-%m-%d"),
-                    end=load_end.strftime("%Y-%m-%d"),
-                    auto_adjust=True,
-                    progress=False,
-                )
-                if not raw.empty:
-                    df = _flatten_columns(raw)
-                    df["SMA_5"]  = df["Close"].rolling(5).mean()
-                    df["SMA_20"] = df["Close"].rolling(20).mean()
-                    df["SMA_60"] = df["Close"].rolling(60).mean()
-                    # [Step 2] 과열 판단용 14일 RSI 사전 계산
-                    df["RSI_14"] = self._calc_rsi(df["Close"], period=14)
-                    self._market_index_dfs[mkt] = df
-                    print(f"{len(df)}일치 완료")
-                else:
-                    print("데이터 없음")
-            except Exception as e:
-                print(f"실패 ({e})")
+            raw = None
+            if not _YF_DISABLED:
+                try:
+                    raw = yf.download(idx_symbol, start=s_str, end=e_str,
+                                      auto_adjust=True, progress=False)
+                except Exception:
+                    raw = None
+            # yfinance 차단(Render)·결측 → FDR 지수 폴백(KS11/KQ11/US500/IXIC)
+            if raw is None or raw.empty:
+                raw = self._fetch_fdr_index(mkt, s_str, e_str)
+            if raw is None or raw.empty:
+                print("데이터 없음")
+                continue
+            df = _flatten_columns(raw)
+            df["SMA_5"]  = df["Close"].rolling(5).mean()
+            df["SMA_20"] = df["Close"].rolling(20).mean()
+            df["SMA_60"] = df["Close"].rolling(60).mean()
+            # [Step 2] 과열 판단용 14일 RSI 사전 계산
+            df["RSI_14"] = self._calc_rsi(df["Close"], period=14)
+            self._market_index_dfs[mkt] = df
+            print(f"{len(df)}일치 완료")
 
     # ── 장세 판별 ─────────────────────────────────────────────────────────────
 
