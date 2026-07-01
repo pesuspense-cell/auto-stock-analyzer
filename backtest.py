@@ -420,6 +420,17 @@ class BacktestEngine:
         s_str = load_start.strftime("%Y-%m-%d")
         e_str = load_end.strftime("%Y-%m-%d")
 
+        # [시세 캐시] SUPABASE_DB_URL 설정 시 DB read-through 사용 — 캐시 히트는 재사용하고
+        # 미스 종목만 수집·적재한다(반복 실행 가속·429 무관·저메모리). 실패 시 아래 직접수집 폴백.
+        try:
+            import price_cache
+            if price_cache.cache_enabled():
+                cached = self._load_data_cached(all_tickers, load_start, load_end)
+                if cached:
+                    return cached
+        except Exception as e:
+            print(f"  ⚠️ 시세 캐시 사용 실패 — 직접 수집으로 폴백: {e}")
+
         # [Render] yfinance 차단 환경 → 막힐 게 뻔한 yf 를 건너뛰고 FDR 직행(종목별, 헛대기 제거).
         if _YF_DISABLED:
             print(f"  ⚙️  ASA_DISABLE_YFINANCE=1 — FDR(FinanceDataReader)로 시세 로드 (종목별)")
@@ -473,6 +484,48 @@ class BacktestEngine:
             gc.collect()
             print(f"누적 {len(ticker_data)}개 성공")
 
+        return ticker_data
+
+    def _load_data_cached(
+        self, all_tickers: list[str], load_start: pd.Timestamp, load_end: pd.Timestamp
+    ) -> dict[str, pd.DataFrame]:
+        """DB 시세 캐시 read-through — 캐시 히트는 재사용, 미스 종목만 FDR 수집 후 적재.
+
+        과거 시세는 정적이라 첫 실행에서 적재되면 이후 실행은 캐시에서 즉시 로드된다
+        (반복 실행 가속의 핵심). 커버리지가 부족한 종목만 FDR 로 채운다.
+        """
+        import price_cache
+        s_str = load_start.strftime("%Y-%m-%d")
+        e_str = load_end.strftime("%Y-%m-%d")
+
+        cov  = price_cache.coverage_bulk(all_tickers)
+        need = [t for t in all_tickers if not price_cache.covers(cov.get(t), load_start, load_end)]
+        print(f"  🗄️ 시세 캐시: 히트 {len(all_tickers) - len(need)} / 신규수집 {len(need)}종목")
+
+        if need:
+            # 배치(40종목)로 수집→즉시 적재→해제 — 첫 실행 대량 채움 시 메모리 상한(512MB) 방어.
+            BATCH = 40
+            batch: list[tuple[str, pd.DataFrame]] = []
+            total = 0
+            for n, t in enumerate(need, 1):
+                raw = self._fetch_fdr_range(t, s_str, e_str)
+                if raw is not None and not raw.empty:
+                    batch.append((t, raw))
+                if len(batch) >= BATCH or n == len(need):
+                    if batch:
+                        total += price_cache.upsert_many(batch, source="fdr")
+                        batch = []
+                        gc.collect()
+                    print(f"    [캐시 수집 {n}/{len(need)}] 누적 적재 {total:,}행")
+
+        ticker_data: dict[str, pd.DataFrame] = {}
+        bars = price_cache.read_bars_bulk(all_tickers, s_str, e_str)
+        for t, raw in bars.items():
+            fdf = self._finalize_ticker_df(raw)
+            if fdf is not None:
+                ticker_data[t] = fdf
+        gc.collect()
+        print(f"  🗄️ 캐시 로드 완료: {len(ticker_data)}종목")
         return ticker_data
 
     def _finalize_ticker_df(self, df: pd.DataFrame | None) -> pd.DataFrame | None:
