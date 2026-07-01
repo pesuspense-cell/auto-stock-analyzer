@@ -1638,19 +1638,39 @@ class StockScreener:
         """
         scored_list: list[dict] = []
         tickers = [t for t, _ in chunk]
-        try:
-            raw = yf.download(tickers, period=f"{lookback}d", auto_adjust=True, progress=False)
-        except Exception:
-            return []
+
+        # 원시 OHLCV 확보 — Render(yf 429 차단) 대응 FDR 폴백.
+        #   ASA_DISABLE_YFINANCE=1 → 종목별 FDR 직행 / 로컬 → yf 배치 + 실패종목만 FDR 보강.
+        from datetime import datetime, timedelta
+        e_str = datetime.now().strftime("%Y-%m-%d")
+        s_str = (datetime.now() - timedelta(days=int(lookback * 1.8) + 10)).strftime("%Y-%m-%d")
+        raw_map: dict[str, pd.DataFrame] = {}
+        raw = None
+        if not _YF_DISABLED:
+            try:
+                raw = yf.download(tickers, period=f"{lookback}d", auto_adjust=True, progress=False)
+            except Exception:
+                raw = None
+        if raw is not None and not raw.empty:
+            for t in tickers:
+                try:
+                    d = (raw.xs(t, axis=1, level=1) if isinstance(raw.columns, pd.MultiIndex)
+                         else raw).dropna(how="all")
+                    if d is not None and not d.empty:
+                        raw_map[t] = d
+                except Exception:
+                    continue
+        for t in tickers:                        # yf 미확보 종목만 FDR 보강(또는 Render 전량 FDR)
+            if t in raw_map:
+                continue
+            fd = BacktestEngine._fetch_fdr_range(t, s_str, e_str)
+            if fd is not None and not fd.empty:
+                raw_map[t] = fd
 
         for ticker, name in chunk:
             try:
-                if isinstance(raw.columns, pd.MultiIndex):
-                    df = raw.xs(ticker, axis=1, level=1).dropna(how="all")
-                else:
-                    df = raw.dropna(how="all")
-
-                if df.empty or len(df) < 20:
+                df = raw_map.get(ticker)
+                if df is None or df.empty or len(df) < 20:
                     continue
                 df = _flatten_columns(df)
                 df = _add_indicators(df)
